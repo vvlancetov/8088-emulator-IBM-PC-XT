@@ -1,6 +1,5 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
-#include <conio.h>
 #include <iostream>
 #include <vector>
 #include "custom_classes.h"
@@ -13,21 +12,21 @@ using namespace std;
 
 extern IC8259 int_ctrl;
 
-//клавиатура
+//пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 void KBD::sync(uint32 elapsed_us)
 {
-	//синхронизируем нажатия клавишь
-	if (!enabled) return; //если отключена - возврат
+	//пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+	if (!enabled) return; //пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ - пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 
 	bool special = false;
 	uint8 code = 0;
 
-	//записываем нажатия в буфер
+	//пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅ
 
 	// ====================  F1-F12 ============
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F1))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::F1)])
 		{
 			out_buffer.push_back(0x3b);
@@ -54,7 +53,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F2))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::F2)])
 		{
 			out_buffer.push_back(0x3c);
@@ -72,7 +71,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F3))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::F3)])
 		{
 			out_buffer.push_back(0x3d);
@@ -90,7 +89,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F4))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::F4)])
 		{
 			out_buffer.push_back(0x3e);
@@ -108,7 +107,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::F5)])
 		{
 			out_buffer.push_back(0x3f);
@@ -126,7 +125,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::F6)])
 		{
 			out_buffer.push_back(0x40);
@@ -146,7 +145,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num1))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num1)])
 		{
 			out_buffer.push_back(0x02);
@@ -164,7 +163,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num2))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num2)])
 		{
 			out_buffer.push_back(0x03);
@@ -182,7 +181,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num3)])
 		{
 			out_buffer.push_back(0x04);
@@ -200,7 +199,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num4)])
 		{
 			out_buffer.push_back(0x05);
@@ -218,7 +217,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num5)])
 		{
 			out_buffer.push_back(0x06);
@@ -236,7 +235,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num6))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num6)])
 		{
 			out_buffer.push_back(0x07);
@@ -254,7 +253,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num7))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num7)])
 		{
 			out_buffer.push_back(0x08);
@@ -272,7 +271,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num8))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num8)])
 		{
 			out_buffer.push_back(0x09);
@@ -290,7 +289,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num9))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num9)])
 		{
 			out_buffer.push_back(0x0A);
@@ -308,7 +307,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num0))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Num0)])
 		{
 			out_buffer.push_back(0x0B);
@@ -329,7 +328,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Q))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Q)])
 		{
 			out_buffer.push_back(0x10);
@@ -347,7 +346,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::W)])
 		{
 			out_buffer.push_back(0x11);
@@ -365,7 +364,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::E))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::E)])
 		{
 			out_buffer.push_back(0x12);
@@ -383,7 +382,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::R))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::R)])
 		{
 			out_buffer.push_back(0x13);
@@ -401,7 +400,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::T))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::T)])
 		{
 			out_buffer.push_back(0x14);
@@ -419,7 +418,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Y))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Y)])
 		{
 			out_buffer.push_back(0x15);
@@ -437,7 +436,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::U))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::U)])
 		{
 			out_buffer.push_back(0x16);
@@ -455,7 +454,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::I))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::I)])
 		{
 			out_buffer.push_back(0x17);
@@ -473,7 +472,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::O))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::O)])
 		{
 			out_buffer.push_back(0x18);
@@ -492,7 +491,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::P))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::P)])
 		{
 			out_buffer.push_back(0x19);
@@ -511,7 +510,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::A)])
 		{
 			out_buffer.push_back(0x1E);
@@ -529,7 +528,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::S)])
 		{
 			out_buffer.push_back(0x1F);
@@ -546,7 +545,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::D)])
 		{
 			out_buffer.push_back(0x20);
@@ -563,7 +562,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::F)])
 		{
 			out_buffer.push_back(0x21);
@@ -580,7 +579,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::G))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::G)])
 		{
 			out_buffer.push_back(0x22);
@@ -597,7 +596,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::H))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::H)])
 		{
 			out_buffer.push_back(0x23);
@@ -614,7 +613,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::J))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::J)])
 		{
 			out_buffer.push_back(0x24);
@@ -631,7 +630,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::K))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::K)])
 		{
 			out_buffer.push_back(0x25);
@@ -648,7 +647,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::L))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::L)])
 		{
 			out_buffer.push_back(0x26);
@@ -666,7 +665,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Z)])
 		{
 			out_buffer.push_back(0x2C);
@@ -685,7 +684,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::X))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::X)])
 		{
 			out_buffer.push_back(0x2D);
@@ -703,7 +702,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::C))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::C)])
 		{
 			out_buffer.push_back(0x2E);
@@ -721,7 +720,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::V))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::V)])
 		{
 			out_buffer.push_back(0x2F);
@@ -739,7 +738,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::B))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::B)])
 		{
 			out_buffer.push_back(0x30);
@@ -757,7 +756,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::N))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::N)])
 		{
 			out_buffer.push_back(0x31);
@@ -775,7 +774,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::M))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::M)])
 		{
 			out_buffer.push_back(0x32);
@@ -796,7 +795,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::ENTER)])
 		{
 			out_buffer.push_back(0x1C);
@@ -814,7 +813,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::SPACE)])
 		{
 			out_buffer.push_back(0x39);
@@ -832,7 +831,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Grave))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Grave)])
 		{
 			out_buffer.push_back(0x29);
@@ -850,7 +849,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Hyphen)])
 		{
 			out_buffer.push_back(0x0C);
@@ -868,7 +867,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Equal))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Equal)])
 		{
 			out_buffer.push_back(0x0D);
@@ -886,7 +885,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Backspace)])
 		{
 			out_buffer.push_back(0x0E);
@@ -904,7 +903,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Escape)])
 		{
 			out_buffer.push_back(0x01);
@@ -922,7 +921,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Tab))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Tab)])
 		{
 			out_buffer.push_back(0x0F);
@@ -940,7 +939,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::LShift)])
 		{
 			out_buffer.push_back(0x2A);
@@ -958,7 +957,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::RShift)])
 		{
 			out_buffer.push_back(0x36);
@@ -975,7 +974,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::LControl)])
 		{
 			out_buffer.push_back(0x1D);
@@ -993,7 +992,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LAlt))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::LAlt)])
 		{
 			out_buffer.push_back(0x38);
@@ -1011,7 +1010,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backslash))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Backslash)])
 		{
 			out_buffer.push_back(0x2B);
@@ -1029,7 +1028,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LBracket))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::LBracket)])
 		{
 			out_buffer.push_back(0x1A);
@@ -1047,7 +1046,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RBracket))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::LBracket)])
 		{
 			out_buffer.push_back(0x1B);
@@ -1066,7 +1065,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Semicolon))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Semicolon)])
 		{
 			out_buffer.push_back(0x27);
@@ -1084,7 +1083,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Apostrophe))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Apostrophe)])
 		{
 			out_buffer.push_back(0x28);
@@ -1103,7 +1102,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Comma))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Comma)])
 		{
 			out_buffer.push_back(0x33);
@@ -1121,7 +1120,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Period))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Period)])
 		{
 			out_buffer.push_back(0x34);
@@ -1139,7 +1138,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Slash))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Slash)])
 		{
 			out_buffer.push_back(0x35);
@@ -1159,7 +1158,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Up)])
 		{
 			out_buffer.push_back(0xE0);
@@ -1191,7 +1190,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Down)])
 		{
 			out_buffer.push_back(0xE0);
@@ -1223,7 +1222,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Left)])
 		{
 			out_buffer.push_back(0xE0);
@@ -1255,7 +1254,7 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right))
 	{
-		//убираем повторение
+		//пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		if (!pressed_keys[(uint8)(KBD_key::Right)])
 		{
 			out_buffer.push_back(0xE0);
@@ -1286,7 +1285,7 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	// ======================= PROCESS ==============
 
-	if (code) out_buffer.push_back(code); //отправляем в буффер
+	if (code) out_buffer.push_back(code); //пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 
 	if (out_buffer.size() > 0 && CLK_high)
 	{
