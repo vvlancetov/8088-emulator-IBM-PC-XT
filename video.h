@@ -2,13 +2,15 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
 #include <SFML/System.hpp>
-//#include <vector>
+#include <string>
+#include "custom_classes.h"
+
 
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 typedef unsigned __int32 uint32;
 
-extern uint8 memory_2[1024 * 1024]; //память 2.0
+extern uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
 
 //монитор
 class Video_device
@@ -58,7 +60,10 @@ private:
 	uint8 CGA_Color_Select_Register = 0; //режим выбора цвета
 	uint8 CGA_Mode_Select_Register = 9;  //регистр режимов CGA
 	sf::Color CGA_colors[16]; //массив цветов CGA для текста
+	sf::Color CGA_BW_colors[16]; //массив цветов CGA для текста в режиме BW
 	bool CRT_flip_flop = false;
+	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
+	uint8 joy_sence_value = 0; //центральная точка джойстика
 
 public:
 	sf::Font font;
@@ -85,6 +90,7 @@ public:
 	void read_cursor_position();				//чтение позиции курсора
 	void teletype(uint8 symbol);
 	std::string get_mode_name();
+	void show_joy_sence(uint8 central_point);
 };
 
 //монитор отладки
@@ -109,6 +115,7 @@ class FDD_mon_device : public Dev_mon_device
 {
 private:
 	std::vector<std::string> log_strings;
+	std::string last_str = "";
 
 public:
 	using Dev_mon_device::Dev_mon_device;

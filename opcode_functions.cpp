@@ -1,7 +1,7 @@
 #include "opcode_functions.h"
 #include "custom_classes.h"
 #include "video.h"
-
+#include "audio.h"
 #include <Windows.h>
 #include <iostream>
 #include <string>
@@ -9,7 +9,7 @@
 #include <bitset>
 #include <sstream>
 
-#define DEBUG
+//#define DEBUG
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 typedef unsigned __int32 uint32;
@@ -23,8 +23,10 @@ using namespace std;
 extern HANDLE hConsole;
 
 extern uint8 exeption;
-
+#ifdef DEBUG
 extern FDD_mon_device FDD_monitor;
+extern FDD_mon_device HDD_monitor;
+#endif
 
 //регистры процессора
 extern uint16 AX; // AX
@@ -93,7 +95,10 @@ uint16* ptr_segreg[4];			//указатели
 std::string segreg_name[4];		//имена сегментов
 
 extern bool Interrupts_enabled; //разрешение прерываний
+extern bool halt_cpu;
 extern bool log_to_console_FDD;
+extern bool log_to_console_HDD;
+extern bool log_to_console_DOS;
 extern bool cont_exec;
 
 //временные регистры
@@ -103,16 +108,20 @@ extern uint16 temp_Addr;
 
 //вспомогательные переменные для рассчета адресов операндов
 uint8 additional_IPs;
-uint32 New_Addr;
+uint8 byte2;
+uint32 New_Addr_32;
+uint32 New_Addr_32_2;
+uint16 New_Addr_16;
 string OPCODE_comment;
+bool OF_Carry = false;
 
 uint16 operand_RM_seg;
 uint16 operand_RM_offset;
 
 //вспомогательные регистры для расчетов
 
-uint16 Src = 0;
-uint16 Dst = 0;
+uint16 Src = 0; //DEL
+uint16 Dst = 0; //DEL
 uint16* ptr_Src = &Src;
 uint8* ptr_Src_L = (uint8*)ptr_Src;
 uint8* ptr_Src_H = ptr_Src_L + 1;
@@ -122,12 +131,18 @@ uint8* ptr_Dst_H = ptr_Dst_L + 1;
 
 //префикс замены сегмента
 extern uint8 Flag_segment_override;
+// 00 - нет замены
+// 01 - ES
+// 02 - CS
+// 03 - SS
+// 04 - DS
+extern bool keep_segment_override; //сохранение флага
 
 //флаг аппаратных прерываний
 extern bool Flag_hardware_INT;
 
 extern Mem_Ctrl memory;
-extern uint8 memory_2[1024 * 1024]; //память 2.0
+extern uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
 
 extern SoundMaker speaker;
 extern IO_Ctrl IO_device;
@@ -140,25 +155,119 @@ extern bool parity_check[256];
 
 extern bool log_to_console;
 extern bool step_mode;
+extern bool log_to_console_8087;
 
 extern string regnames[8];
 extern string pairnames[4];
 extern Video_device monitor;
 
 extern void (*op_code_table[256])();
+extern void (*op_code_table_8087[64])();
 extern void (*backup_table[256])();
 
 extern bool test_mode;
 extern bool repeat_test_op;
 extern bool negate_IDIV;
 int last_INT = 0; //номер последнего прерывания (для отладки)
+extern uint8 bus_lock;
+
+//счетчик команд
+extern int command_counter[256];
+extern bool command_counter_ON;
 
 //=============
 __int16 DispCalc16(uint16 data); //декларация
 __int8 DispCalc8(uint8 data);
 //==============Service functions===============
 
-//инициализация таблицы функций
+//инициализация таблицы функций 8087
+void opcode_8087_table_init()
+{
+	op_code_table_8087[0b001000] = &Esc_8087_001_000_Load;  //LOAD int/real to ST0
+	op_code_table_8087[0b011000] = &Esc_8087_011_000_Load;	//LOAD int/real to ST0
+	op_code_table_8087[0b101000] = &Esc_8087_101_000_Load;	//LOAD int/real to ST0
+	op_code_table_8087[0b111000] = &Esc_8087_111_000_Load;	//LOAD int/real to ST0
+
+	op_code_table_8087[0b111101] = &Esc_8087_111_101_Load;  //LOAD long INT to ST0
+	op_code_table_8087[0b011101] = &Esc_8087_011_101_Load;	//LOAD temp real to ST0
+	op_code_table_8087[0b111100] = &Esc_8087_111_100_Load;	//LOAD BCD to ST0
+
+	op_code_table_8087[0b001010] = &Esc_8087_001_010_Store;	//STORE ST0 to int/real
+	op_code_table_8087[0b011010] = &Esc_8087_011_010_Store;	//STORE ST0 to int/real
+	op_code_table_8087[0b101010] = &Esc_8087_101_010_Store;	//STORE ST0 to int/real
+	op_code_table_8087[0b111010] = &Esc_8087_111_010_Store;	//STORE ST0 to int/real
+
+	op_code_table_8087[0b001011] = &Esc_8087_001_011_StorePop; //FSTP = Store and Pop
+	op_code_table_8087[0b011011] = &Esc_8087_011_011_StorePop; //FSTP = Store and Pop
+	op_code_table_8087[0b101011] = &Esc_8087_101_011_StorePop; //FSTP = Store and Pop + ST0 to STi 
+	op_code_table_8087[0b111011] = &Esc_8087_111_011_StorePop; //FSTP = Store and Pop
+
+	op_code_table_8087[0b111111] = &Esc_8087_111_111_StorePop; //StorePop ST0 Long Int to MEM
+	op_code_table_8087[0b011111] = &Esc_8087_011_111_StorePop; //StorePop ST0 to TMP real mem
+	op_code_table_8087[0b111110] = &Esc_8087_111_110_StorePop; //StorePop ST0 to BCD mem
+
+	op_code_table_8087[0b001001] = &Esc_8087_001_001_FXCH;		//EXchange ST0 - STi
+
+	op_code_table_8087[0b000010] = &Esc_8087_000_010_FCOM;		//FCOM = Compare + STi to ST0
+	op_code_table_8087[0b010010] = &Esc_8087_010_010_FCOM;		//FCOM = Compare
+	op_code_table_8087[0b100010] = &Esc_8087_100_010_FCOM;		//FCOM = Compare
+	op_code_table_8087[0b110010] = &Esc_8087_110_010_FCOM;		//FCOM = Compare
+
+	op_code_table_8087[0b000011] = &Esc_8087_000_011_FCOM;		//FcomPop + STi to ST0
+	op_code_table_8087[0b010011] = &Esc_8087_010_011_FCOM;		//FcomPop
+	op_code_table_8087[0b100011] = &Esc_8087_100_011_FCOM;		//FcomPop
+	op_code_table_8087[0b110011] = &Esc_8087_110_011_FCOM;		//FcomPop + FCOMPP
+
+	op_code_table_8087[0b001100] = &Esc_8087_001_100_TEST;		//FTST/FXAM/FABS
+
+	op_code_table_8087[0b000000] = &Esc_8087_000_000_FADD;		//FADD
+	op_code_table_8087[0b010000] = &Esc_8087_010_000_FADD;		//FADD
+	op_code_table_8087[0b100000] = &Esc_8087_100_000_FADD;		//FADD
+	op_code_table_8087[0b110000] = &Esc_8087_110_000_FADD;		//FADD
+
+	op_code_table_8087[0b000100] = &Esc_8087_000_100_FSUB;		//FSUB R = 0
+	op_code_table_8087[0b000101] = &Esc_8087_000_101_FSUB;		//FSUB R = 1
+	op_code_table_8087[0b010100] = &Esc_8087_010_100_FSUB;		//FSUB R = 0
+	op_code_table_8087[0b010101] = &Esc_8087_010_101_FSUB;		//FSUB R = 1
+	op_code_table_8087[0b100100] = &Esc_8087_100_100_FSUB;		//FSUB R = 0
+	op_code_table_8087[0b100101] = &Esc_8087_100_101_FSUB;		//FSUB R = 1
+	op_code_table_8087[0b110100] = &Esc_8087_110_100_FSUB;		//FSUB R = 0
+	op_code_table_8087[0b110101] = &Esc_8087_110_101_FSUB;		//FSUB R = 1
+
+	op_code_table_8087[0b000001] = &Esc_8087_000_001_FMUL;		//FMUL
+	op_code_table_8087[0b010001] = &Esc_8087_010_001_FMUL;		//FMUL
+	op_code_table_8087[0b100001] = &Esc_8087_100_001_FMUL;		//FMUL
+	op_code_table_8087[0b110001] = &Esc_8087_110_001_FMUL;		//FMUL
+
+	op_code_table_8087[0b000110] = &Esc_8087_000_110_FDIV;		//FDIV R = 0
+	op_code_table_8087[0b000111] = &Esc_8087_000_111_FDIV;		//FDIV R = 1
+	op_code_table_8087[0b010110] = &Esc_8087_010_110_FDIV;		//FDIV R = 0
+	op_code_table_8087[0b010111] = &Esc_8087_010_111_FDIV;		//FDIV R = 1
+	op_code_table_8087[0b100110] = &Esc_8087_100_110_FDIV;		//FDIV R = 0
+	op_code_table_8087[0b100111] = &Esc_8087_100_111_FDIV;		//FDIV R = 1
+	op_code_table_8087[0b110110] = &Esc_8087_110_110_FDIV;		//FDIV R = 0
+	op_code_table_8087[0b110111] = &Esc_8087_110_111_FDIV;		//FDIV R = 1
+
+	op_code_table_8087[0b001111] = &Esc_8087_001_111_FSQRT;		//FSQRT/FSCALE/FPREM/FRNDINIT
+	op_code_table_8087[0b001110] = &Esc_8087_001_110_FXTRACT;	//FXTRACT
+
+	op_code_table_8087[0b001101] = &Esc_8087_001_101_FLDZ;		//FLDZ/FLD1/FLOPI/FLOL2T
+	
+	op_code_table_8087[0b011100] = &Esc_8087_011_100_FINIT;		//FINIT/FENI/FDISI
+
+	op_code_table_8087[0b101111] = &Esc_8087_101_111_FSTSW;		//FSTSW
+
+	op_code_table_8087[0b101110] = &Esc_8087_101_110_FSAVE;		//FSAVE
+	op_code_table_8087[0b101100] = &Esc_8087_101_100_FRSTOR;	//FRSTOR
+
+	op_code_table_8087[0b011001] = &op_code_8087_unknown;
+	op_code_table_8087[0b011110] = &op_code_8087_unknown;
+	op_code_table_8087[0b101001] = &op_code_8087_unknown;
+	op_code_table_8087[0b101101] = &op_code_8087_unknown;
+	op_code_table_8087[0b111001] = &op_code_8087_unknown;
+}
+
+//инициализация таблицы функций 8086
 void opcode_table_init()
 {
 	for (int i = 0; i < 256; i++) op_code_table[i] = &op_code_unknown; //заполняем таблицу пустой функцией
@@ -273,8 +382,8 @@ void opcode_table_init()
 	op_code_table[0b00000101] = &ADD_IMM_to_ACC_16;		// ADD IMM->ACC 16bit 
 
 	//ADC (также в XOR_OR_IMM_RM_8 и XOR_OR_IMM_RM_16, &ADD_IMM_RM_16s)
-	op_code_table[0b00010000] = &ADC_RM_to_RM_8;		// ADC R/M -> R/M 8bit
-	op_code_table[0b00010001] = &ADC_RM_to_RM_16;		// ADC R/M -> R/M 16bit
+	op_code_table[0b00010000] = &ADC_R_to_RM_8;		// ADC R/M -> R/M 8bit
+	op_code_table[0b00010001] = &ADC_R_to_RM_16;		// ADC R/M -> R/M 16bit
 	op_code_table[0b00010010] = &ADC_RM_to_R_8;			// ADC R/M -> R 8bit
 	op_code_table[0b00010011] = &ADC_RM_to_R_16;		// ADC R/M -> R 16bit
 	op_code_table[0b00010100] = &ADC_IMM_to_ACC_8;		// ADC IMM->ACC 8bit
@@ -482,6 +591,7 @@ void opcode_table_init()
 	op_code_table[0b11110100] = &HLT;					//Halt
 	op_code_table[0b10011011] = &Wait;					//Wait
 	op_code_table[0b11110000] = &Lock;					//Bus lock prefix
+	op_code_table[0b11110001] = &Lock;					//Bus lock prefix (Undoc)
 	op_code_table[0b11011000] = &Esc_8087;				//Call 8087
 	op_code_table[0b11011001] = &Esc_8087;				//Call 8087
 	op_code_table[0b11011010] = &Esc_8087;				//Call 8087
@@ -545,8 +655,6 @@ void opcode_table_init()
 
 	//таблица для сверки
 	for (int i = 0; i < 256; ++i) backup_table[i] = op_code_table[i];
-
-
 }
 void op_code_unknown()		// Unknown operation
 {
@@ -569,7 +677,7 @@ void segment_override_prefix()
 #ifdef DEBUG
 	if (log_to_console) cout << "segment_override_prefix ";
 #endif
-	
+
 	/*
 	Замена сегментов
 	ES — 0x00
@@ -577,41 +685,46 @@ void segment_override_prefix()
 	SS — 0x10
 	DS — 0x11
 	*/
-	
+
 	switch (Seg)
 	{
 	case 0:
 #ifdef DEBUG
 		if (log_to_console) cout << "ES(" << *ES << ")";
 #endif
-		DS = &ES_data;
-		SS = &ES_data;
+		Flag_segment_override = 1;
+		//DS = &ES_data;
+		//SS = &ES_data;
 		break;
 	case 1:
 #ifdef DEBUG
 		if (log_to_console) cout << "CS(" << *CS << ")";
 #endif
-		DS = &CS_data;
-		SS = &CS_data;
+		Flag_segment_override = 2;
+		//DS = &CS_data;
+		//SS = &CS_data;
 		break;
 	case 2:
 #ifdef DEBUG
 		if (log_to_console) cout << "SS(" << *SS << ")";
 #endif
-		DS = &SS_data;
+		Flag_segment_override = 3;
+		//DS = &SS_data;
 		break;
 	case 3:
 #ifdef DEBUG
 		if (log_to_console) cout << "DS(" << *DS << ")";
 #endif
-		SS = &DS_data;
+		Flag_segment_override = 4;
+		//SS = &DS_data;
 		break;
 	}
+	keep_segment_override = true; //сохранить флаг до следующей команды
 #ifdef DEBUG
 	if (log_to_console) cout << endl;
 #endif
 	Instruction_Pointer++;
-
+	/*
 cmd_rep:
 	//выполняем следующую команду
 #ifdef DEBUG
@@ -619,7 +732,7 @@ cmd_rep:
 	{
 		cout << hex;
 		//cout << int_to_hex(memory.read_2(0x441, 0), 2) << "  " << int_to_hex(memory.read_2(0x442, 0), 2) << " ";
-		cout << *CS << ":" << std::setfill('0') << std::setw(4) << Instruction_Pointer << "  " <<
+		cout << std::setw(4) << *CS << ":" << std::setfill('0') << std::setw(4) << Instruction_Pointer << "  " <<
 			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + *CS * 16) << "  " <<
 			std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] << "  " <<
 			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 2 + *CS * 16) << "  " <<
@@ -628,15 +741,21 @@ cmd_rep:
 			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 5 + *CS * 16) << "\t";
 	}
 #endif
+	if (command_counter_ON) command_counter[memory_2[Instruction_Pointer + *CS * 16]]++;
 	op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
 	//если установлен флаг negate_IDIV - выполняем еще одну команду
+
+	if (keep_segment_override) {keep_segment_override = false; } //сбрасываем флаг сохранения
+	else { Flag_segment_override = 0; } //сбрасываем флаг смены сегмента
+	
 	if (negate_IDIV)
 	{
 		if (log_to_console) cout << endl;
 		goto cmd_rep;
 	}
-	DS = &DS_data; //возвращаем назад сегмент
-	SS = &SS_data;
+	//DS = &DS_data; //возвращаем назад сегмент
+	//SS = &SS_data;
+	*/
 }
 uint16 mod_RM_Old(uint8 byte2)		//расчет адреса операнда по биту 2
 {
@@ -834,7 +953,7 @@ uint32 mod_RM_2(uint8 byte2)		//расчет адреса операнда по биту 2
 	}
 	return 0;
 }
-void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
+void mod_RM_3_old(uint8 byte2)		//расчет адреса операнда по биту 2
 {
 	if ((byte2 >> 6) == 0) //no displacement
 	{
@@ -977,7 +1096,7 @@ void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
 			operand_RM_offset = Destination_Index + d16;
 			break;
 		case 6:
-			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*SS, 4) + ":" + int_to_hex((Base_Pointer + d16) & 0xFFFF, 4) + "] d16=" + to_string(d16);
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*SS, 4) + ":" + int_to_hex((Base_Pointer + d16) & 0xFFFF, 4) + "]";
 			operand_RM_seg = *SS;
 			operand_RM_offset = Base_Pointer + d16;
 			break;
@@ -989,7 +1108,700 @@ void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
 		}
 	}
 }
+void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
+{
+	if (bus_lock == 1)
+	{
+		cout << "Bus lock exeption (RM)" << endl;
+		bus_lock = 0;		//сбрасываем флаг блокировки шины
+		exeption = 0x14;	//бросаем исключение
+	}
+	if ((byte2 >> 6) == 0) //no displacement
+	{
+		additional_IPs = 0;
+		switch (byte2 & 7)
+		{
+		case 0:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX + Source_Index;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 1:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX + Destination_Index;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 2:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *SS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//ничего не меняем (уже SS)
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//меняем на DS
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Base_Pointer + Source_Index;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex((operand_RM_offset) & 0xFFFF, 4) + "]";
+			break;
+		case 3:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *SS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//ничего не меняем (уже SS)
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//меняем на DS
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Base_Pointer + Destination_Index;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 4:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Source_Index;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 5:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Destination_Index;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex((operand_RM_offset) & 0xFFFF, 4) + "]";
+			break;
+		case 6:
+			additional_IPs = 2;
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF] * 256;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset, 4) + "]";
+			break;
+		case 7:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset, 4) + "]";
+			break;
+		}
+		Flag_segment_override = 0; //отменяем смену сегмента
 
+		return;
+	}
+	if ((byte2 >> 6) == 1) // 8-bit displacement
+	{
+		additional_IPs = 1;
+
+		//грузим смещение
+		__int8 d8 = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+
+		switch (byte2 & 7)
+		{
+		case 0:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX + Source_Index + d8;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 1:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX + Destination_Index + d8;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 2:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *SS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//ничего не меняем (уже SS)
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//меняем на DS
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Base_Pointer + Source_Index + d8;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 3:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *SS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//ничего не меняем (уже SS)
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//меняем на DS
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Base_Pointer + Destination_Index + d8;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 4:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Source_Index + d8;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 5:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Destination_Index + d8;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 6:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *SS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//ничего не меняем (уже SS)
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//меняем на DS
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Base_Pointer + d8;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 7:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX + d8;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		}
+		Flag_segment_override = 0; //отменяем смену сегмента
+		return;
+	}
+	if ((byte2 >> 6) == 2) // 16-bit displacement
+	{
+		additional_IPs = 2;
+
+		//грузим два байта смещения
+		__int16 d16 = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF] * 256;
+
+		switch (byte2 & 7)
+		{
+		case 0:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX + Source_Index + d16;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 1:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX + Destination_Index + d16;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 2:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *SS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//ничего не меняем (уже SS)
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//меняем на DS
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Base_Pointer + Source_Index + d16;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 3:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *SS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//ничего не меняем (уже SS)
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//меняем на DS
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Base_Pointer + Destination_Index + d16;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 4:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Source_Index + d16;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 5:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Destination_Index + d16;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 6:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *SS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//ничего не меняем (уже SS)
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//меняем на DS
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = Base_Pointer + d16;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		case 7:
+			switch (Flag_segment_override)
+			{
+			case 0:
+				//ничего не меняем
+				operand_RM_seg = *DS;
+				break;
+			case 1:
+				//меняем на ES
+				operand_RM_seg = *ES;
+				break;
+			case 2:
+				//меняем на CS
+				operand_RM_seg = *CS;
+				break;
+			case 3:
+				//меняем на SS
+				operand_RM_seg = *SS;
+				break;
+			case 4:
+				//ничего не меняем (уже DS)
+				operand_RM_seg = *DS;
+				break;
+			}
+			operand_RM_offset = BX + d16;
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset & 0xFFFF, 4) + "]";
+			break;
+		}
+		Flag_segment_override = 0; //отменяем смену сегмента
+		return;
+	}
+}
 __int8 DispCalc8(uint8 data)
 {
 	__int8 disp;
@@ -1012,6 +1824,8 @@ __int16 DispCalc16(uint16 data)
 }
 void syscall(uint8 INT_number)
 {
+	return; //выключаем
+	
 	if (log_to_console) cout << "INT " << (int)INT_number << "(syscall)" << endl;
 	if (INT_number == 0x10)
 	{
@@ -1177,7 +1991,8 @@ std::string get_int21_data()
 	case 13:
 		return "Disk reset";
 	case 14:
-		return "Select disk";
+		out = "Select disk #" + to_string(*ptr_DL);
+		return out;
 	case 15:
 		return "Open file using FCB";
 	case 16:
@@ -1254,7 +2069,7 @@ std::string get_int21_data()
 	case 52:
 		return "Get address to DOS critical flag(undocumented)";
 	case 53:
-		return "Get vector";
+		return "Get int vector #" + int_to_hex(*ptr_AL,2) + "h = " + int_to_hex(memory_2[*ptr_AL + 3] * 256 + memory_2[*ptr_AL + 2], 4) + ":" + int_to_hex(memory_2[*ptr_AL + 1] * 256 + memory_2[*ptr_AL], 4);
 	case 54:
 		return "Get disk free space";
 	case 55:
@@ -1308,14 +2123,15 @@ std::string get_int21_data()
 			out += "(read/write) ";
 			break;
 		}
-		out += "name: ";
+		out += "name (" + int_to_hex(DS_data,4) + ":" + int_to_hex(DX, 4) + "):";
 		for (int i = 0; i < 12; ++i)
 		{
 			if (memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]) out += memory_2[(DS_data * 16 + DX + i) & 0xFFFFF];
+			else break;
 		}
 		return out;
 	case 62:
-		return "Close file using handle";
+		return "Close file using handle #" + int_to_hex(*ptr_BX, 4);
 	case 63:
 		return "Read file or device using handle";
 	case 64:
@@ -1324,7 +2140,7 @@ std::string get_int21_data()
 		for (int i = 0; i < CX; ++i)
 		{
 			if (memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]) out += memory_2[(DS_data * 16 + DX + i) & 0xFFFFF];
-			monitor.teletype(memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]);
+			//monitor.teletype(memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]);
 		}
 		return out;
 	case 65:
@@ -1405,7 +2221,7 @@ std::string get_int21_data()
 		{
 		case 0:
 			out = "EXEC load and execute program ";
-			for (int i = 0; i < 12; ++i)
+			for (int i = 0; i < 40; ++i)
 			{
 				if (memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]) out += memory_2[(DS_data * 16 + DX + i) & 0xFFFFF];
 			}
@@ -1487,12 +2303,107 @@ std::string get_int21_data()
 	}
 	return "Unknown function";
 }
+std::string get_int10_data()
+{
+	string out;
+	if (*ptr_AH == 0)
+	{
+		//(AH)= 00H	SET MODE (AL) CONTAINS MODE VALUE
+		step_mode = 0;
+		switch (*ptr_AL)
+		{
+		case 0:
+			return "SET MODE -> 40X25 BW TEXT MODE";
+		case 1:
+			return "SET MODE -> 40X25 COLOR TEXT MODE";
+		case 2:
+			return "SET MODE -> 80X25 BW TEXT MODE";
+		case 3:
+			return "SET MODE -> 80X25 COLOR TEXT MODE";
+		case 4:
+			return "SET MODE -> 320X200 COLOR GFX MODE";
+		case 5:
+			return "SET MODE -> 320X200 BW GFX MODE";
+		case 6:
+			return "SET MODE -> 640X200 BW GFX MODE";
+		case 7:
+			return "SET MODE -> 80X25 MONOCHROME TEXT MODE";
+		}
+	}
 
+	if (*ptr_AH == 1)
+	{
+		//(AH) = 01H	SET CURSOR TYPE
+		return "SET CURSOR TYPE -> start line = " + int_to_hex((int)*ptr_CH, 2) + "H end line = " + int_to_hex((int)*ptr_CL, 2) + "H";
+	}
+	
+	if (*ptr_AH == 2)
+	{
+		//(AH) = 02H SET CURSOR POSITION
+		return "SET CURSOR POSITION -> row=" + int_to_hex((int)*ptr_DH, 2 ) + "H column=" + int_to_hex((int)*ptr_DL, 2 ) + "H page=" + int_to_hex((int)*ptr_BH, 2) + "H";
+	}
+
+	if (*ptr_AH == 3)
+	{
+		//(AH)= 03H	READ CURSOR POSITION
+		return "READ CURSOR POSITION -> on page=" + int_to_hex((int)*ptr_BH, 2) + "H";
+	}
+	
+
+	//(AH)= 05H	SELECT ACTIVE DISPLAY PAGE
+	
+	if (*ptr_AH == 6)
+	{
+		//(AH)= 06H	SCROLL ACTIVE PAGE UP
+		if (*ptr_AL == 0) return "SCROLL ACTIVE PAGE UP - > BLANK ENTIRE WINDOW";
+		else
+		{
+			return "SCROLL ACTIVE PAGE UP - > by " + int_to_hex((int)*ptr_AL, 2) + "H lines";
+		}
+	}
+
+	//(AH)= 07H	SCROLL ACTIVE PAGE DOWN
+	
+	if (*ptr_AH == 9)
+	{
+		//(AH)= 09H	WRITE ATTRIBUTE/CHARACTER AT CURRENT CURSOR POSITION
+		return "WRITE CHARACTER/ATTRIBUTE AT CURSOR -> char_code=" + int_to_hex((int)*ptr_AL, 2) + "H attribute=" + int_to_hex((int)*ptr_BL, 2) + "H page=" + int_to_hex((int)*ptr_BH, 2) + "H count=" + int_to_hex((int)*ptr_CX, 4) + "H";
+	}
+
+	if (*ptr_AH == 0xa)
+	{
+		//(AH) = 0AH	WRITE CHARACTER ONLY AT CURRENT CURSOR POSITION
+		return "WRITE CHARACTER AT CURSOR -> char_code=" + int_to_hex((int)*ptr_AL, 2) + "H page=" + int_to_hex((int)*ptr_BH, 2) + "H count=" + int_to_hex((int)*ptr_CX, 4) + "H";
+	}
+
+	if (*ptr_AH == 0xb)
+	{
+		//(AH)= 0BH	SET COLOR PALETTE
+		if (*ptr_BH == 0) { step_mode = 0; return "SET COLOR PALETTE -> SET BG_COLOR(color=" + int_to_hex((int)*ptr_BL, 2) + "h)"; }
+		if (*ptr_BH == 1) { step_mode = 0; return "SET COLOR PALETTE -> SET PALETTE(palette=" + int_to_hex((int)*ptr_BL, 2) + "h)"; }
+		return "SET COLOR PALETTE -> unknown (BH=" + int_to_hex((int)*ptr_BH, 2) + "H BL=" + int_to_hex((int)*ptr_BL, 2) + "H)";
+	}
+
+	if (*ptr_AH == 0xe)
+	{
+		//(AH)= 0EH	WRITE TELETYPE TO ACTIVE PAGE
+		return "TELETYPE TO AP -> char_code=" + int_to_hex((int)*ptr_AL, 2) + "H color=" + int_to_hex((int)*ptr_BL, 2) + "H";
+	}
+
+	if (*ptr_AH == 0xf)
+	{
+		//(AH)= 0FH	CURRENT VIDEO STATE		
+		return "GET CURRENT VIDEO STATE";
+	}
+	
+	return "INT 10H unknown function AH=" + int_to_hex((int)*ptr_AH,2) + "H AL = " + int_to_hex((int)*ptr_AL,2) + "H";
+
+}
 //============== Data Transfer Group ===========
 
 void mov_R_to_RM_8() //Move 8 bit R->R/M
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	if (log_to_console) cout << "MOV " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ")  to ";
 
 	//определяем получателя
@@ -1516,7 +2427,7 @@ void mov_R_to_RM_8() //Move 8 bit R->R/M
 }
 void mov_R_to_RM_16() //Move 16 bit R->R/M
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 
 	if (log_to_console) cout << "MOV " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ")  to ";
 	
@@ -1542,7 +2453,7 @@ void mov_R_to_RM_16() //Move 16 bit R->R/M
 }
 void mov_RM_to_R_8() //Move 8 bit R/M->R
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 		
 	//определяем источник
 	if((byte2 >> 6) == 3)
@@ -1564,7 +2475,7 @@ void mov_RM_to_R_8() //Move 8 bit R/M->R
 }
 void mov_RM_to_R_16() //Move 16 bit R/M->R
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 
 	//определяем источник
 	if ((byte2 >> 6) == 3)
@@ -1590,7 +2501,7 @@ void mov_RM_to_R_16() //Move 16 bit R/M->R
 }
 void IMM_8_to_RM()		//IMM_8 to R/M
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 																			//определяем получателя
 	if ((byte2 >> 6) == 3)
 	{
@@ -1610,7 +2521,7 @@ void IMM_8_to_RM()		//IMM_8 to R/M
 }
 void IMM_16_to_RM()	//IMM_16 to R/M
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	
 	//определяем получателя
 	if((byte2 >> 6) == 3)
@@ -1647,38 +2558,130 @@ void IMM_16_to_R()		//IMM_16 to Register
 
 void M_8_to_ACC()		//Memory to Accumulator 8
 {
-	New_Addr = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
-	*ptr_AL = memory_2[(New_Addr + *DS * 16) & 0xFFFFF];
+	New_Addr_32 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	*ptr_AL = memory_2[(New_Addr_32 + operand_RM_seg * 16) & 0xFFFFF];
 	Instruction_Pointer += 3;
-	if (log_to_console) cout << "M[" << (int)*DS  << ":" << (int)New_Addr << "] to AL(" << (int)(AX & 255) << ")";
+	if (log_to_console) cout << "M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "] to AL(" << (int)(AX & 255) << ")";
 }
 void M_16_to_ACC()		//Memory to Accumulator 16
 {
-	New_Addr = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
-	*ptr_AL = memory_2[(New_Addr + *DS * 16) & 0xFFFFF];
-	*ptr_AH = memory_2[(New_Addr + 1 + *DS * 16) & 0xFFFFF];
+	New_Addr_32 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	*ptr_AL = memory_2[(New_Addr_32 + operand_RM_seg * 16) & 0xFFFFF];
+	*ptr_AH = memory_2[(New_Addr_32 + 1 + operand_RM_seg * 16) & 0xFFFFF];
 	Instruction_Pointer += 3;
-	if (log_to_console) cout << "M[" << (int)*DS << ":" << (int)New_Addr << "] to AX(" << (int)(AX) << ")";
+	if (log_to_console) cout << "M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "] to AX(" << (int)(AX) << ")";
 }
 void ACC_8_to_M()		//Accumulator to Memory 8
 {
-	New_Addr = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
-	memory_2[(New_Addr + *DS * 16) & 0xFFFFF] = *ptr_AL;
+	New_Addr_32 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	memory_2[(New_Addr_32 + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AL;
 	Instruction_Pointer += 3;
-	if (log_to_console) cout << "AL(" << (int)(AX & 255) << ") to M[" << (int)*DS << ":" << (int)New_Addr << "]";
+	if (log_to_console) cout << "AL(" << (int)(AX & 255) << ") to M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "]";
 }
 void ACC_16_to_M()		//Accumulator to Memory 16
 {
-	New_Addr = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
-	memory_2[(New_Addr + *DS * 16) & 0xFFFFF] = *ptr_AL;
-	memory_2[(New_Addr + 1 + *DS * 16) & 0xFFFFF] = *ptr_AH;
+	New_Addr_32 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	memory_2[(New_Addr_32 + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AL;
+	memory_2[(New_Addr_32 + 1 + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AH;
 	Instruction_Pointer += 3;
-	if (log_to_console) cout << "AX(" << (int)AX << ") to M[" << (int)*DS << ":" << (int)New_Addr << "]";
+	if (log_to_console) cout << "AX(" << (int)AX << ") to M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "]";
 }
 
 void RM_to_Segment_Reg()	//Register/Memory to Segment Register
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 
 	//определяем источник
 	if((byte2 >> 6) == 3)
@@ -1701,7 +2704,7 @@ void RM_to_Segment_Reg()	//Register/Memory to Segment Register
 }
 void Segment_Reg_to_RM()	//Segment Register to Register/Memory
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 
 	//выбираем приёмник данных
 	if((byte2 >> 6) == 3)
@@ -1726,13 +2729,16 @@ void Segment_Reg_to_RM()	//Segment Register to Register/Memory
 void Push_R()		//PUSH Register
 {
 	uint8 reg = memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7;
-	if (log_to_console) cout << "PUSH " << reg16_name[reg] << "(" << (int)*ptr_r16[reg] << ")";
+	uint16 reg_data = *ptr_r16[reg];
+	if (reg == 4) reg_data -= 2;
+
+	if (log_to_console) cout << "PUSH " << reg16_name[reg] << "(" << (int)reg_data << ")";
 		
 	//пушим число
 	Stack_Pointer--;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFf] = *ptr_r16[reg] >> 8;
+	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFf] = reg_data >> 8;
 	Stack_Pointer--;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = *ptr_r16[reg] & 255;
+	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = reg_data & 255;
 	Instruction_Pointer++;
 }
 void Push_SegReg()	//PUSH Segment Register
@@ -1748,13 +2754,13 @@ void Push_SegReg()	//PUSH Segment Register
 	Instruction_Pointer++;
 }
 
-void Pop_RM()			//POP Register/Memory
+void Pop_RM()			//POP Register/Memory (8F)
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
 	uint8 OP = (byte2 >> 3) & 7;
 	uint16 Src = 0;
 
-	if (OP == 0)
+	if (OP == 0 || 1) //пока отключим, эти биты вроде игнорируются
 	{
 		//делаем POP
 		Src = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
@@ -1782,9 +2788,9 @@ void Pop_RM()			//POP Register/Memory
 	}
 	else
 	{
-		cout << "Error: POP RM with REG!=0. IP= " << (int)Instruction_Pointer;
-		log_to_console = 1;
-		step_mode = 1;
+		cout << "Error: POP RM with REG!=0  command = " << (int)memory_2[CS_data * 16 + Instruction_Pointer] << " " << (int)memory_2[CS_data * 16 + Instruction_Pointer + 1];
+		//log_to_console = 1;
+		//step_mode = 1;
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }
@@ -1823,595 +2829,259 @@ void Pop_SegReg()		//POP Segment Register
 
 void XCHG_8()			//Exchange Register/Memory with Register 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Dest = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 
-	//выбираем источник данных в регистре
-	switch ((byte2 >> 3) & 7)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-		Src = AX & 255;
-		if (log_to_console) cout << "Exchange AL(" << (int)Src << ") with";
-		break;
-	case 1:
-		Src = CX & 255;
-		if (log_to_console) cout << "Exchange CL(" << (int)Src << ") with";
-		break;
-	case 2:
-		Src = DX & 255;
-		if (log_to_console) cout << "Exchange DL(" << (int)Src << ") with";
-		break;
-	case 3:
-		Src = BX & 255;
-		if (log_to_console) cout << "Exchange BL(" << (int)Src << ") with";
-		break;
-	case 4:
-		Src = AX >> 8;
-		if (log_to_console) cout << "Exchange AH(" << (int)Src << ") with";
-		break;
-	case 5:
-		Src = CX >> 8;
-		if (log_to_console) cout << "Exchange CH(" << (int)Src << ") with";
-		break;
-	case 6:
-		Src = DX >> 8;
-		if (log_to_console) cout << "Exchange DH(" << (int)Src << ") with";
-		break;
-	case 7:
-		Src = BX >> 8;
-		if (log_to_console) cout << "Exchange BH(" << (int)Src << ") with";
-	}
-
-	//заменяем данные в другом регистре/памяти
-	//интерпретация MOD
-	switch (byte2 >> 6)
-	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Dest = memory.read_2(New_Addr);
-		memory.write_2(New_Addr,  Src);
-		if (log_to_console) cout << " M" << OPCODE_comment << "";
-		break;
-	case 3:
 		// mod 11 получатель - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Dest = AX & 255;
-			AX = (AX & 0xFF00) | Src;
-			if (log_to_console) cout << " AL(" << (int)Dest << ")";
-			break;
-		case 1:
-			Dest = CX & 255;
-			CX = (CX & 0xFF00) | Src;
-			if (log_to_console) cout << " CL(" << (int)Dest << ")";
-			break;
-		case 2:
-			Dest = DX & 255;
-			DX = (DX & 0xFF00) | Src;
-			if (log_to_console) cout << " DL(" << (int)Dest << ")";
-			break;
-		case 3:
-			Dest = BX & 255;
-			BX = (BX & 0xFF00) | Src;
-			if (log_to_console) cout << " BL(" << (int)Dest << ")";
-			break;
-		case 4:
-			Dest = AX >> 8;
-			AX = (AX & 0x00FF) | (Src * 256);
-			if (log_to_console) cout << " AH(" << (int)Dest << ")";
-			break;
-		case 5:
-			Dest = CX >> 8;
-			CX = (CX & 0x00FF) | (Src * 256);
-			if (log_to_console) cout << " CH(" << (int)Dest << ")";
-			break;
-		case 6:
-			Dest = DX >> 8;
-			DX = (DX & 0x00FF) | (Src * 256);
-			if (log_to_console) cout << " DH(" << (int)Dest << ")";
-			break;
-		case 7:
-			Dest = BX >> 8;
-			BX = (BX & 0x00FF) | (Src * 256);
-			if (log_to_console) cout << " BH(" << (int)Dest << ")";
-		}
+		*ptr_Src_L = *ptr_r8[(byte2 >> 3) & 7]; //временное значение
+		*ptr_r8[(byte2 >> 3) & 7] = *ptr_r8[byte2 & 7];
+		*ptr_r8[byte2 & 7] = *ptr_Src_L;
+		if (log_to_console) cout << "Exchange " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") with " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ")";
+		Instruction_Pointer += 2;
 	}
-
-	//заменяем исходный источник данных
-	switch ((byte2 >> 3) & 7)
+	else
 	{
-	case 0:
-		AX = (AX & 0xFF00) | (Dest);
-		break;
-	case 1:
-		CX = (CX & 0xFF00) | (Dest);
-		break;
-	case 2:
-		DX = (DX & 0xFF00) | (Dest);
-		break;
-	case 3:
-		BX = (BX & 0xFF00) | (Dest);
-		break;
-	case 4:
-		AX = (AX & 0x00FF) | (Dest * 256);
-		break;
-	case 5:
-		CX = (CX & 0x00FF) | (Dest * 256);
-		break;
-	case 6:
-		DX = (DX & 0x00FF) | (Dest * 256);
-		break;
-	case 7:
-		BX = (BX & 0x00FF) | (Dest * 256);
+		*ptr_Src_L = *ptr_r8[(byte2 >> 3) & 7]; //временное значение
+		mod_RM_3(byte2);
+		*ptr_r8[(byte2 >> 3) & 7] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+		if (log_to_console) cout << "Exchange " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") with M" << OPCODE_comment;
+		Instruction_Pointer += 2 + additional_IPs;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
 }
 void XCHG_16()			//Exchange Register/Memory with Register 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Dest = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 
-	//выбираем источник данных в регистре
-	switch ((byte2 >> 3) & 7)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-		Src = AX;
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with";
-		break;
-	case 1:
-		Src = CX;
-		if (log_to_console) cout << "Exchange CX(" << (int)Src << ") with";
-		break;
-	case 2:
-		Src = DX;
-		if (log_to_console) cout << "Exchange DX(" << (int)Src << ") with";
-		break;
-	case 3:
-		Src = BX;
-		if (log_to_console) cout << "Exchange BX(" << (int)Src << ") with";
-		break;
-	case 4:
-		Src = Stack_Pointer;
-		if (log_to_console) cout << "Exchange SP(" << (int)Src << ") with";
-		break;
-	case 5:
-		Src = Base_Pointer;
-		if (log_to_console) cout << "Exchange BP(" << (int)Src << ") with";
-		break;
-	case 6:
-		Src = Source_Index;
-		if (log_to_console) cout << "Exchange SI(" << (int)Src << ") with";
-		break;
-	case 7:
-		Src = Destination_Index;
-		if (log_to_console) cout << "Exchange DI(" << (int)Src << ") with";
-	}
-
-	//заменяем данные в другом регистре/памяти
-	//интерпретация MOD
-	switch (byte2 >> 6)
-	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Dest = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		memory.write_2(New_Addr,  Src & 255);
-		memory.write_2(New_Addr + 1,  Src >> 8);
-		if (log_to_console) cout << " M" << OPCODE_comment << "";
-		break;
-	case 3:
 		// mod 11 получатель - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Dest = AX;
-			AX = Src;
-			if (log_to_console) cout << " AX(" << (int)Dest << ")";
-			break;
-		case 1:
-			Dest = CX;
-			CX = Src;
-			if (log_to_console) cout << " CX(" << (int)Dest << ")";
-			break;
-		case 2:
-			Dest = DX;
-			DX = Src;
-			if (log_to_console) cout << " DX(" << (int)Dest << ")";
-			break;
-		case 3:
-			Dest = BX;
-			BX = Src;
-			if (log_to_console) cout << " BX(" << (int)Dest << ")";
-			break;
-		case 4:
-			Dest = Stack_Pointer;
-			Stack_Pointer = Src;
-			if (log_to_console) cout << " SP(" << (int)Dest << ")";
-			break;
-		case 5:
-			Dest = Base_Pointer;
-			Base_Pointer = Src;
-			if (log_to_console) cout << " BP(" << (int)Dest << ")";
-			break;
-		case 6:
-			Dest = Source_Index;
-			Source_Index = Src;
-			if (log_to_console) cout << " SI(" << (int)Dest << ")";
-			break;
-		case 7:
-			Dest = Destination_Index;
-			Destination_Index = Src;
-			if (log_to_console) cout << " DI(" << (int)Dest << ")";
-		}
+		*ptr_Src = *ptr_r16[(byte2 >> 3) & 7]; //временное значение
+		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[byte2 & 7];
+		*ptr_r16[byte2 & 7] = *ptr_Src;
+		if (log_to_console) cout << "Exchange " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") with " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ")";
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		*ptr_Src = *ptr_r16[(byte2 >> 3) & 7]; //временное значение
+		mod_RM_3(byte2);
+		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] + memory_2[(operand_RM_seg * 16 + operand_RM_offset + 1) & 0xFFFFF] * 256;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset + 1) & 0xFFFFF] = *ptr_Src_H;
+
+		if (log_to_console) cout << "Exchange " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") with M" << OPCODE_comment;
+		Instruction_Pointer += 2 + additional_IPs;
 	}
 
-	//заменяем исходный источник данных
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		AX = Dest;
-		break;
-	case 1:
-		CX = Dest;
-		break;
-	case 2:
-		DX = Dest;
-		break;
-	case 3:
-		BX = Dest;
-		break;
-	case 4:
-		Stack_Pointer = Dest;
-		break;
-	case 5:
-		Base_Pointer = Dest;
-		break;
-	case 6:
-		Source_Index = Dest;
-		break;
-	case 7:
-		Destination_Index = Dest;
-	}
-	Instruction_Pointer += 2 + additional_IPs;
+	
 }
 void XCHG_ACC_R()		//Exchange Register with Accumulator
 {
-	uint8 reg = memory.read_2(Instruction_Pointer + *CS * 16) & 7; //reg
-	uint16 Src = 0;
-	uint16 Dest = 0;
+	byte2 = memory.read_2(Instruction_Pointer + *CS * 16) & 7; //reg
+	
+	if (log_to_console) cout << "Exchange AX(" << (int)AX << ") with " << reg16_name[byte2] << "(" << (int)*ptr_r16[byte2] << ")";
+	
+	*ptr_Src = AX;
+	AX = *ptr_r16[byte2];
+	*ptr_r16[byte2] = *ptr_Src;
 
-	Src = AX;
-	switch (reg)
-	{
-	case 0:
-		// AX - AX не нужен
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with AX";
-		break;
-	case 1:
-		AX = CX;
-		CX = Src;
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with CX(" << (int)AX << ")";
-		break;
-	case 2:
-		AX = DX;
-		DX = Src;
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with DX(" << (int)AX << ")";
-		break;
-	case 3:
-		AX = BX;
-		BX = Src;
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with BX(" << (int)AX << ")";
-		break;
-	case 4:
-		AX = Stack_Pointer;
-		Stack_Pointer = Src;
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with SP(" << (int)AX << ")";
-		break;
-	case 5:
-		AX = Base_Pointer;
-		Base_Pointer = Src;
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with BP(" << (int)AX << ")";
-		break;
-	case 6:
-		AX = Source_Index;
-		Source_Index = Src;
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with SI(" << (int)AX << ")";
-		break;
-	case 7:
-		AX = Destination_Index;
-		Destination_Index = Src;
-		if (log_to_console) cout << "Exchange AX(" << (int)Src << ") with DI(" << (int)AX << ")";
-	}
 	Instruction_Pointer ++;
 }
 
 void In_8_to_ACC_from_port()	 //Input 8 to AL/AX AX from fixed PORT
 {
-	AX = (AX & 0xFF00) | IO_device.input_from_port_8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]); //пишем в AL байт из порта
-	SetConsoleTextAttribute(hConsole, 10);
+	*ptr_AL = IO_device.input_from_port_8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]); //пишем в AL байт из порта
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "read (" << (int)(AX & 255) << ") from port " << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 2;
 }
 void In_16_to_ACC_from_port()    //Input 16 to AL/AX AX from fixed PORT
 {
 	AX = IO_device.input_from_port_16(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]); //пишем в AX 2 байта из порта
-	SetConsoleTextAttribute(hConsole, 10);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "read (" << (int)AX << ") from port " << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 2;
 }
 void Out_8_from_ACC_to_port()    //Output 8 from AL/AX AX from fixed PORT
 {
-	IO_device.output_to_port_8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF], AX & 255);//выводим в порт байт AL
-	SetConsoleTextAttribute(hConsole, 10);
+	IO_device.output_to_port_8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF], *ptr_AL);//выводим в порт байт AL
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "write AL(" << (int)(AX & 255) << ") to port " << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 2;
 }
 void Out_16_from_ACC_to_port()   //Output 16 from AL/AX AX from fixed PORT
 {
 	IO_device.output_to_port_16(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF], AX);//выводим в порт 2 байта AX
-	SetConsoleTextAttribute(hConsole, 10);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "write AX(" << (int)(AX) << ") to port " << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 2;
 }
 void In_8_from_DX()		//Input 8 from variable PORT
 {
-	AX = (AX & 0xFF00) | IO_device.input_from_port_8(DX); //пишем в AL байт из порта DX
-	SetConsoleTextAttribute(hConsole, 10);
+	*ptr_AL = IO_device.input_from_port_8(DX); //пишем в AL байт из порта DX
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "read (" << (int)(AX & 255) << ") from port " << (int)DX;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 1;
 }
 void In_16_from_DX()	//Input 16 from variable PORT
 {
 	AX = IO_device.input_from_port_16(DX); //пишем в AX байт из порта DX
-	SetConsoleTextAttribute(hConsole, 10);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "read (" << (int)AX << ") from port " << (int)DX;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 1;
 }
 void Out_8_to_DX()		//Output 8 to variable PORT
 {
-	IO_device.output_to_port_8(DX, AX & 255);//выводим в порт DX байт AL
-	SetConsoleTextAttribute(hConsole, 10);
+	IO_device.output_to_port_8(DX, *ptr_AL);//выводим в порт DX байт AL
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "write AL(" << (int)(AX & 255) << ") to port " << (int)DX;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 1;
 }
 void Out_16_to_DX()		//Output 16 to variable PORT
 {
 	IO_device.output_to_port_16(DX, AX);//выводим в порт DX байт AL
-	SetConsoleTextAttribute(hConsole, 10);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "write AX(" << (int)(AX) << ") to port " << (int)DX;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 1;
 }
 
 void XLAT()			//Translate Byte to AL
 {
-	if (log_to_console) cout << "XLAT AL(" << (int)(AX & 255) << ") = ";
-	uint16 Addr = BX + (AX & 255);
-	AX = (AX & 0xFF00) | memory.read_2(Addr + *DS * 16);
-	if (log_to_console) cout << (int)(AX & 255);
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	if (log_to_console) cout << "XLAT M[" << (int)((BX + *ptr_AL + operand_RM_seg * 16) & 0xFFFFF) << "] -> AL(";
+	uint16 Addr = BX + *ptr_AL;
+	*ptr_AL = memory_2[(Addr + operand_RM_seg * 16) & 0xFFFFF];
+	if (log_to_console) cout << (int)(AX & 255) << ")";
 	Instruction_Pointer++;
 }
 void LEA()			//Load EA to Register
 {
-	uint8 byte2 = memory.read_2(uint16(Instruction_Pointer + 1) + *CS * 16); //mod / reg / rm
-	uint16 Src = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 EA = 0;
 
 	//определяем смещение
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		EA = mod_RM_Old(byte2);
-		if (log_to_console) cout << "LEA (" << (int)EA << ")" ;
-		break;
-	case 3:
-		EA = 0; //заглушка
-		cout << "LEA ERROR";
-		break;
+		//UNDOC
+		//возвращает офсет, оставшийся от предыдущей операции
+
+		if (log_to_console) cout << "UNDOC LEA (" << (int)operand_RM_offset << ")" << " to " << reg16_name[(byte2 >> 3) & 7];
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		if (log_to_console) cout << "LEA (" << (int)operand_RM_offset << ")" ;
+		*ptr_r16[(byte2 >> 3) & 7] = operand_RM_offset;
+		if (log_to_console) cout << " to " << reg16_name[(byte2 >> 3) & 7];
 	}
 
-	//выбираем приёмник данных
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		AX = EA;
-		if (log_to_console) cout << " to AX";
-		break;
-	case 1:
-		CX = EA;
-		if (log_to_console) cout << " to CX";
-		break;
-	case 2:
-		DX = EA;
-		if (log_to_console) cout << " to DX";
-		break;
-	case 3:
-		BX = EA;
-		if (log_to_console) cout << " to BX";
-		break;
-	case 4:
-		Stack_Pointer = EA;
-		if (log_to_console) cout << " to SP";
-		break;
-	case 5:
-		Base_Pointer = EA;
-		if (log_to_console) cout << " to BP";
-		break;
-	case 6:
-		Source_Index = EA;
-		if (log_to_console) cout << " to SI";
-		break;
-	case 7:
-		Destination_Index = EA;
-		if (log_to_console) cout << " to DI";
-		break;
-	}
 	Instruction_Pointer += 2 + additional_IPs;
 }
 void LDS()			//Load Pointer to DS
 {
-	uint8 byte2 = memory.read_2(uint16(Instruction_Pointer + 1) + *CS * 16); //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Src_2 = 0;
-	additional_IPs = 0;
-#ifdef DEBUG
-	if (log_to_console) cout << "LDS ";
-#endif
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 
 	//определяем источник
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		Src_2 = memory.read_2(New_Addr + 2) + memory.read_2(New_Addr + 3) * 256;
-		if (log_to_console) cout << "(" << (int)Src << ") to ";
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		// неприменимо
-		cout << "ERROR LDS";
-		step_mode = 1;
-		break;
+		// UNDOC
+		// возвращает данные с учетом старых данных во внутренних регистрах
+		//уточнить порядок при необходимости
+		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		operand_RM_offset++;
+		DS_data = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		operand_RM_offset++;
+		DS_data = DS_data + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		if (log_to_console) cout << "UNDOC! LDS " << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << " + DS(" << (int)DS_data << ")";
 	}
-
-	//выбираем приёмник данных
-	switch ((byte2 >> 3) & 7)
+	else
 	{
-	case 0:
-		AX = Src;
-		if (log_to_console) cout << "AX(" << (int)Src << ")";
-		break;
-	case 1:
-		CX = Src;
-		if (log_to_console) cout << "CX(" << (int)Src << ")";
-		break;
-	case 2:
-		DX = Src;
-		if (log_to_console) cout << "DX(" << (int)Src << ")";
-		break;
-	case 3:
-		BX = Src;
-		if (log_to_console) cout << "BX(" << (int)Src << ")";
-		break;
-	case 4:
-		Stack_Pointer = Src;
-		if (log_to_console) cout << "SP(" << (int)Src << ")";
-		break;
-	case 5:
-		Base_Pointer = Src;
-		if (log_to_console) cout << "BP(" << (int)Src << ")";
-		break;
-	case 6:
-		Source_Index = Src;
-		if (log_to_console) cout << "SI(" << (int)Src << ")";
-		break;
-	case 7:
-		Destination_Index = Src;
-		if (log_to_console) cout << "DI(" << (int)Src << ")";
-		break;
+		mod_RM_3(byte2);
+		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_r16[(byte2 >> 3) & 7]  = *ptr_r16[(byte2 >> 3) & 7]  + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		operand_RM_offset++;
+		DS_data = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		operand_RM_offset++;
+		DS_data  = DS_data  + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		if (log_to_console) cout << "LDS " << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << " + DS(" << (int)DS_data << ")";
 	}
-
-	DS_data = Src_2;
-	if (log_to_console) cout << " + DS(" << (int)DS_data << ")";
 
 	Instruction_Pointer += 2 + additional_IPs;
 }
 void LES()			//Load Pointer to ES
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Src_2 = 0;
-	additional_IPs = 0;
-#ifdef DEBUG
-	if (log_to_console) cout << "LES ";
-#endif
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 
 	//определяем источник
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		Src_2 = memory.read_2(New_Addr + 2) + memory.read_2(New_Addr + 3) * 256;
-		if (log_to_console) cout << "M(" << (int)Src << ") to ";
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		// неприменимо
-		cout << "ERROR LDS";
-		break;
+		// UNDOC
+		// возвращает данные с учетом старых данных во внутренних регистрах
+		//уточнить порядок при необходимости
+		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		operand_RM_offset++;
+		ES_data = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		operand_RM_offset++;
+		ES_data = ES_data + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		if (log_to_console) cout << "UNDOC! LES " << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << " + ES(" << (int)ES_data << ")";
 	}
-
-	//выбираем приёмник данных
-	switch ((byte2 >> 3) & 7)
+	else
 	{
-	case 0:
-		AX = Src;
-		if (log_to_console) cout << "AX(" << (int)Src << ")";
-		break;
-	case 1:
-		CX = Src;
-		if (log_to_console) cout << "CX(" << (int)Src << ")";
-		break;
-	case 2:
-		DX = Src;
-		if (log_to_console) cout << "DX(" << (int)Src << ")";
-		break;
-	case 3:
-		BX = Src;
-		if (log_to_console) cout << "BX(" << (int)Src << ")";
-		break;
-	case 4:
-		Stack_Pointer = Src;
-		if (log_to_console) cout << "SP(" << (int)Src << ")";
-		break;
-	case 5:
-		Base_Pointer = Src;
-		if (log_to_console) cout << "BP(" << (int)Src << ")";
-		break;
-	case 6:
-		Source_Index = Src;
-		if (log_to_console) cout << "SI(" << (int)Src << ")";
-		break;
-	case 7:
-		Destination_Index = Src;
-		if (log_to_console) cout << "DI(" << (int)Src << ")";
-		break;
+		mod_RM_3(byte2);
+		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_r16[(byte2 >> 3) & 7]  = *ptr_r16[(byte2 >> 3) & 7]  + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		operand_RM_offset++;
+		ES_data = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		operand_RM_offset++;
+		ES_data  = ES_data + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		if (log_to_console) cout << "LES " << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << " + ES(" << (int)ES_data << ")";
 	}
-
-	ES_data = Src_2;
-	if (log_to_console) cout << " + ES(" << (int)ES_data << ")";
 
 	Instruction_Pointer += 2 + additional_IPs;
 }
 
 void LAHF()			// Load AH with Flags
 {
-	AX = (AX & 255) | (Flag_SF << 15) | (Flag_ZF << 14) | (Flag_AF << 12) | (Flag_PF << 10) | (Flag_CF << 8) | (2 << 8);
-	if (log_to_console) cout << "Load AH with Flags";
+	*ptr_AH = (Flag_SF << 7) | (Flag_ZF << 6) | (Flag_AF << 4) | (Flag_PF << 2) | (Flag_CF) | (2);
+	if (log_to_console) cout << "Load AH with Flags (" << (bitset<8>) * ptr_AH << ")";
 	Instruction_Pointer++;
 }
 void SAHF()			// Store AH with Flags
@@ -2427,20 +3097,25 @@ void SAHF()			// Store AH with Flags
 void PUSHF()		// Push Flags
 {
 	Stack_Pointer--;
-	memory.write_2(SS_data * 16 + Stack_Pointer, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+	//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
+	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x00 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
 	Stack_Pointer--;
-	memory.write_2(SS_data * 16 + Stack_Pointer, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+	//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
+	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x0 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
 	if (log_to_console) cout << "Push Flags";
 	Instruction_Pointer++;
 }
 void POPF()			// Pop Flags
 {
-	uint32 stack_addr = SS_data * 16 + Stack_Pointer;
-	int Flags = memory.read_2(SS_data * 16 + Stack_Pointer);
+	uint32 stack_addr = (SS_data * 16 + Stack_Pointer) & 0xFFFFF;
+	int Flags = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
 	Stack_Pointer++;
-	Flags += memory.read_2(SS_data * 16 + Stack_Pointer) * 256;
+	Flags += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
 	Stack_Pointer++;
-
+	if ((Flags >> 8) & 1)
+	{
+		cout << "TF = 1" << endl; step_mode = 1; log_to_console = 1;
+	}
 	Flag_OF = (Flags >> 11) & 1;
 	Flag_DF = (Flags >> 10) & 1;
 	Flag_IF = (Flags >> 9) & 1;
@@ -2453,94 +3128,25 @@ void POPF()			// Pop Flags
 
 	if (log_to_console) cout << "Pop Flags";
 	Instruction_Pointer++;
+	
 }
 
 //============Arithmetic===================================
 
 //ADD
 
-void ADD_R_to_RM_8()		// INC R/M -> R/M 8bit
+void ADD_R_to_RM_8()		// ADD R -> R/M 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	bool OF_Carry = false;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
 
-	if (log_to_console)
-	{
-		switch ((byte2 >> 3) & 7)
-		{
-		case 0:
-			//Src = AX & 255;
-			if (log_to_console) cout << "ADD AL(" << (int)(Src) << ") ";
-			break;
-		case 1:
-			//Src = CX & 255;
-			if (log_to_console) cout << "ADD CL(" << (int)(Src) << ") ";
-			break;
-		case 2:
-			//Src = DX & 255;
-			if (log_to_console) cout << "ADD DL(" << (int)(Src) << ") ";
-			break;
-		case 3:
-			//Src = BX & 255;
-			if (log_to_console) cout << "ADD BL(" << (int)(Src) << ") ";
-			break;
-		case 4:
-			//Src = AX >> 8;
-			if (log_to_console) cout << "ADD AH(" << (int)(Src) << ") ";
-			break;
-		case 5:
-			//Src = CX >> 8;
-			if (log_to_console) cout << "ADD CH(" << (int)(Src) << ") ";
-			break;
-		case 6:
-			//Src = DX >> 8;
-			if (log_to_console) cout << "ADD DH(" << (int)(Src) << ") ";
-			break;
-		case 7:
-			//Src = BX >> 8;
-			if (log_to_console) cout << "ADD BH(" << (int)(Src) << ") ";
-			break;
-		}
-	}
-
+	if (log_to_console) cout << "ADD " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") ";
+	
 	//определяем объект назначения и результат операции ADD
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
-		
-		if (log_to_console)
-		{
-			switch (byte2 & 7)
-			{
-			case 0:
-				if (log_to_console) cout << "+ AL(" << (int)(AX & 255) << ") = ";
-				break;
-			case 1:
-				if (log_to_console) cout << "+ CL(" << (int)(CX & 255) << ") = ";
-				break;
-			case 2:
-				if (log_to_console) cout << "+ DL(" << (int)(DX & 255) << ") = ";
-				break;
-			case 3:
-				if (log_to_console) cout << "+ BL(" << (int)(BX & 255) << ") = ";
-				break;
-			case 4:
-				if (log_to_console) cout << "+ AH(" << (int)(AX >> 8) << ") = ";
-				break;
-			case 5:
-				if (log_to_console) cout << "+ CH(" << (int)(CX >> 8) << ") = ";
-				break;
-			case 6:
-				if (log_to_console) cout << "+ DH(" << (int)(DX >> 8) << ") = ";
-				break;
-			case 7:
-				if (log_to_console) cout << "+ BH(" << (int)(BX >> 8) << ") = ";
-				break;
-			}
-		}
+		if (log_to_console) cout << "+ " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
 		
 		//складываем два регистра
 		Result = *ptr_r8[(byte2 >> 3) & 7] + *ptr_r8[byte2 & 7];
@@ -2555,1877 +3161,577 @@ void ADD_R_to_RM_8()		// INC R/M -> R/M 8bit
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
 
+		Instruction_Pointer += 2;
 	}
 	else
 	{
 		mod_RM_3(byte2);
-		New_Addr = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr] + *ptr_r8[(byte2 >> 3) & 7];
-		Flag_AF = (((memory_2[New_Addr] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7];
+		Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		Flag_CF = Result >> 8;
-		OF_Carry = ((memory_2[New_Addr] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		
-		memory_2[New_Addr] = Result;
-		if (log_to_console) cout << " Add M" << OPCODE_comment << " = " << (int)(Result & 255);
+		memory_2[New_Addr_32] = Result;
+		if (log_to_console) cout << " + M" << OPCODE_comment << " = " << (int)(Result & 255);
+
+		Instruction_Pointer += 2 + additional_IPs;
 	}
-	
-	Instruction_Pointer += 2 + additional_IPs;
 }
-void ADD_R_to_RM_16()		// INC R/M -> R/M 16bit
+void ADD_R_to_RM_16()		// ADD R -> R/M 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	bool OF_Carry = false;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
 
-	//определяем 1-й операнд
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX;
-		if (log_to_console) cout << "AX("<<(int)AX<<") ";
-		break;
-	case 1:
-		Src = CX;
-		if (log_to_console) cout << "CX(" << (int)CX << ") ";
-		break;
-	case 2:
-		Src = DX;
-		if (log_to_console) cout << "DX(" << (int)DX << ") ";
-		break;
-	case 3:
-		Src = BX;
-		if (log_to_console) cout << "BX(" << (int)BX << ") ";
-		break;
-	case 4:
-		Src = Stack_Pointer;
-		if (log_to_console) cout << "SP(" << (int)Stack_Pointer << ") ";
-		break;
-	case 5:
-		Src = Base_Pointer;
-		if (log_to_console) cout << "BP(" << (int)Base_Pointer << ") ";
-		break;
-	case 6:
-		Src = Source_Index;
-		if (log_to_console) cout << "SI(" << (int)Source_Index << ") ";
-		break;
-	case 7:
-		Src = Destination_Index;
-		if (log_to_console) cout << "DI(" << (int)Destination_Index << ") ";
-		break;
-	}
-
+	if (log_to_console) cout << "ADD " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
+	
 	//определяем объект назначения и результат операции ADD
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Result = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256 + Src;
-		Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15)) >> 4) & 1;
-		OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		memory.write_2(New_Addr, Result & 255);
-		memory.write_2(New_Addr + 1, (Result >> 8) & 255);
+		// mod 11 источник - регистр
+		Result = *ptr_r16[(byte2 >> 3) & 7] + *ptr_r16[byte2 & 7];
+		if (log_to_console) cout << "+ " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_AF = (((*ptr_r16[(byte2 >> 3) & 7] & 15) + (*ptr_r16[byte2 & 7] & 15)) >> 4) & 1;
+		OF_Carry = ((*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF)) >> 15;
+		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << " Add M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Result = AX + Src;
-			if (log_to_console) cout << "ADD AX(" << (int)AX << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((AX & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((AX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			AX = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 1:
-			Result = CX + Src;
-			if (log_to_console) cout << "ADD CX(" << (int)CX << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((CX & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((CX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			CX = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 2:
-			Result = DX + Src;
-			if (log_to_console) cout << "ADD DX(" << (int)DX << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((DX & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((DX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			DX = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 3:
-			Result = BX + Src;
-			if (log_to_console) cout << "ADD BX(" << (int)BX << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((BX & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((BX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			BX = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 4:
-			Result = Stack_Pointer + Src;
-			if (log_to_console) cout << "ADD SP(" << (int)Stack_Pointer << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((Stack_Pointer & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((Stack_Pointer & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			Stack_Pointer = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 5:
-			Result = Base_Pointer + Src;
-			if (log_to_console) cout << "ADD BP(" << (int)Base_Pointer << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((Base_Pointer & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((Base_Pointer & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			Base_Pointer = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 6:
-			Result = Source_Index + Src;
-			if (log_to_console) cout << "ADD SI(" << (int)Source_Index << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((Source_Index & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((Source_Index & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			Source_Index = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 7:
-			Result = Destination_Index + Src;
-			if (log_to_console) cout << "ADD DI(" << (int)Destination_Index << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((Destination_Index & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((Destination_Index & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			Destination_Index = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result =  *ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
+		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		operand_RM_offset--;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << " + M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void ADD_RM_to_R_8()		// INC R/M -> R 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 	
-	if (log_to_console) cout << "ADD ";
 	//определяем 1-й операнд
-	switch (byte2 >> 6)
+	if((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr);
-		if (log_to_console) cout << "M" << OPCODE_comment << " + ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX & 255;
-			if (log_to_console) cout << "AL(" << (int)Src << ") + ";
-			break;
-		case 1:
-			Src = CX & 255;
-			if (log_to_console) cout << "CL(" << (int)Src << ") + ";
-			break;
-		case 2:
-			Src = DX & 255;
-			if (log_to_console) cout << "DL(" << (int)Src << ") + ";
-			break;
-		case 3:
-			Src = BX & 255;
-			if (log_to_console) cout << "BL(" << (int)Src << ") + ";
-			break;
-		case 4:
-			Src = AX >> 8;
-			if (log_to_console) cout << "AH(" << (int)Src << ") + ";
-			break;
-		case 5:
-			Src = CX >> 8;
-			if (log_to_console) cout << "CH(" << (int)Src << ") + ";
-			break;
-		case 6:
-			Src = DX >> 8;
-			if (log_to_console) cout << "DH(" << (int)Src << ") + ";
-			break;
-		case 7:
-			Src = BX >> 8;
-			if (log_to_console) cout << "BH(" << (int)Src << ") + ";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "ADD " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 
-	//определяем объект назначения и результат операции ADD
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Result = Src + (AX & 255);
-		if (log_to_console) cout << "AL("<<(int)(AX & 255)<<") = " << (int)(Result & 255);
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((AX & 0x7F) + (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((AX & 15) + (Src & 15)) >> 4) & 1;
-		AX = (AX & 0xFF00) | (Result & 255);
-		break;
-	case 1:
-		Result = Src + (CX & 255);
-		if (log_to_console) cout << "CL(" << (int)(CX & 255) << ") = " << (int)(Result & 255);
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((CX & 0x7F) + (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((CX & 15) + (Src & 15)) >> 4) & 1;
-		CX = (CX & 0xFF00) | (Result & 255);
-		break;
-		break;
-	case 2:
-		Result = Src + (DX & 255);
-		if (log_to_console) cout << "DL(" << (int)(DX & 255) << ") = " << (int)(Result & 255);
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((DX & 0x7F) + (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((DX & 15) + (Src & 15)) >> 4) & 1;
-		DX = (DX & 0xFF00) | (Result & 255);
-		break;
-	case 3:
-		Result = Src + (BX & 255);
-		if (log_to_console) cout << "BL(" << (int)(BX & 255) << ") = " << (int)(Result & 255);
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((BX & 0x7F) + (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((BX & 15) + (Src & 15)) >> 4) & 1;
-		BX = (BX & 0xFF00) | (Result & 255);
-		break;
-	case 4:
-		Result = Src + ((AX >> 8) & 255);
-		if (log_to_console) cout << "AH(" << (int)((AX >> 8) & 255) << ") = " << (int)(Result & 255);
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (((AX >> 8) & 0x7F) + (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((AX >> 8) & 15) + (Src & 15)) >> 4) & 1;
-		AX = (AX & 0x00FF) | (Result << 8);
-		break;
-	case 5:
-		Result = Src + (CX >> 8);
-		if (log_to_console) cout << "CH(" << (int)((CX >> 8) & 255) << ") = " << (int)(Result & 255);
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (((CX >> 8) & 0x7F) + (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((CX >> 8) & 15) + (Src & 15)) >> 4) & 1;
-		CX = (CX & 0x00FF) | (Result << 8);
-		break;
-	case 6:
-		Result = Src + (DX >> 8);
-		if (log_to_console) cout << "DH(" << (int)((DX >> 8) & 255) << ") = " << (int)(Result & 255);
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (((DX >> 8) & 0x7F) + (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((DX >> 8) & 15) + (Src & 15)) >> 4) & 1;
-		DX = (DX & 0x00FF) | (Result << 8);
-		break;
-	case 7:
-		Result = Src + (BX >> 8);
-		if (log_to_console) cout << "BH(" << (int)((BX >> 8) & 255) << ") = " << (int)(Result & 255);
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (((BX >> 8) & 0x7F) + (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((BX >> 8) & 15) + (Src & 15)) >> 4) & 1;
-		BX = (BX & 0x00FF) | (Result << 8);
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+		
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+	
 }
 void ADD_RM_to_R_16()		// INC R/M -> R 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "ADD ";
 	//определяем 1-й операнд
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		if (log_to_console) cout << "M" << OPCODE_comment << " + ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX;
-			if (log_to_console) cout << "AX + ";
-			break;
-		case 1:
-			Src = CX;
-			if (log_to_console) cout << "CX + ";
-			break;
-		case 2:
-			Src = DX;
-			if (log_to_console) cout << "DX + ";
-			break;
-		case 3:
-			Src = BX;
-			if (log_to_console) cout << "BX + ";
-			break;
-		case 4:
-			Src = Stack_Pointer;
-			if (log_to_console) cout << "SP + ";
-			break;
-		case 5:
-			Src = Base_Pointer;
-			if (log_to_console) cout << "BP + ";
-			break;
-		case 6:
-			Src = Source_Index;
-			if (log_to_console) cout << "SI + ";
-			break;
-		case 7:
-			Src = Destination_Index;
-			if (log_to_console) cout << "DI + ";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "ADD " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
 
-	//определяем объект назначения и результат операции ADD
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Result = Src + AX;
-		if (log_to_console) cout << "AX(" << (int)AX << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((AX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((AX & 15) + (Src & 15)) >> 4) & 1;
-		AX = (Result & 0xFFFF);
-		break;
-	case 1:
-		Result = Src + CX;
-		if (log_to_console) cout << "CX(" << (int)CX << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((CX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((CX & 15) + (Src & 15)) >> 4) & 1;
-		CX = (Result & 0xFFFF);
-		break;
-	case 2:
-		Result = Src + DX;
-		if (log_to_console) cout << "DX(" << (int)DX << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((DX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((DX & 15) + (Src & 15)) >> 4) & 1;
-		DX = (Result & 0xFFFF);
-		break;
-	case 3:
-		Result = Src + BX;
-		if (log_to_console) cout << "BX(" << (int)BX << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((BX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((BX & 15) + (Src & 15)) >> 4) & 1;
-		BX = (Result & 0xFFFF);
-		break;
-	case 4:
-		Result = Src + Stack_Pointer;
-		if (log_to_console) cout << "SP(" << (int)Stack_Pointer << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((Stack_Pointer & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Stack_Pointer & 15) + (Src & 15)) >> 4) & 1;
-		Stack_Pointer = (Result & 0xFFFF);
-		break;
-	case 5:
-		Result = Src + Base_Pointer;
-		if (log_to_console) cout << "BP(" << (int)Base_Pointer << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((Base_Pointer & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Base_Pointer & 15) + (Src & 15)) >> 4) & 1;
-		Base_Pointer = (Result & 0xFFFF);
-		break;
-	case 6:
-		Result = Src + Source_Index;
-		if (log_to_console) cout << "SI(" << (int)Source_Index << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((Source_Index & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Source_Index & 15) + (Src & 15)) >> 4) & 1;
-		Source_Index = (Result & 0xFFFF);
-		break;
-	case 7:
-		Result = Src + Destination_Index;
-		if (log_to_console) cout << "DI(" << (int)Destination_Index << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((Destination_Index & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Destination_Index & 15) + (Src & 15)) >> 4) & 1;
-		Destination_Index = (Result & 0xFFFF);
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint8 OP = (byte2 >> 3) & 7;
 	uint16 Src = 0;
 	uint32 Result_32 = 0;
 	uint16 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
+	uint16 imm = 0;
 
 	switch (OP)
 	{
 	case 0: //  ADD  mod 000 r/m
 			//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
+			// mod 11 источник - регистр
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "ADD IMMs(" << (int)Src << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) + Src;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) + (Src & 0x7FFF)) >> 15;
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "ADD IMMs(" << (int)imm << ") + " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
+			//switch (byte2 & 7)
+			Result_32 = imm + *ptr_r16[byte2 & 7];
+			Flag_AF = (((imm & 15) + (*ptr_r16[byte2 & 7] & 15)) >> 4) & 1;
+			OF_Carry = ((imm & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF)) >> 15;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			memory.write_2(New_Addr, Result_32 & 255);
-			memory.write_2(New_Addr + 1, (Result_32 >> 8) & 255);
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "ADD IMMs(" << (int)Src << ") + ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result_32 = AX + Src;
-				Flag_AF = (((AX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((AX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				AX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " AX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 1:
-				Result_32 = CX + Src;
-				Flag_AF = (((CX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((CX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				CX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " CX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 2:
-				Result_32 = DX + Src;
-				Flag_AF = (((DX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((DX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				DX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " DX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 3:
-				Result_32 = BX + Src;
-				Flag_AF = (((BX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((BX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				BX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " BX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 4:
-				Result_32 = Stack_Pointer + Src;
-				Flag_AF = (((Stack_Pointer & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Stack_Pointer & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Stack_Pointer = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " SP = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 5:
-				Result_32 = Base_Pointer + Src;
-				Flag_AF = (((Base_Pointer & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Base_Pointer & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Base_Pointer = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " BP = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 6:
-				Result_32 = Source_Index + Src;
-				Flag_AF = (((Source_Index & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Source_Index & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Source_Index = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " SI = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 7:
-				Result_32 = Destination_Index + Src;
-				Flag_AF = (((Destination_Index & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Destination_Index & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Destination_Index = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " DI = " << (int)(Result_32 & 0xFFFF);
-				break;
-			}
-			break;
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			//непосредственный операнд
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "ADD IMMs(" << (int)imm << ") + ";
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Result_32 = *ptr_Src + imm;
+			Flag_AF = (((*ptr_Src & 15) + (imm & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_Src & 0x7FFF) + (imm & 0x7FFF)) >> 15;
+			Flag_CF = (Result_32 >> 16) & 1;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3 + additional_IPs;
+		}
+		
 		break;
 	
 	case 1:  //OR mod 001 r/m
 		//определяем объект назначения и результат операции
 	
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") OR ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) | Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") OR ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) | Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") OR ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) | Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") OR ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = AX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((AX >> 15) & 1);
-				if (AX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[AX & 255];
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				CX = CX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((CX >> 15) & 1);
-				if (CX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[CX & 255];
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				DX = DX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((DX >> 15) & 1);
-				if (DX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[DX & 255];
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				BX = BX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((BX >> 15) & 1);
-				if (BX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[BX & 255];
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				Stack_Pointer = Stack_Pointer | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Stack_Pointer >> 15) & 1);
-				if (Stack_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Stack_Pointer & 255];
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Base_Pointer = Base_Pointer | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Base_Pointer >> 15) & 1);
-				if (Base_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Base_Pointer & 255];
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Source_Index = Source_Index | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Source_Index >> 15) & 1);
-				if (Source_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Source_Index & 255];
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Destination_Index = Destination_Index | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Destination_Index >> 15) & 1);
-				if (Destination_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Destination_Index & 255];
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "IMMs(" << (int)imm << ") OR " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
+			//switch (byte2 & 7)
+			Result_32 = imm | *ptr_r16[byte2 & 7];
+			Flag_CF = 0;
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			//непосредственный операнд
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "IMMs(" << (int)imm << ") OR ";
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Result_32 = *ptr_Src | imm;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3 + additional_IPs;
+		}
+
 		break;
 
 	case 2:	//ADC  mod 010 r/m
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "ADC IMMs(" << (int)Src << ") + CF(" << Flag_CF << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) + Src + Flag_CF;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "ADC IMMs(" << (int)Src << ") + CF(" << Flag_CF << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) + Src + Flag_CF;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "ADC IMMs(" << (int)Src << ") + CF(" << Flag_CF << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) + Src + Flag_CF;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "ADC IMMs(" << (int)Src << ") + CF(" << Flag_CF << ") + ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result_32 = AX + Src + Flag_CF;
-				Flag_AF = (((AX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((AX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				AX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " AX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 1:
-				Result_32 = CX + Src + Flag_CF;
-				Flag_AF = (((CX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((CX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				CX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " CX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 2:
-				Result_32 = DX + Src + Flag_CF;
-				Flag_AF = (((DX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((DX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				DX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " DX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 3:
-				Result_32 = BX + Src + Flag_CF;
-				Flag_AF = (((BX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((BX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				BX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " BX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 4:
-				Result_32 = Stack_Pointer + Src + Flag_CF;
-				Flag_AF = (((Stack_Pointer & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((Stack_Pointer & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Stack_Pointer = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " SP = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 5:
-				Result_32 = Base_Pointer + Src + Flag_CF;
-				Flag_AF = (((Base_Pointer & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((Base_Pointer & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Base_Pointer = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " BP = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 6:
-				Result_32 = Source_Index + Src + Flag_CF;
-				Flag_AF = (((Source_Index & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((Source_Index & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Source_Index = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " SI = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 7:
-				Result_32 = Destination_Index + Src + Flag_CF;
-				Flag_AF = (((Destination_Index & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((Destination_Index & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Destination_Index = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " DI = " << (int)(Result_32 & 0xFFFF);
-				break;
-			}
-			break;
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "ADC IMMs(" << (int)imm << ") + " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = ";
+			//switch (byte2 & 7)
+			Result_32 = imm + *ptr_r16[byte2 & 7] + Flag_CF;
+			Flag_AF = (((imm & 15) + (*ptr_r16[byte2 & 7] & 15) + Flag_CF) >> 4) & 1;
+			OF_Carry = ((imm & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF) + Flag_CF) >> 15;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			//непосредственный операнд
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "ADC IMMs(" << (int)imm << ") +  CF(" << (int)Flag_CF << ") + ";
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Result_32 = *ptr_Src + imm + Flag_CF;
+			Flag_AF = (((*ptr_Src & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
+			OF_Carry = ((*ptr_Src & 0x7FFF) + (imm & 0x7FFF) + Flag_CF) >> 15;
+			Flag_CF = (Result_32 >> 16) & 1;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3 + additional_IPs;
+		}
+
 		break;
 
 	case 3:	//   SBB  mod 011 r/m
 
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "SBB IMMs(" << (int)Src << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src - Flag_CF;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "SBB IMMs(" << (int)Src << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src - Flag_CF;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "SBB IMMs(" << (int)Src << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src - Flag_CF;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "SBB IMMs(" << (int)Src << ") + ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result_32 = AX - Src - Flag_CF;
-				Flag_AF = (((AX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((AX & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;				
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				AX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " AX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 1:
-				Result_32 = CX - Src - Flag_CF;
-				OF_Carry = ((CX & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Flag_AF = (((CX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				CX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " CX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 2:
-				Result_32 = DX - Src - Flag_CF;
-				OF_Carry = ((DX & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Flag_AF = (((DX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				DX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " DX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 3:
-				Result_32 = BX - Src - Flag_CF;
-				OF_Carry = ((BX & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Flag_AF = (((BX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				BX = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " BX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 4:
-				Result_32 = Stack_Pointer - Src - Flag_CF;
-				OF_Carry = ((Stack_Pointer & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Flag_AF = (((Stack_Pointer & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Stack_Pointer = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " SP = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 5:
-				Result_32 = Base_Pointer - Src - Flag_CF;
-				OF_Carry = ((Base_Pointer & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Flag_AF = (((Base_Pointer & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Base_Pointer = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " BP = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 6:
-				Result_32 = Source_Index - Src - Flag_CF;
-				OF_Carry = ((Source_Index & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Flag_AF = (((Source_Index & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Source_Index = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " SI = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 7:
-				Result_32 = Destination_Index - Src - Flag_CF;
-				OF_Carry = ((Destination_Index & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Flag_AF = (((Destination_Index & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Destination_Index = Result_32 & 0xFFFF;
-				if (log_to_console) cout << " DI = " << (int)(Result_32 & 0xFFFF);
-				break;
-			}
-			break;
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") - SBB IMMs(" << (int)imm << ") - CF(" << (int)Flag_CF << ") = ";
+			//switch (byte2 & 7)
+			Result_32 = *ptr_r16[byte2 & 7] - imm - Flag_CF;
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
+			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (imm & 0x7FFF) - Flag_CF) >> 15;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			//непосредственный операнд
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - " << "SBB IMMs(" << (int)imm << ") - CF(" << (int)Flag_CF << ") = " << (int)(Result_32 & 0xFFFF);
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Result_32 = *ptr_Src - imm - Flag_CF;
+			Flag_AF = (((*ptr_Src & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
+			OF_Carry = ((*ptr_Src & 0x7FFF) - (imm & 0x7FFF) - Flag_CF) >> 15;
+			Flag_CF = (Result_32 >> 16) & 1;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+
+			Instruction_Pointer += 3 + additional_IPs;
+		}
+
 		break;
 
 	case 4:  //AND mod 001 r/m
 		//определяем объект назначения и результат операции
 
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") AND ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") AND ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") AND ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") AND ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = AX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((AX >> 15) & 1);
-				if (AX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[AX & 255];
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				CX = CX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((CX >> 15) & 1);
-				if (CX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[CX & 255];
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				DX = DX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((DX >> 15) & 1);
-				if (DX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[DX & 255];
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				BX = BX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((BX >> 15) & 1);
-				if (BX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[BX & 255];
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				Stack_Pointer = Stack_Pointer & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Stack_Pointer >> 15) & 1);
-				if (Stack_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Stack_Pointer & 255];
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Base_Pointer = Base_Pointer & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Base_Pointer >> 15) & 1);
-				if (Base_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Base_Pointer & 255];
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Source_Index = Source_Index & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Source_Index >> 15) & 1);
-				if (Source_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Source_Index & 255];
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Destination_Index = Destination_Index & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Destination_Index >> 15) & 1);
-				if (Destination_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Destination_Index & 255];
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "IMMs(" << (int)imm << ") AND " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
+			//switch (byte2 & 7)
+			Result_32 = imm & *ptr_r16[byte2 & 7];
+			Flag_CF = 0;
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			//непосредственный операнд
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "IMMs(" << (int)imm << ") AND ";
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Result_32 = *ptr_Src & imm;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3 + additional_IPs;
+		}
 		break;
 
 	case 5:  //   SUB  mod 101 r/m
 
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "SUB IMMs(" << (int)Src << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "SUB IMMs(" << (int)Src << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "SUB IMMs(" << (int)Src << ") + ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0b1111111100000000; //продолжаем знак на старший байт
-			if (log_to_console) cout << "SUB IMMs(" << (int)Src << ") + ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result_32 = AX - Src;
-				Flag_AF = (((AX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((AX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				AX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " AX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 1:
-				Result_32 = CX - Src;
-				Flag_AF = (((CX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((CX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				CX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " CX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 2:
-				Result_32 = DX - Src;
-				Flag_AF = (((DX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((DX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				DX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " DX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 3:
-				Result_32 = BX - Src;
-				Flag_AF = (((BX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((BX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				BX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " BX = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 4:
-				Result_32 = Stack_Pointer - Src;
-				Flag_AF = (((Stack_Pointer & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((Stack_Pointer) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Stack_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " SP = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 5:
-				Result_32 = Base_Pointer - Src;
-				Flag_AF = (((Base_Pointer & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((Base_Pointer) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Base_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " BP = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 6:
-				Result_32 = Source_Index - Src;
-				Flag_AF = (((Source_Index & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((Source_Index) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Source_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " SI = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 7:
-				Result_32 = Destination_Index - Src;
-				Flag_AF = (((Destination_Index & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((Destination_Index) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Destination_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " DI = " << (int)(Result_32 & 0xFFFF);
-				break;
-			}
-			break;
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") - SUB IMMs(" << (int)imm << ") = ";
+			//switch (byte2 & 7)
+			Result_32 = *ptr_r16[byte2 & 7] - imm;
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (imm & 0x7FFF)) >> 15;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			//непосредственный операнд
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - " << "SUB IMMs(" << (int)imm << ") = " << (int)(Result_32 & 0xFFFF);
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Result_32 = *ptr_Src - imm;
+			Flag_AF = (((*ptr_Src & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_Src & 0x7FFF) - (imm & 0x7FFF)) >> 15;
+			Flag_CF = (Result_32 >> 16) & 1;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			
+
+			Instruction_Pointer += 3 + additional_IPs;
+		}
+		
 		break;
 
 	case 6:  //XOR mod 110 r/m
 		//определяем объект назначения и результат операции
 
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") AND ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) ^ Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") AND ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) ^ Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") AND ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) ^ Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "IMMs(" << (int)Src << ") AND ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = AX ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((AX >> 15) & 1);
-				if (AX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[AX & 255];
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				CX = CX ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((CX >> 15) & 1);
-				if (CX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[CX & 255];
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				DX = DX ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((DX >> 15) & 1);
-				if (DX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[DX & 255];
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				BX = BX ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((BX >> 15) & 1);
-				if (BX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[BX & 255];
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				Stack_Pointer = Stack_Pointer ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Stack_Pointer >> 15) & 1);
-				if (Stack_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Stack_Pointer & 255];
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Base_Pointer = Base_Pointer ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Base_Pointer >> 15) & 1);
-				if (Base_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Base_Pointer & 255];
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Source_Index = Source_Index ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Source_Index >> 15) & 1);
-				if (Source_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Source_Index & 255];
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Destination_Index = Destination_Index ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Destination_Index >> 15) & 1);
-				if (Destination_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Destination_Index & 255];
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "IMMs(" << (int)imm << ") XOR " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
+			//switch (byte2 & 7)
+			Result_32 = imm ^ *ptr_r16[byte2 & 7];
+			Flag_CF = 0;
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			//непосредственный операнд
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "IMMs(" << (int)imm << ") XOR ";
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Result_32 = *ptr_Src ^ imm;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3 + additional_IPs;
+		}
+
 		break;
 
 	case 7:  //   CMP mod 111 r/m
 
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "CMP IMMs(" << (int)Src << ") -> ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_AF = (((memory.read_2(New_Addr) & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			Flag_PF = parity_check[Result_32 & 255];
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "CMP IMMs(" << (int)Src << ") -> ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_AF = (((memory.read_2(New_Addr) & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			Flag_PF = parity_check[Result_32 & 255];
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "CMP IMMs(" << (int)Src << ") -> ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_AF = (((memory.read_2(New_Addr) & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			Flag_PF = parity_check[Result_32 & 255];
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((Src >> 7) & 1) Src = Src | 0xFF00; //продолжаем знак на старший байт
-			if (log_to_console) cout << "CMP IMMs(" << (__int16)Src << ") -> ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result_32 = AX - Src;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				OF_Carry = ((AX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				Flag_AF = (((AX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " AX("<<(int)AX<<") = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 1:
-				Result_32 = CX - Src;
-				//CX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				OF_Carry = ((CX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				Flag_AF = (((CX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " CX(" << (int)CX << ") = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 2:
-				Result_32 = DX - Src;
-				//DX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				OF_Carry = ((DX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				Flag_AF = (((DX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " DX(" << (int)DX << ") = " << (__int16)(Result_32 & 0xFFFF);
-				break;
-			case 3:
-				Result_32 = BX - Src;
-				//BX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				OF_Carry = ((BX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				Flag_AF = (((BX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " BX(" << (int)BX << ") = " << (int)(Result_32 & 0xFFFF);
-				break;
-			case 4:
-				Result_32 = Stack_Pointer - Src;
-				//Stack_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				OF_Carry = ((Stack_Pointer & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				Flag_AF = (((Stack_Pointer & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " SP(" << (int)Stack_Pointer << ") = " << (__int16)(Result_32 & 0xFFFF);
-				break;
-			case 5:
-				Result_32 = Base_Pointer - Src;
-				//Base_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				OF_Carry = ((Base_Pointer & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				Flag_AF = (((Base_Pointer & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " BP(" << (int)Base_Pointer << ") = " << (__int16)(Result_32 & 0xFFFF);
-				break;
-			case 6:
-				Result_32 = Source_Index - Src;
-				//Source_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				OF_Carry = ((Source_Index & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				Flag_AF = (((Source_Index & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " SI(" << (int)Source_Index << ") = " << (__int16)(Result_32 & 0xFFFF);
-				break;
-			case 7:
-				Result_32 = Destination_Index - Src;
-				//Destination_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				OF_Carry = ((Destination_Index & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				Flag_AF = (((Destination_Index & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " DI(" << (int)Destination_Index << ") = " << (__int16)(Result_32 & 0xFFFF);
-				break;
-			}
-			break;
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (log_to_console) cout << "CMP "  << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") with IMMs(" << (int)imm << ") = ";
+			//switch (byte2 & 7)
+			Result_32 = *ptr_r16[byte2 & 7] - imm;
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (imm & 0x7FFF)) >> 15;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+
+			Instruction_Pointer += 3;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			//непосредственный операнд
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Result_32 = *ptr_Src - imm;
+			if (log_to_console) cout << "CMP M" << OPCODE_comment << "("<< (int)*ptr_Src << ") with " << " IMMs(" << (int)imm << ") = " << (int)(Result_32 & 0xFFFF);
+			Flag_AF = (((*ptr_Src & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_Src & 0x7FFF) - (imm & 0x7FFF)) >> 15;
+			Flag_CF = (Result_32 >> 16) & 1;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			Instruction_Pointer += 3 + additional_IPs;
+		}
 		break;
 	}
 }
@@ -4433,11 +3739,11 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 void ADD_IMM_to_ACC_8()	// ADD IMM -> ACC 8bit
 {
 	uint16 Result = 0;
-	bool OF_Carry = false;
+	
 	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
 	if (log_to_console) cout << "ADD IMM (" << (int)imm << ") to AL(" << (int)(AX & 255) << ") = ";
 	OF_Carry = ((imm & 0x7F) + (AX & 0x7F)) >> 7;
-	Result = imm + (AX & 255);
+	Result = imm + *ptr_AL;
 	Flag_AF = (((AX & 15) + (imm & 15)) >> 4) & 1;
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
@@ -4445,14 +3751,14 @@ void ADD_IMM_to_ACC_8()	// ADD IMM -> ACC 8bit
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
-	AX = (AX & 0xFF00) | (Result & 255);
+	*ptr_AL = Result & 255;
 	if (log_to_console) cout << (int)(Result);
 	Instruction_Pointer += 2;
 }
 void ADD_IMM_to_ACC_16()	// ADD IMM -> ACC 16bit 
 {
 	uint32 Result = 0;
-	bool OF_Carry = false;
+	
 	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
 	if (log_to_console) cout << "ADD IMM (" << (int)imm << ") to AX(" << (int)(AX) << ") = ";
 	
@@ -4473,720 +3779,203 @@ void ADD_IMM_to_ACC_16()	// ADD IMM -> ACC 16bit
 
 //ADC
 
-void ADC_RM_to_RM_8()		// ADC R/M -> R/M 8bit
+void ADC_R_to_RM_8()		// ADC R -> R/M 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	bool OF_Carry = false;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
 
-	if (log_to_console) cout << "ADC ";
-
-	//определяем 1-й операнд
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX & 255;
-		if (log_to_console) cout << "AL(" << (int)(Src) << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 1:
-		Src = CX & 255;
-		if (log_to_console) cout << "CL(" << (int)(Src) << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 2:
-		Src = DX & 255;
-		if (log_to_console) cout << "DL(" << (int)(Src) << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 3:
-		Src = BX & 255;
-		if (log_to_console) cout << "BL(" << (int)(Src) << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 4:
-		Src = AX >> 8;
-		if (log_to_console) cout << "AH(" << (int)(Src) << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 5:
-		Src = CX >> 8;
-		if (log_to_console) cout << "CH(" << (int)(Src) << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 6:
-		Src = DX >> 8;
-		if (log_to_console) cout << "DH(" << (int)(Src) << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 7:
-		Src = BX >> 8;
-		if (log_to_console) cout << "BH(" << (int)(Src) << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	}
+	if (log_to_console) cout << "ADC " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ")";
 
 	//определяем объект назначения и результат операции ADD
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Result = memory.read_2(New_Addr) + Src + Flag_CF;
-		Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = ((memory.read_2(New_Addr) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
+		// mod 11 источник - регистр
+		//складываем два регистра
+		Result = *ptr_r8[(byte2 >> 3) & 7] + *ptr_r8[byte2 & 7] + Flag_CF;
+		if (log_to_console) cout << " + " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
+		Flag_AF = (((*ptr_r8[(byte2 >> 3) & 7] & 15) + (*ptr_r8[byte2 & 7] & 15) + Flag_CF) >> 4) & 1;
+		OF_Carry = ((*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + (*ptr_r8[byte2 & 7] & 0x7F) + Flag_CF) >> 7;
+		*ptr_r8[byte2 & 7] = Result;
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
+		if (log_to_console) cout << " + M" << OPCODE_comment << " + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
+		Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
+		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
 		Flag_CF = Result >> 8;
+		if (log_to_console) cout << "  " << (int)OF_Carry;
 		Flag_SF = (Result >> 7) & 1;
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory.write_2(New_Addr, Result & 255);
-		if (log_to_console) cout << " + M" << OPCODE_comment << " = " << (int)(Result & 255);
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Result = (AX & 255) + Src + Flag_CF;
-			if (log_to_console) cout << " + AL(" << (int)(AX & 255) << ") = " << (int)(Result & 255);
-			Flag_AF = (((AX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((AX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			AX = (AX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = ((Result >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 1:
-			Result = (CX & 255) + Src + Flag_CF;
-			if (log_to_console) cout << " + CL(" << (int)(CX & 255) << ") = " << (int)(Result & 255);
-			Flag_AF = (((CX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((CX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			CX = (CX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = ((Result >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 2:
-			Result = (DX & 255) + Src + Flag_CF;
-			if (log_to_console) cout << " + DL(" << (int)(DX & 255) << ") = " << (int)(Result & 255);
-			Flag_AF = (((DX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((DX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			DX = (DX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = ((Result >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 3:
-			Result = (BX & 255) + Src + Flag_CF;
-			if (log_to_console) cout << " + BL(" << (int)(BX & 255) << ") = " << (int)(Result & 255);
-			Flag_AF = (((BX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((BX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			BX = (BX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = ((Result >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 4:
-			Result = (AX >> 8) + Src + Flag_CF;
-			if (log_to_console) cout << " + AH(" << (int)(AX >> 8) << ") = " << (int)(Result & 255);
-			Flag_AF = ((((AX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((AX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			AX = (AX & 0x00FF) | ((Result & 255) << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = ((Result >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 5:
-			Result = (CX >> 8) + Src + Flag_CF;
-			if (log_to_console) cout << " + CH(" << (int)(CX >> 8) << ") = " << (int)(Result & 255);
-			Flag_AF = ((((CX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((CX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			CX = (CX & 0x00FF) | ((Result & 255) << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = ((Result >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 6:
-			Result = (DX >> 8) + Src + Flag_CF;
-			if (log_to_console) cout << " + DH(" << (int)(DX >> 8) << ") = " << (int)(Result & 255);
-			Flag_AF = ((((DX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((DX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			DX = (DX & 0x00FF) | ((Result & 255) << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = ((Result >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 7:
-			Result = (BX >> 8) + Src + Flag_CF;
-			if (log_to_console) cout << " + BH(" << (int)(BX >> 8) << ") = " << (int)(Result & 255);
-			Flag_AF = ((((BX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((BX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			BX = (BX & 0x00FF) | ((Result & 255) << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = ((Result >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		}
-		break;
+		memory_2[New_Addr_32] = Result;
+
+		Instruction_Pointer += 2 + additional_IPs;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
 }
-void ADC_RM_to_RM_16()		// ADC R/M -> R/M 16bit
+void ADC_R_to_RM_16()		// ADC R -> R/M 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	bool OF_Carry = false;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
 
-	if (log_to_console) cout << "ADC ";
-
-	//определяем 1-й операнд
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX;
-		if (log_to_console) cout << "AX(" << (int)AX << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 1:
-		Src = CX;
-		if (log_to_console) cout << "CX(" << (int)CX << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 2:
-		Src = DX;
-		if (log_to_console) cout << "DX(" << (int)DX << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 3:
-		Src = BX;
-		if (log_to_console) cout << "BX(" << (int)BX << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 4:
-		Src = Stack_Pointer;
-		if (log_to_console) cout << "SP(" << (int)Stack_Pointer << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 5:
-		Src = Base_Pointer;
-		if (log_to_console) cout << "BP(" << (int)Base_Pointer << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 6:
-		Src = Source_Index;
-		if (log_to_console) cout << "SI(" << (int)Source_Index << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	case 7:
-		Src = Destination_Index;
-		if (log_to_console) cout << "DI(" << (int)Destination_Index << ") + CF(" << (int)Flag_CF << ") ";
-		break;
-	}
+	if (log_to_console) cout << "ADC " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
 
 	//определяем объект назначения и результат операции ADD
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Result = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256 + Src + Flag_CF;
-		Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		memory.write_2(New_Addr, Result & 255);
-		memory.write_2(New_Addr + 1, (Result >> 8) & 255);
+		// mod 11 источник - регистр
+		Result = *ptr_r16[(byte2 >> 3) & 7] + *ptr_r16[byte2 & 7] + Flag_CF;
+		if (log_to_console) cout << "+ " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 0xFFFF);
+		Flag_AF = (((*ptr_r16[(byte2 >> 3) & 7] & 15) + (*ptr_r16[byte2 & 7] & 15) + Flag_CF) >> 4) & 1;
+		OF_Carry = ((*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF) + Flag_CF) >> 15;
+		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << " Add M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Result = AX + Src + Flag_CF;
-			if (log_to_console) cout << "ADD AX(" << (int)AX << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((AX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((AX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			AX = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 1:
-			Result = CX + Src + Flag_CF;
-			if (log_to_console) cout << "ADD CX(" << (int)CX << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((CX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((CX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			CX = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 2:
-			Result = DX + Src + Flag_CF;
-			if (log_to_console) cout << "ADD DX(" << (int)DX << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((DX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((DX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			DX = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 3:
-			Result = BX + Src + Flag_CF;
-			if (log_to_console) cout << "ADD BX(" << (int)BX << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((BX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((BX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			BX = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 4:
-			Result = Stack_Pointer + Src + Flag_CF;
-			if (log_to_console) cout << "ADD SP(" << (int)Stack_Pointer << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((Stack_Pointer & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((Stack_Pointer & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			Stack_Pointer = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 5:
-			Result = Base_Pointer + Src + Flag_CF;
-			if (log_to_console) cout << "ADD BP(" << (int)Base_Pointer << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((Base_Pointer & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((Base_Pointer & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			Base_Pointer = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 6:
-			Result = Source_Index + Src + Flag_CF;
-			if (log_to_console) cout << "ADD SI(" << (int)Source_Index << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((Source_Index & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((Source_Index & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			Source_Index = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		case 7:
-			Result = Destination_Index + Src + Flag_CF;
-			if (log_to_console) cout << "ADD DI(" << (int)Destination_Index << ") = " << (int)(Result & 0xFFFF);
-			Flag_AF = (((Destination_Index & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((Destination_Index & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			Destination_Index = Result & 0xFFFF;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7] + Flag_CF;
+		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
+		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		operand_RM_offset--;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << " + M" << OPCODE_comment << " + CF(" << (int)Flag_CF << ") = " << (int)(Result & 0xFFFF);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void ADC_RM_to_R_8()		// ADC R/M -> R 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "ADC ";
 	//определяем 1-й операнд
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr);
-		if (log_to_console) cout << "M" << OPCODE_comment << " + ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX & 255;
-			if (log_to_console) cout << "AL(" << (int)Src << ") + ";
-			break;
-		case 1:
-			Src = CX & 255;
-			if (log_to_console) cout << "CL(" << (int)Src << ") + ";
-			break;
-		case 2:
-			Src = DX & 255;
-			if (log_to_console) cout << "DL(" << (int)Src << ") + ";
-			break;
-		case 3:
-			Src = BX & 255;
-			if (log_to_console) cout << "BL(" << (int)Src << ") + ";
-			break;
-		case 4:
-			Src = AX >> 8;
-			if (log_to_console) cout << "AH(" << (int)Src << ") + ";
-			break;
-		case 5:
-			Src = CX >> 8;
-			if (log_to_console) cout << "CH(" << (int)Src << ") + ";
-			break;
-		case 6:
-			Src = DX >> 8;
-			if (log_to_console) cout << "DH(" << (int)Src << ") + ";
-			break;
-		case 7:
-			Src = BX >> 8;
-			if (log_to_console) cout << "BH(" << (int)Src << ") + ";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
+		if (log_to_console) cout << "ADС " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
+		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
+		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 
-	//определяем объект назначения и результат операции ADD
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Result = Src + (AX & 255) + Flag_CF;
-		if (log_to_console) cout << "CF("<<(int)Flag_CF<<") + AL(" << (int)(AX & 255) << ") = " << (int)(Result & 255);
-		Flag_AF = (((AX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = ((AX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		AX = (AX & 0xFF00) | (Result & 255);
-		break;
-	case 1:
-		Result = Src + (CX & 255) + Flag_CF;
-		if (log_to_console) cout << "CF(" << (int)Flag_CF << ") + CL(" << (int)(CX & 255) << ") = " << (int)(Result & 255);
-		OF_Carry = ((CX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-		Flag_AF = (((CX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		CX = (CX & 0xFF00) | (Result & 255);
-		break;
-	case 2:
-		Result = Src + (DX & 255) + Flag_CF;
-		if (log_to_console) cout << "CF(" << (int)Flag_CF << ") + DL(" << (int)(DX & 255) << ") = " << (int)(Result & 255);
-		Flag_AF = (((DX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = ((DX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		DX = (DX & 0xFF00) | (Result & 255);
-		break;
-	case 3:
-		Result = Src + (BX & 255) + Flag_CF;
-		if (log_to_console) cout << "CF(" << (int)Flag_CF << ") + BL(" << (int)(BX & 255) << ") = " << (int)(Result & 255);
-		OF_Carry = ((BX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-		Flag_AF = (((BX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		BX = (BX & 0xFF00) | (Result & 255);
-		break;
-	case 4:
-		Result = Src + ((AX >> 8) & 255) + Flag_CF;
-		if (log_to_console) cout << "CF(" << (int)Flag_CF << ") + AH(" << (int)((AX >> 8) & 255) << ") = " << (int)(Result & 255);
-		OF_Carry = (((AX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-		Flag_AF = ((((AX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		AX = (AX & 0x00FF) | (Result << 8);
-		break;
-	case 5:
-		Result = Src + (CX >> 8) + Flag_CF;
-		if (log_to_console) cout << "CF(" << (int)Flag_CF << ") + CH(" << (int)((CX >> 8) & 255) << ") = " << (int)(Result & 255);
-		OF_Carry = (((CX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-		Flag_AF = ((((CX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		CX = (CX & 0x00FF) | (Result << 8);
-		break;
-	case 6:
-		Result = Src + (DX >> 8) + Flag_CF;
-		if (log_to_console) cout << "CF(" << (int)Flag_CF << ") + DH(" << (int)((DX >> 8) & 255) << ") = " << (int)(Result & 255);
-		OF_Carry = (((DX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-		Flag_AF = ((((DX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		DX = (DX & 0x00FF) | (Result << 8);
-		break;
-	case 7:
-		Result = Src + (BX >> 8) + Flag_CF;
-		if (log_to_console) cout << "CF(" << (int)Flag_CF << ") + BH(" << (int)((BX >> 8) & 255) << ") = " << (int)(Result & 255);
-		Flag_AF = ((((BX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = (((BX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = (Result >> 7) & 1;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		BX = (BX & 0x00FF) | (Result << 8);
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
+		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
+		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
+		Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void ADC_RM_to_R_16()		// ADC R/M -> R 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "ADC ";
 	//определяем 1-й операнд
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		if (log_to_console) cout << "M" << OPCODE_comment << " + CF(" << (int)Flag_CF << ")";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX;
-			if (log_to_console) cout << "AX + CF(" << (int)Flag_CF << ")";
-			break;
-		case 1:
-			Src = CX;
-			if (log_to_console) cout << "CX + CF(" << (int)Flag_CF << ")";
-			break;
-		case 2:
-			Src = DX;
-			if (log_to_console) cout << "DX + CF(" << (int)Flag_CF << ")";
-			break;
-		case 3:
-			Src = BX;
-			if (log_to_console) cout << "BX + CF(" << (int)Flag_CF << ")";
-			break;
-		case 4:
-			Src = Stack_Pointer;
-			if (log_to_console) cout << "SP + CF(" << (int)Flag_CF << ")";
-			break;
-		case 5:
-			Src = Base_Pointer;
-			if (log_to_console) cout << "BP + CF(" << (int)Flag_CF << ")";
-			break;
-		case 6:
-			Src = Source_Index;
-			if (log_to_console) cout << "SI + CF(" << (int)Flag_CF << ")";
-			break;
-		case 7:
-			Src = Destination_Index;
-			if (log_to_console) cout << "DI + CF(" << (int)Flag_CF << ")";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7] + Flag_CF;
+		if (log_to_console) cout << "ADC " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 0xFFFF);
+		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
+		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
 
-	//определяем объект назначения и результат операции ADD
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Result = Src + AX + Flag_CF;
-		if (log_to_console) cout << "AX(" << (int)AX << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((AX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		Flag_AF = (((AX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		AX = (Result & 0xFFFF);
-		break;
-	case 1:
-		Result = Src + CX + Flag_CF;
-		if (log_to_console) cout << "CX(" << (int)CX << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((CX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		Flag_AF = (((CX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		CX = (Result & 0xFFFF);
-		break;
-	case 2:
-		Result = Src + DX + Flag_CF;
-		if (log_to_console) cout << "DX(" << (int)DX << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((DX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		Flag_AF = (((DX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		DX = (Result & 0xFFFF);
-		break;
-	case 3:
-		Result = Src + BX + Flag_CF;
-		if (log_to_console) cout << "BX(" << (int)BX << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((BX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		Flag_AF = (((BX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		BX = (Result & 0xFFFF);
-		break;
-	case 4:
-		Result = Src + Stack_Pointer + Flag_CF;
-		OF_Carry = ((Stack_Pointer & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		Flag_AF = (((Stack_Pointer & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		if (log_to_console) cout << "SP(" << (int)Stack_Pointer << ") = " << (int)(Result & 0xFFFF);
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Stack_Pointer = (Result & 0xFFFF);
-		break;
-	case 5:
-		Result = Src + Base_Pointer + Flag_CF;
-		if (log_to_console) cout << "BP(" << (int)Base_Pointer << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((Base_Pointer & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		Flag_AF = (((Base_Pointer & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Base_Pointer = (Result & 0xFFFF);
-		break;
-	case 6:
-		Result = Src + Source_Index + Flag_CF;
-		if (log_to_console) cout << "SI(" << (int)Source_Index << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((Source_Index & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		Flag_AF = (((Source_Index & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Source_Index = (Result & 0xFFFF);
-		break;
-	case 7:
-		Result = Src + Destination_Index + Flag_CF;
-		if (log_to_console) cout << "DI(" << (int)Destination_Index << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((Destination_Index & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-		Flag_AF = (((Destination_Index & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Destination_Index = (Result & 0xFFFF);
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7] + Flag_CF;
+		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 0xFFFF);
+		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
+		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 
 void ADC_IMM_to_ACC_8()		// ADC IMM->ACC 8bit
 {
 	uint16 Result = 0;
-	bool OF_Carry = false;
+	
 	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
 	if (log_to_console) cout << "ADC IMM (" << (int)imm << ") to AL(" << (int)(AX & 255) << ") + CF("<<(int)Flag_CF<<") = ";
 	OF_Carry = ((imm & 0x7F) + (AX & 0x7F) + Flag_CF) >> 7;
 	Flag_AF = (((AX & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
-	Result = imm + (AX & 255) + Flag_CF;
+	Result = imm + *ptr_AL + Flag_CF;
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
 	Flag_OF = Flag_CF ^ OF_Carry;
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
-	AX = (AX & 0xFF00) | (Result & 255);
+	*ptr_AL = Result;
 	if (log_to_console) cout << (int)(Result & 255);
 
 	Instruction_Pointer += 2;
@@ -5194,7 +3983,7 @@ void ADC_IMM_to_ACC_8()		// ADC IMM->ACC 8bit
 void ADC_IMM_to_ACC_16()	// ADC IMM->ACC 16bit 
 {
 	uint32 Result = 0;
-	bool OF_Carry = false;
+	
 	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
 	if (log_to_console) cout << "ADC IMM (" << (int)imm << ") to AX(" << (int)(AX) << ") + CF(" << (int)Flag_CF << ") = ";
 	OF_Carry = ((imm & 0x7FFF) + (AX & 0x7FFF) + Flag_CF) >> 15;
@@ -5211,307 +4000,248 @@ void ADC_IMM_to_ACC_16()	// ADC IMM->ACC 16bit
 	Instruction_Pointer += 3;
 }
 
-//INC
-//DEC 8
+//INC/DEC 8
 void INC_RM_8()		// INC R/M 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
 	uint8 Src = 0;		//источник данных
 	additional_IPs = 0;
+	uint16 old_IP = 0;
+	uint16 new_IP = 0;
+	uint16 new_CS = 0;
+	uint32 stack_addr = 0;
 
 	switch ((byte2 >> 3) & 7)
 	{
 	case 0: //INC RM
-		//находим цель инкремента
-		switch (byte2 >> 6)
+		
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			Flag_AF = (((Src & 0x0F) + 1) >> 4) & 1;
-			Flag_OF = ((Src & 0x7F) + 1) >> 7;
-			Src++;
-			memory.write_2(New_Addr, Src);
-			if (Src) Flag_ZF = 0;
+			//увеличиваем регистр
+			
+			Flag_AF = (((*ptr_r8[byte2 & 7] & 0x0F) + 1) >> 4) & 1;
+			Flag_OF = ((*ptr_r8[byte2 & 7] & 0x7F) + 1) >> 7;
+			++(*ptr_r8[byte2 & 7]);
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = 0;
+			else {
+				Flag_ZF = 1;
+				Flag_OF = 0;
+			}
+			Flag_SF = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << "INC " << reg8_name[byte2 & 7] << " = " << (int)*ptr_r8[byte2 & 7];
+
+			Instruction_Pointer += 2;
+		} 
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Flag_AF = (((memory_2[New_Addr_32] & 0x0F) + 1) >> 4) & 1;
+			Flag_OF = ((memory_2[New_Addr_32] & 0x7F) + 1) >> 7;
+			memory_2[New_Addr_32]++;
+			if (memory_2[New_Addr_32]) Flag_ZF = 0;
 			else 
 			{
 				Flag_ZF = 1;
 				Flag_OF = 0;
 			}
-			Flag_SF = (Src >> 7) & 1;
-			Flag_PF = parity_check[Src];
-			if (log_to_console) cout << "INC M" << OPCODE_comment << " = " << (int)Src;
-			break;
-		case 3:
-			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = (AX & 255) + 1;
-				Flag_AF = (((AX & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = ((AX & 0x7F) + 1) >> 7;
-				AX = (AX & 0xFF00) | Src;
-				if (Src) Flag_ZF = 0;
-				else {
-					Flag_ZF = 1;
-					Flag_OF = 0;
-				}
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "INC AL = " << (int)Src;
-				break;
-			case 1:
-				Src = (CX & 255) + 1;
-				Flag_AF = (((CX & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = ((CX & 0x7F) + 1) >> 7;
-				CX = (CX & 0xFF00) | Src;
-				if (Src) Flag_ZF = 0;
-				else {
-					Flag_ZF = 1;
-					Flag_OF = 0;
-				}
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "INC CL = " << (int)Src;
-				break;
-			case 2:
-				Src = (DX & 255) + 1;
-				Flag_AF = (((DX & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = ((DX & 0x7F) + 1) >> 7;
-				DX = (DX & 0xFF00) | Src;
-				if (Src) Flag_ZF = 0;
-				else {
-					Flag_ZF = 1;
-					Flag_OF = 0;
-				}
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "INC DL = " << (int)Src;
-				break;
-			case 3:
-				Src = (BX & 255) + 1;
-				Flag_AF = (((BX & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = ((BX & 0x7F) + 1) >> 7;
-				BX = (BX & 0xFF00) | Src;
-				if (Src) Flag_ZF = 0;
-				else {
-					Flag_ZF = 1;
-					Flag_OF = 0;
-				}
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "INC BL = " << (int)Src;
-				break;
-			case 4:
-				Src = (AX >> 8) + 1;
-				Flag_AF = ((((AX >> 8) & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((AX >> 8) & 0x7F) + 1) >> 7;
-				AX = (AX & 0x00FF) | Src * 256;
-				if (Src) Flag_ZF = 0;
-				else {
-					Flag_ZF = 1;
-					Flag_OF = 0;
-				}
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "INC AH = " << (int)Src;
-				break;
-			case 5:
-				Src = (CX >> 8) + 1;
-				Flag_AF = ((((CX >> 8) & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((CX >> 8) & 0x7F) + 1) >> 7;
-				CX = (CX & 0x00FF) | Src * 256;
-				if (Src) Flag_ZF = 0;
-				else {
-					Flag_ZF = 1;
-					Flag_OF = 0;
-				}
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "INC CH = " << (int)Src;
-				break;
-			case 6:
-				Src = (DX >> 8) + 1;
-				Flag_AF = ((((DX >> 8) & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((DX >> 8) & 0x7F) + 1) >> 7;
-				DX = (DX & 0x00FF) | Src * 256;
-				if (Src) Flag_ZF = 0;
-				else {
-					Flag_ZF = 1;
-					Flag_OF = 0;
-				}
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "INC DH = " << (int)Src;
-				break;
-			case 7:
-				Src = (BX >> 8) + 1;
-				Flag_AF = ((((BX >> 8) & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((BX >> 8) & 0x7F) + 1) >> 7;
-				BX = (BX & 0x00FF) | Src * 256;
-				if (Src) Flag_ZF = 0;
-				else {
-					Flag_ZF = 1;
-					Flag_OF = 0;
-				}
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "INC BH = " << (int)Src;
-				break;
-			}
+			Flag_SF = (memory_2[New_Addr_32] >> 7) & 1;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			if (log_to_console) cout << "INC M" << OPCODE_comment << " = " << (int)memory_2[New_Addr_32];
+			
+			Instruction_Pointer += 2 + additional_IPs;
 		}
 		break;
 
 	case 1: //DEC RM
-		//находим цель декремента
-		switch (byte2 >> 6)
+	
+			
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			Flag_AF = (((Src & 0x0F) - 1) >> 4) & 1;
-			Flag_OF = (((Src & 0x7F) - 1) >> 7) & !(Src == 0);
-			Src--;
-			memory.write_2(New_Addr,  Src);
-			if (Src) Flag_ZF = 0;
+			//увеличиваем регистр
+
+			Flag_AF = (((*ptr_r8[byte2 & 7] & 0x0F) - 1) >> 4) & 1;
+			Flag_OF = ((*ptr_r8[byte2 & 7] & 0x7F) - 1) >> 7;
+			if (!*ptr_r8[byte2 & 7]) Flag_OF = 0;
+			--(*ptr_r8[byte2 & 7]);
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = 0;
 			else Flag_ZF = 1;
-			Flag_SF = (Src >> 7) & 1;
-			Flag_PF = parity_check[Src];
-			if (log_to_console) cout << "DEC M" << OPCODE_comment << " = " << (int)Src;
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			Flag_AF = (((Src & 0x0F) - 1) >> 4) & 1;
-			Flag_OF = (((Src & 0x7F) - 1) >> 7) & !(Src == 0);
-			Src--;
-			memory.write_2(New_Addr,  Src);
-			if (Src) Flag_ZF = 0;
+			Flag_SF = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << "DEC " << reg8_name[byte2 & 7] << " = " << (int)*ptr_r8[byte2 & 7];
+
+			Instruction_Pointer += 2;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Flag_AF = (((memory_2[New_Addr_32] & 0x0F) - 1) >> 4) & 1;
+			Flag_OF = ((memory_2[New_Addr_32] & 0x7F) - 1) >> 7;
+			if (!memory_2[New_Addr_32]) Flag_OF = 0;
+			memory_2[New_Addr_32]--;
+			if (memory_2[New_Addr_32]) Flag_ZF = 0;
 			else Flag_ZF = 1;
-			Flag_SF = (Src >> 7) & 1;
-			Flag_PF = parity_check[Src];
-			if (log_to_console) cout << "DEC M" << OPCODE_comment << " = " << (int)Src;
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			Flag_AF = (((Src & 0x0F) - 1) >> 4) & 1;
-			Flag_OF = (((Src & 0x7F) - 1) >> 7) & !(Src == 0);
-			Src--;
-			memory.write_2(New_Addr,  Src);
-			if (Src) Flag_ZF = 0;
-			else Flag_ZF = 1;
-			Flag_SF = (Src >> 7) & 1;
-			Flag_PF = parity_check[Src];
-			if (log_to_console) cout << "DEC M" << OPCODE_comment << " = " << (int)Src;
-			break;
-		case 3:
+			Flag_SF = (memory_2[New_Addr_32] >> 7) & 1;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			if (log_to_console) cout << "DEC M" << OPCODE_comment << " = " << (int)memory_2[New_Addr_32];
+
+			Instruction_Pointer += 2 + additional_IPs;
+		}
+		
+		break;
+
+	case 2: //Indirect near call (Undoc)
+		
+		//портит адреса вызова и адреса возврата, так как работает только с 1 байтом
+		if ((byte2 >> 6) == 3)
+		{
 			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = (AX & 255) - 1;
-				Flag_AF = (((AX & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((AX & 0x7F) - 1) >> 7) & !((AX & 255) == 0);
-				AX = (AX & 0xFF00) | Src;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "DEC AL = " << (int)Src;
-				break;
-			case 1:
-				Src = (CX & 255) - 1;
-				Flag_AF = (((CX & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((CX & 0x7F) - 1) >> 7) & !((CX & 255) == 0);
-				CX = (CX & 0xFF00) | Src;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "DEC CL = " << (int)Src;
-				break;
-			case 2:
-				Src = (DX & 255) - 1;
-				Flag_AF = (((DX & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((DX & 0x7F) - 1) >> 7) & !((DX & 255) == 0);
-				DX = (DX & 0xFF00) | Src;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "DEC DL = " << (int)Src;
-				break;
-			case 3:
-				Src = (BX & 255) - 1;
-				Flag_AF = (((BX & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((BX & 0x7F) - 1) >> 7) & !((BX & 255) == 0);
-				BX = (BX & 0xFF00) | Src;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "DEC BL = " << (int)Src;
-				break;
-			case 4:
-				Src = (AX >> 8) - 1;
-				Flag_AF = ((((AX >> 8) & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = ((((AX >>8) & 0x7F) - 1) >> 7) & !((AX >> 8) == 0);
-				AX = (AX & 0x00FF) + Src * 256;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "DEC AH = " << (int)Src;
-				break;
-			case 5:
-				Src = (CX >> 8) - 1;
-				Flag_AF = ((((CX >> 8) & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = ((((CX >> 8) & 0x7F) - 1) >> 7) & !((CX >> 8) == 0);
-				CX = (CX & 0x00FF) + Src * 256;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "DEC CH = " << (int)Src;
-				break;
-			case 6:
-				Src = (DX >> 8) - 1;
-				Flag_AF = ((((DX >> 8) & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = ((((DX >> 8) & 0x7F) - 1) >> 7) & !((DX >> 8) == 0);
-				DX = (DX & 0x00FF) + Src * 256;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "DEC DH = " << (int)Src;
-				break;
-			case 7:
-				Src = (BX >> 8) - 1;
-				Flag_AF = ((((BX >> 8) & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = ((((BX >> 8) & 0x7F) - 1) >> 7) & !((BX >> 8) == 0);
-				BX = (BX & 0x00FF) + Src * 256;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_PF = parity_check[Src];
-				if (log_to_console) cout << "DEC BH = " << (int)Src;
-				break;
-			}
+			new_IP = *ptr_r8[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			new_IP = memory_2[New_Addr_32];
+		}
+
+		old_IP = Instruction_Pointer;
+		stack_addr = SS_data * 16 + Stack_Pointer - 1;
+		Stack_Pointer--;
+		Stack_Pointer--;
+		memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
+
+		Instruction_Pointer = new_IP;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
+		if (log_to_console) cout << "UNDOC! Near Indirect Call to " << (int)*CS << ":" << (int)Instruction_Pointer << " (ret to " << (int)*CS << ":" << (int)(old_IP + 2 + additional_IPs) << ")";
+		//else cout << "Near Indirect Call to " << (int)*CS << ":" << (int)Instruction_Pointer << " (ret to " << (int)*CS << ":" << (int)(old_IP + 2 + additional_IPs) << ")";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		
+		break;
+
+	case 3:  //Indirect Intersegment Call (Undoc)
+			//портит адреса вызова и возврата так как работает только с 1 байтом
+
+		if ((byte2 >> 6) == 3)
+		{
+			operand_RM_seg = DS_data * 16;
+			operand_RM_offset = *ptr_r8[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+		}
+
+		new_IP = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		//new_IP = new_IP + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		operand_RM_offset++;
+		new_CS = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		//new_CS = new_CS + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+
+		Stack_Pointer--;
+		//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = CS_data >> 8;
+		Stack_Pointer--;
+		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = CS_data & 255;
+		Stack_Pointer--;
+		//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = (Instruction_Pointer + 2 + additional_IPs) >> 8;
+		Stack_Pointer--;
+		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = (Instruction_Pointer + 2 + additional_IPs) & 255;
+
+		Instruction_Pointer = new_IP;
+		*CS = new_CS;
+
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
+		if (log_to_console) cout << "Undoc! Indirect Intersegment Call to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		//if (log_to_console) cout << " DEBUG addr = " << (int)New_Addr_32;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		break;
+
+	
+	case 4:  //Indirect Jump within Segment   (Undoc)
+			 //портит адрес вызова так как работает только с 1 байтом
+		if ((byte2 >> 6) == 3)
+		{
+			Instruction_Pointer = *ptr_r8[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Instruction_Pointer = memory_2[New_Addr_32];
+		}
+
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
+		if (log_to_console) cout << "UNDOC! Indirect Jump within Segment to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		break;
+
+	case 5:  //Indirect Intersegment Jump (Undoc)
+			 //портит адрес вызова так как работает только с 1 байтом
+		if ((byte2 >> 6) == 3)
+		{
+			New_Addr_32 = *ptr_r8[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		}
+
+		Instruction_Pointer = memory_2[New_Addr_32];
+		*CS = memory_2[New_Addr_32 + 2];
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
+		if (log_to_console) cout << "UNDOC! Indirect Intersegment Jump to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		break;
+
+	case 6:  // PUSH RM (Undoc)
+
+		if ((byte2 >> 6) == 3)
+		{
+			//пушим в стек регистр
+			Stack_Pointer--;
+			Stack_Pointer--;
+			memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = *ptr_r8[byte2 & 7];
+			cout << "Undoc PUSH " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ")";
+			Instruction_Pointer += 2;
+		}
+		else
+		{
+			//пушим байт из памяти 
+			//если установлен bus_lock - бросаем исключение 1(?)
+			//if (bus_lock == 1) exeption = 0x11;
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Stack_Pointer--;
+			Stack_Pointer--;
+			memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = memory_2[New_Addr_32];
+			cout << "Undoc PUSH " << OPCODE_comment << "(" << (int)memory_2[New_Addr_32] << ") IP " << (int)memory_2[CS_data * 16 + Instruction_Pointer] << " " << (int)memory_2[CS_data * 16 + Instruction_Pointer + 1] <<endl;
+			Instruction_Pointer += 2 + additional_IPs;
 		}
 		break;
-}
-	Instruction_Pointer += 2 + additional_IPs;
+
+	case 7: 
+		
+		cout << "INC FE/0 Illegal Instruction byte2=" << (bitset<8>)byte2 << endl;
+		if ((byte2 >> 6) == 3)
+		{
+			Instruction_Pointer += 2 + additional_IPs;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			Instruction_Pointer += 2 + additional_IPs;
+		}
+		break;
+	}
 }
 void INC_Reg()			//  INC reg 16 bit
 {
-	uint8 reg = memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7;//второй байт
-	//uint16 Src = 0;		//источник данных
+	uint8 reg = memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7;//регистр
 	Flag_AF = (((*ptr_r16[reg] & 0x0F) + 1) >> 4) & 1;
 	Flag_OF = (((*ptr_r16[reg] & 0x7FFF) + 1) >> 15);
 	(*ptr_r16[reg])++;
@@ -5525,38 +4255,9 @@ void INC_Reg()			//  INC reg 16 bit
 	Flag_SF = (*ptr_r16[reg] >> 15) & 1;
 	Flag_PF = parity_check[*ptr_r16[reg] & 255];
 
-	if (log_to_console)
-	{
-		switch (reg & 7)
-		{
-		case 0:
-			if (log_to_console) cout << "INC AX = " << (int)*ptr_r16[reg];
-			break;
-		case 1:
-			if (log_to_console) cout << "INC CX = " << (int)*ptr_r16[reg];
-			break;
-		case 2:
-			if (log_to_console) cout << "INC DX = " << (int)*ptr_r16[reg];
-			break;
-		case 3:
-			if (log_to_console) cout << "INC BX = " << (int)*ptr_r16[reg];
-			break;
-		case 4:
-			if (log_to_console) cout << "INC SP = " << (int)*ptr_r16[reg];
-			break;
-		case 5:
-			if (log_to_console) cout << "INC BP = " << (int)*ptr_r16[reg];
-			break;
-		case 6:
-			if (log_to_console) cout << "INC SI = " << (int)*ptr_r16[reg];
-			break;
-		case 7:
-			if (log_to_console) cout << "INC DI = " << (int)*ptr_r16[reg];
-			break;
-		}
-	}
+	if (log_to_console) cout << "INC " << reg16_name[reg] << " = " << (int)*ptr_r16[reg];
 
-Instruction_Pointer += 1;
+	Instruction_Pointer += 1;
 }
 
 void AAA()				//  AAA = ASCII Adjust for Add
@@ -5580,13 +4281,22 @@ void AAA()				//  AAA = ASCII Adjust for Add
 }
 void DAA()				//  DAA = Decimal Adjust for Add
 {
+	
 	temp_ACC_8 = AX & 15;
 	temp_ACC_16 = AX & 255;
-	if (temp_ACC_8 > 9 || Flag_AF)
+	if (temp_ACC_8 > 9)
 	{
 		temp_ACC_16 = temp_ACC_16 + 6;
 		Flag_AF = true;
 	}
+	else
+	{
+		if (Flag_AF)
+		{
+			temp_ACC_16 = (temp_ACC_16 & 0xF0) | ((temp_ACC_8 + 6) & 0xF);
+		}
+	}
+	
 	temp_ACC_8 = (temp_ACC_16 >> 4) & 31; //старшие 4 бита
 
 	if (temp_ACC_8 > 9 || Flag_CF)
@@ -5595,739 +4305,199 @@ void DAA()				//  DAA = Decimal Adjust for Add
 		if (temp_ACC_8 > 15) { Flag_CF = true;}
 		temp_ACC_8 = temp_ACC_8 & 15;
 	}
-	AX = (AX & 0xFF00)|(temp_ACC_16 & 15)|(temp_ACC_8 << 4);
 
-	if (AX & 255) Flag_ZF = false;
+	*ptr_AL = (temp_ACC_16 & 15)|(temp_ACC_8 << 4);
+	
+	if (*ptr_AL) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_SF = (AX >> 7) & 1;
-	Flag_PF = parity_check[AX & 255];
+	Flag_PF = parity_check[*ptr_AL];
 	if (log_to_console) cout << "DAA AL = " << (int)((AX >> 4) & 15) << " + " << (int)(AX & 15);
 	Instruction_Pointer += 1;
 }
 
 //SUB
 
-void SUB_RM_from_RM_8()			// SUB R/M -> R/M 8bit
+void SUB_RM_from_RM_8()			// SUB R from R/M 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Dest = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	//определяем 1-й операнд
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX & 255;
-		if (log_to_console) cout << "SUB AL("<< setw(2)<<(int)Src<<") ";
-		break;
-	case 1:
-		Src = CX & 255;
-		if (log_to_console) cout << "SUB CL(" << setw(2) << (int)Src << ") ";
-		break;
-	case 2:
-		Src = DX & 255;
-		if (log_to_console) cout << "SUB DL(" << setw(2) << (int)Src << ") ";
-		break;
-	case 3:
-		Src = BX & 255;
-		if (log_to_console) cout << "SUB BL(" << setw(2) << (int)Src << ") ";
-		break;
-	case 4:
-		Src = AX >> 8;
-		if (log_to_console) cout << "SUB AH(" << setw(2) << (int)Src << ") ";
-		break;
-	case 5:
-		Src = CX >> 8;
-		if (log_to_console) cout << "SUB CH(" << setw(2) << (int)Src << ") ";
-		break;
-	case 6:
-		Src = DX >> 8;
-		if (log_to_console) cout << "SUB DH(" << setw(2) << (int)Src << ") ";
-		break;
-	case 7:
-		Src = BX >> 8;
-		if (log_to_console) cout << "SUB BH(" << setw(2) << (int)Src << ") ";
-		break;
-	}
+	if (log_to_console) cout << "SUB " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") from ";
 
-	//определяем объект назначения и результат операции SUB
-	switch (byte2 >> 6)
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Dest = memory.read_2(New_Addr);
-		Result = Dest - Src;
-		memory.write_2(New_Addr, Result & 255);
+		// mod 11 источник - регистр
+		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+
+		//складываем два регистра
+		Result = *ptr_r8[byte2 & 7] - *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << (int)(Result & 255);
+		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		*ptr_r8[byte2 & 7] = Result;
 		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = (Result >> 7) & 1;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
+		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "from M" << OPCODE_comment << " = " << (int)(Result & 255);
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Dest = AX & 255;
-			Result = Dest - Src;
-			AX = (AX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from AL = " << (int)(Result & 255);
-			break;
-		case 1:
-			Dest = CX & 255;
-			Result = Dest - Src;
-			CX = (CX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from CL = " << (int)(Result & 255);
-			break;
-		case 2:
-			Dest = DX & 255;
-			Result = Dest - Src;
-			DX = (DX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from DL = " << (int)(Result & 255);
-			break;
-		case 3:
-			Dest = BX & 255;
-			Result = Dest - Src;
-			BX = (BX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from BL = " << (int)(Result & 255);
-			break;
-		case 4:
-			Dest = AX >> 8;
-			Result = Dest - Src;
-			AX = (AX & 0x00FF) | (Result << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from AH = " << (int)(Result & 255);
-			break;
-		case 5:
-			Dest = CX >> 8;
-			Result = Dest - Src;
-			CX = (CX & 0x00FF) | (Result << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from CH = " << (int)(Result & 255);
-			break;
-		case 6:
-			Dest = DX >> 8;
-			Result = Dest - Src;
-			DX = (DX & 0x00FF) | (Result << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from DH = " << (int)(Result & 255);
-			break;
-		case 7:
-			Dest = BX >> 8;
-			Result = Dest - Src;
-			BX = (BX & 0x00FF) | (Result << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from BH = " << (int)(Result & 255);
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] - *ptr_r8[(byte2 >> 3) & 7];
+		Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		Flag_CF = Result >> 8;
+		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		memory_2[New_Addr_32] = Result;
+		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 255);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
-void SUB_RM_from_RM_16()		// SUB R/M -> R/M 16bit
+void SUB_RM_from_RM_16()		// SUB R from R/M 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "SUB ";
+	if (log_to_console) cout << "SUB " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") from ";
 
-	//определяем 1-й операнд
-	switch ((byte2 >> 3) & 7)
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-		Src = AX;
-		if (log_to_console) cout << "AX("<<setw(4)<<(int)Src<<") ";
-		break;
-	case 1:
-		Src = CX;
-		if (log_to_console) cout << "CX(" << setw(4) << (int)Src << ") ";
-		break;
-	case 2:
-		Src = DX;
-		if (log_to_console) cout << "DX(" << setw(4) << (int)Src << ") ";
-		break;
-	case 3:
-		Src = BX;
-		if (log_to_console) cout << "BX(" << setw(4) << (int)Src << ") ";
-		break;
-	case 4:
-		Src = Stack_Pointer;
-		if (log_to_console) cout << "SP(" << setw(4) << (int)Src << ") ";
-		break;
-	case 5:
-		Src = Base_Pointer;
-		if (log_to_console) cout << "BP(" << setw(4) << (int)Src << ") ";
-		break;
-	case 6:
-		Src = Source_Index;
-		if (log_to_console) cout << "SI(" << setw(4) << (int)Src << ") ";
-		break;
-	case 7:
-		Src = Destination_Index;
-		if (log_to_console) cout << "DI(" << setw(4) << (int)Src << ") ";
-		break;
-	}
-
-	//определяем объект назначения и результат операции SUB
-	switch (byte2 >> 6)
-	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Result = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256 - Src;
-		OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_AF = ((((memory.read_2(New_Addr)) & 15) - (Src & 15)) >> 4) & 1;
-		memory.write_2(New_Addr, Result & 255);
-		memory.write_2(New_Addr + 1, (Result >> 8) & 255);
+		// mod 11 источник - регистр
+		Result = *ptr_r16[byte2 & 7] - *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << " from M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Result = AX - Src;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			OF_Carry = (((AX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((AX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from AX("<<(int)AX<<") = " << (int)(Result & 0xFFFF);
-			AX = Result;
-			break;
-		case 1:
-			Result = CX - Src;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			OF_Carry = (((CX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((CX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from CX(" << (int)CX << ") = " << (int)(Result & 0xFFFF);
-			CX = Result;
-			break;
-		case 2:
-			Result = DX - Src;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			OF_Carry = (((DX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((DX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from DX(" << (int)DX << ") = " << (int)(Result & 0xFFFF);
-			DX = Result;
-			break;
-		case 3:
-			Result = BX - Src;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			OF_Carry = (((BX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((BX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from BX(" << (int)BX << ") = " << (int)(Result & 0xFFFF);
-			BX = Result;
-			break;
-		case 4:
-			Result = Stack_Pointer - Src;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			OF_Carry = (((Stack_Pointer) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Stack_Pointer & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from SP(" << (int)Stack_Pointer << ") = " << (int)(Result & 0xFFFF);
-			Stack_Pointer = Result;
-			break;
-		case 5:
-			Result = Base_Pointer - Src;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			OF_Carry = (((Base_Pointer) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Base_Pointer & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from BP(" << (int)Base_Pointer << ") = " << (int)(Result & 0xFFFF);
-			Base_Pointer = Result;
-			break;
-		case 6:
-			Result = Source_Index - Src;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			OF_Carry = (((Source_Index) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Source_Index & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from SI(" << (int)Source_Index << ") = " << (int)(Result & 0xFFFF);
-			Source_Index = Result;
-			break;
-		case 7:
-			Result = Destination_Index - Src;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			OF_Carry = (((Destination_Index) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((Destination_Index & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-			if (log_to_console) cout << "from DI(" << (int)Destination_Index << ") = " << (int)(Result & 0xFFFF);
-			Destination_Index = Result;
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7];
+		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		operand_RM_offset--;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void SUB_RM_from_R_8()			// SUB R/M -> R 8bit
 {
-	uint8 byte2 = memory.read_2(Instruction_Pointer + 1 + * CS * 16); //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Dest = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "SUB ";
 	//определяем 1-й операнд
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr);
-		if (log_to_console) cout << "M" << OPCODE_comment << " + ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX & 255;
-			if (log_to_console) cout << "AL("<<(int)Src<<") + ";
-			break;
-		case 1:
-			Src = CX & 255;
-			if (log_to_console) cout << "CL(" << (int)Src << ") + ";
-			break;
-		case 2:
-			Src = DX & 255;
-			if (log_to_console) cout << "DL(" << (int)Src << ") + ";
-			break;
-		case 3:
-			Src = BX & 255;
-			if (log_to_console) cout << "BL(" << (int)Src << ") + ";
-			break;
-		case 4:
-			Src = AX >> 8;
-			if (log_to_console) cout << "AH(" << (int)Src << ") + ";
-			break;
-		case 5:
-			Src = CX >> 8;
-			if (log_to_console) cout << "CH(" << (int)Src << ") + ";
-			break;
-		case 6:
-			Src = DX >> 8;
-			if (log_to_console) cout << "DH(" << (int)Src << ") + ";
-			break;
-		case 7:
-			Src = BX >> 8;
-			if (log_to_console) cout << "BH(" << (int)Src << ") + ";
-			break;
-		}
-		break;
-	}
+		Result = - *ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "SUB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = ((-(*ptr_r8[byte2 & 7] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 
-	//определяем объект назначения и результат операции SUB
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Dest = AX & 255;
-		Result = Dest - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		AX = (AX & 0xFF00) | (Result & 255);
-		if (log_to_console) cout << " from AL = " << (int)(Result & 255);
-		break;
-	case 1:
-		Dest = CX & 255;
-		Result = Dest - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		CX = (CX & 0xFF00) | (Result & 255);
-		if (log_to_console) cout << " from CL = " << (int)(Result & 255);
-		break;
-	case 2:
-		Dest = DX & 255;
-		Result = Dest - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		DX = (DX & 0xFF00) | (Result & 255);
-		if (log_to_console) cout << " from DL = " << (int)(Result & 255);
-		break;
-	case 3:
-		Dest = BX & 255;
-		Result = Dest - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		BX = (BX & 0xFF00) | (Result & 255);
-		if (log_to_console) cout << " from BL = " << (int)(Result & 255);
-		break;
-	case 4:
-		Dest = AX >> 8;
-		Result = Dest - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		AX = (AX & 0x00FF) | (Result << 8);
-		if (log_to_console) cout << " from AH = " << (int)(Result & 255);
-		break;
-	case 5:
-		Dest = CX >> 8;
-		Result = Dest - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		CX = (CX & 0x00FF) | (Result << 8);
-		if (log_to_console) cout << " from CH = " << (int)(Result & 255);
-		break;
-	case 6:
-		Dest = DX >> 8;
-		Result = Dest - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		DX = (DX & 0x00FF) | (Result << 8);
-		if (log_to_console) cout << " from DH = " << (int)(Result & 255);
-		break;
-	case 7:
-		Dest = BX >> 8;
-		Result = Dest - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		BX = (BX & 0x00FF) | (Result << 8);
-		if (log_to_console) cout << " from BH = " << (int)(Result & 255);
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = -memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "SUB M" << OPCODE_comment << " from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		OF_Carry = (-(memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = ((-(memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void SUB_RM_from_R_16()			// SUB R/M -> R 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "SUB ";
 	//определяем 1-й операнд
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		if (log_to_console) cout << "M" << OPCODE_comment << " ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX;
-			if (log_to_console) cout << "AX(" << (int)AX << ") ";
-			break;
-		case 1:
-			Src = CX;
-			if (log_to_console) cout << "CX(" << (int)CX << ") ";
-			break;
-		case 2:
-			Src = DX;
-			if (log_to_console) cout << "DX(" << (int)DX << ") ";
-			break;
-		case 3:
-			Src = BX;
-			if (log_to_console) cout << "BX(" << (int)BX << ") ";
-			break;
-		case 4:
-			Src = Stack_Pointer;
-			if (log_to_console) cout << "SP(" << (int)Stack_Pointer << ") ";
-			break;
-		case 5:
-			Src = Base_Pointer;
-			if (log_to_console) cout << "BP(" << (int)Base_Pointer << ") ";
-			break;
-		case 6:
-			Src = Source_Index;
-			if (log_to_console) cout << "SI(" << (int)Source_Index << ") ";
-			break;
-		case 7:
-			Src = Destination_Index;
-			if (log_to_console) cout << "DI(" << (int)Destination_Index << ") ";
-			break;
-		}
-		break;
-	}
+		Result = -*ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "SUB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = ((-(*ptr_r16[byte2 & 7] & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
 
-	//определяем объект назначения и результат операции SUB
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Result = AX - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (((AX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((AX) & 15) - (Src & 15)) >> 4) & 1;
-		if (log_to_console) cout << "from AX("<< (int)(AX) <<") = " << (int)(Result & 0xFFFF);
-		AX = Result;
-		break;
-	case 1:
-		Result = CX - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (((CX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((CX) & 15) - (Src & 15)) >> 4) & 1;
-		if (log_to_console) cout << "from CX(" << (int)(CX) << ") = " << (int)(Result & 0xFFFF);
-		CX = Result;
-		break;
-	case 2:
-		Result = DX - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (((DX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((DX) & 15) - (Src & 15)) >> 4) & 1;
-		if (log_to_console) cout << "from DX(" << (int)(DX) << ") = " << (int)(Result & 0xFFFF);
-		DX = Result;
-		break;
-	case 3:
-		Result = BX - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (((BX) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((BX) & 15) - (Src & 15)) >> 4) & 1;
-		if (log_to_console) cout << "from BX(" << (int)(BX) << ") = " << (int)(Result & 0xFFFF);
-		BX = Result;
-		break;
-	case 4:
-		Result = Stack_Pointer - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (((Stack_Pointer) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((Stack_Pointer) & 15) - (Src & 15)) >> 4) & 1;
-		if (log_to_console) cout << "from SP(" << (int)(Stack_Pointer) << ") = " << (int)(Result & 0xFFFF);
-		Stack_Pointer = Result;
-		break;
-	case 5:
-		Result = Base_Pointer - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (((Base_Pointer) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((Base_Pointer) & 15) - (Src & 15)) >> 4) & 1;
-		if (log_to_console) cout << "from BP(" << (int)(Base_Pointer) << ") = " << (int)(Result & 0xFFFF);
-		Base_Pointer = Result;
-		break;
-	case 6:
-		Result = Source_Index - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (((Source_Index) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((Source_Index) & 15) - (Src & 15)) >> 4) & 1;
-		if (log_to_console) cout << "from SI(" << (int)(Source_Index) << ") = " << (int)(Result & 0xFFFF);
-		Source_Index = Result;
-		break;
-	case 7:
-		Result = Destination_Index - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (((Destination_Index) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((Destination_Index) & 15) - (Src & 15)) >> 4) & 1;
-		if (log_to_console) cout << "from DI(" << (int)(Destination_Index) << ") = " << (int)(Result & 0xFFFF);
-		Destination_Index = Result;
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "SUB M" << OPCODE_comment << " from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = ((-(*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 
 void SUB_IMM_from_ACC_8()		// SUB ACC  8bit - IMM -> ACC
@@ -6336,9 +4506,9 @@ void SUB_IMM_from_ACC_8()		// SUB ACC  8bit - IMM -> ACC
 	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
 	bool OF_Carry = 0;
 
-	if (log_to_console) cout << "SUB IMM (" << (int)imm << ") from AL(" << setw(2) << (int)(AX & 255) << ") = ";
-	OF_Carry = (((AX & 255) & 0x7F) - (imm & 0x7F)) >> 7;
-	Result = (AX & 255) - imm;
+	if (log_to_console) cout << "SUB IMM (" << (int)imm << ") from AL(" << setw(2) << (int)*ptr_AL << ") = ";
+	OF_Carry = ((*ptr_AL & 0x7F) - (imm & 0x7F)) >> 7;
+	Result = *ptr_AL - imm;
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
 	Flag_OF = Flag_CF ^ OF_Carry;
@@ -6346,8 +4516,8 @@ void SUB_IMM_from_ACC_8()		// SUB ACC  8bit - IMM -> ACC
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
 	Flag_AF = ((((AX) & 15) - (imm & 15)) >> 4) & 1;
-	AX = (AX & 0xFF00) | (Result & 255);
-	if (log_to_console) cout << (int)(Result & 255);
+	*ptr_AL = Result;
+	if (log_to_console) cout << (int)*ptr_AL;
 
 	Instruction_Pointer += 2;
 }
@@ -6375,725 +4545,187 @@ void SUB_IMM_from_ACC_16()		// SUB ACC 16bit - IMM -> ACC
 
 void SBB_RM_from_RM_8()			// SBB R/M -> R/M 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Dest = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	//определяем 1-й операнд
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX & 255;
-		if (log_to_console) cout << "SBB AL(" << setw(2) << (int)Src << ") ";
-		break;
-	case 1:
-		Src = CX & 255;
-		if (log_to_console) cout << "SBB CL(" << setw(2) << (int)Src << ") ";
-		break;
-	case 2:
-		Src = DX & 255;
-		if (log_to_console) cout << "SBB DL(" << setw(2) << (int)Src << ") ";
-		break;
-	case 3:
-		Src = BX & 255;
-		if (log_to_console) cout << "SBB BL(" << setw(2) << (int)Src << ") ";
-		break;
-	case 4:
-		Src = AX >> 8;
-		if (log_to_console) cout << "SBB AH(" << setw(2) << (int)Src << ") ";
-		break;
-	case 5:
-		Src = CX >> 8;
-		if (log_to_console) cout << "SBB CH(" << setw(2) << (int)Src << ") ";
-		break;
-	case 6:
-		Src = DX >> 8;
-		if (log_to_console) cout << "SBB DH(" << setw(2) << (int)Src << ") ";
-		break;
-	case 7:
-		Src = BX >> 8;
-		if (log_to_console) cout << "SBB BH(" << setw(2) << (int)Src << ") ";
-		break;
-	}
+	if (log_to_console) cout << "SBB " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") (CF=" << (int)Flag_CF << ") from ";
 
-	//определяем объект назначения и результат операции SUB
-	switch (byte2 >> 6)
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Dest = memory.read_2(New_Addr);
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		memory.write_2(New_Addr,  Result & 255);
+		// mod 11 источник - регистр
+		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+
+		//складываем два регистра
+		Result = *ptr_r8[byte2 & 7] - *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		if (log_to_console) cout << (int)(Result & 255);
+		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
 		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = (Result >> 7) & 1;
+		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
+		if (!*ptr_r8[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from M" << OPCODE_comment << "=" << (int)(Result & 255);
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Dest = AX & 255;
-			Result = Dest - Src - Flag_CF;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 8) & 1;
-			AX = (AX & 0xFF00) | (Result & 255);
-			Flag_SF = (Result >> 7) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from AL = " << (int)(Result & 255);
-			break;
-		case 1:
-			Dest = CX & 255;
-			Result = Dest - Src - Flag_CF;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			CX = (CX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from CL = " << (int)(Result & 255);
-			break;
-		case 2:
-			Dest = DX & 255;
-			Result = Dest - Src - Flag_CF;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			DX = (DX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from DL = " << (int)(Result & 255);
-			break;
-		case 3:
-			Dest = BX & 255;
-			Result = Dest - Src - Flag_CF;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			BX = (BX & 0xFF00) | (Result & 255);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from BL = " << (int)(Result & 255);
-			break;
-		case 4:
-			Dest = AX >> 8;
-			Result = Dest - Src - Flag_CF;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			AX = (AX & 0x00FF) | (Result << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from AH = " << (int)(Result & 255);
-			break;
-		case 5:
-			Dest = CX >> 8;
-			Result = Dest - Src - Flag_CF;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			CX = (CX & 0x00FF) | (Result << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from CH = " << (int)(Result & 255);
-			break;
-		case 6:
-			Dest = DX >> 8;
-			Result = Dest - Src - Flag_CF;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			DX = (DX & 0x00FF) | (Result << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from DH = " << (int)(Result & 255);
-			break;
-		case 7:
-			Dest = BX >> 8;
-			Result = Dest - Src - Flag_CF;
-			OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			BX = (BX & 0x00FF) | (Result << 8);
-			Flag_CF = (Result >> 8) & 1;
-			Flag_SF = (Result >> 7) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from BH = " << (int)(Result & 255);
-			break;
-		}
-		break;
+		*ptr_r8[byte2 & 7] = Result;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] - *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		Flag_CF = Result >> 8;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if(!memory_2[New_Addr_32]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		Flag_SF = ((Result >> 7) & 1);
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		memory_2[New_Addr_32] = Result;
+		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 255);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void SBB_RM_from_RM_16()		// SBB R/M -> R/M 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "SBB ";
+	if (log_to_console) cout << "SBB " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") (CF=" << (int)Flag_CF << ") from ";
 
-	//определяем 1-й операнд
-	switch ((byte2 >> 3) & 7)
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-		Src = AX;
-		if (log_to_console) cout << "AX(" << setw(4) << (int)Src << ") ";
-		break;
-	case 1:
-		Src = CX;
-		if (log_to_console) cout << "CX(" << setw(4) << (int)Src << ") ";
-		break;
-	case 2:
-		Src = DX;
-		if (log_to_console) cout << "DX(" << setw(4) << (int)Src << ") ";
-		break;
-	case 3:
-		Src = BX;
-		if (log_to_console) cout << "BX(" << setw(4) << (int)Src << ") ";
-		break;
-	case 4:
-		Src = Stack_Pointer;
-		if (log_to_console) cout << "SP(" << setw(4) << (int)Src << ") ";
-		break;
-	case 5:
-		Src = Base_Pointer;
-		if (log_to_console) cout << "BP(" << setw(4) << (int)Src << ") ";
-		break;
-	case 6:
-		Src = Source_Index;
-		if (log_to_console) cout << "SI(" << setw(4) << (int)Src << ") ";
-		break;
-	case 7:
-		Src = Destination_Index;
-		if (log_to_console) cout << "DI(" << setw(4) << (int)Src << ") ";
-		break;
-	}
-
-	//определяем объект назначения и результат операции SUB
-	switch (byte2 >> 6)
-	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Result = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256 - Src - Flag_CF;
-		OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((memory.read_2(New_Addr)) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-		memory.write_2(New_Addr,  Result & 255);
-		memory.write_2(New_Addr + 1,  (Result >> 8) & 255);
+		// mod 11 источник - регистр
+		Result = *ptr_r16[byte2 & 7] - *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
+		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
 		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
+		Flag_SF = (Result >> 15) & 1;
 		Flag_OF = Flag_CF ^ OF_Carry;
+		if (!*ptr_r16[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << " from M" << OPCODE_comment << "=" << (int)(Result & 0xFFFF);
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Result = AX - Src - Flag_CF;
-			OF_Carry = (((AX) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_AF = (((AX & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from AX(" << (int)AX << ") = " << (int)(Result & 0xFFFF);
-			AX = Result;
-			break;
-		case 1:
-			Result = CX - Src - Flag_CF;
-			OF_Carry = (((CX) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_AF = (((CX & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from CX(" << (int)CX << ") = " << (int)(Result & 0xFFFF);
-			CX = Result;
-			break;
-		case 2:
-			Result = DX - Src - Flag_CF;
-			OF_Carry = (((DX) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_AF = (((DX & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from DX(" << (int)DX << ") = " << (int)(Result & 0xFFFF);
-			DX = Result;
-			break;
-		case 3:
-			Result = BX - Src - Flag_CF;
-			OF_Carry = (((BX) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_AF = (((BX & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from BX(" << (int)BX << ") = " << (int)(Result & 0xFFFF);
-			BX = Result;
-			break;
-		case 4:
-			Result = Stack_Pointer - Src - Flag_CF;
-			OF_Carry = (((Stack_Pointer) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_AF = (((Stack_Pointer & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from SP(" << (int)Stack_Pointer << ") = " << (int)(Result & 0xFFFF);
-			Stack_Pointer = Result;
-			break;
-		case 5:
-			Result = Base_Pointer - Src - Flag_CF;
-			OF_Carry = (((Base_Pointer) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_AF = (((Base_Pointer & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from BP(" << (int)Base_Pointer << ") = " << (int)(Result & 0xFFFF);
-			Base_Pointer = Result;
-			break;
-		case 6:
-			Result = Source_Index - Src - Flag_CF;
-			OF_Carry = (((Source_Index) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_AF = (((Source_Index & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from SI(" << (int)Source_Index << ") = " << (int)(Result & 0xFFFF);
-			Source_Index = Result;
-			break;
-		case 7:
-			Result = Destination_Index - Src - Flag_CF;
-			OF_Carry = (((Destination_Index) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Flag_AF = (((Destination_Index & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-			Flag_CF = (Result >> 16) & 1;
-			Flag_SF = ((Result >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (Result & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "from DI(" << (int)Destination_Index << ") = " << (int)(Result & 0xFFFF);
-			Destination_Index = Result;
-			break;
-		}
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
+		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = (Result >> 15) & 1;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (!*ptr_Src) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		operand_RM_offset--;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void SBB_RM_from_R_8()			// SBB R/M -> R 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Dest = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "SBB ";
 	//определяем 1-й операнд
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr);
-		if (log_to_console) cout << "M" << OPCODE_comment << " - ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX & 255;
-			if (log_to_console) cout << "AL(" << (int)Src << ") - ";
-			break;
-		case 1:
-			Src = CX & 255;
-			if (log_to_console) cout << "CL(" << (int)Src << ") - ";
-			break;
-		case 2:
-			Src = DX & 255;
-			if (log_to_console) cout << "DL(" << (int)Src << ") - ";
-			break;
-		case 3:
-			Src = BX & 255;
-			if (log_to_console) cout << "BL(" << (int)Src << ") - ";
-			break;
-		case 4:
-			Src = AX >> 8;
-			if (log_to_console) cout << "AH(" << (int)Src << ") - ";
-			break;
-		case 5:
-			Src = CX >> 8;
-			if (log_to_console) cout << "CH(" << (int)Src << ") - ";
-			break;
-		case 6:
-			Src = DX >> 8;
-			if (log_to_console) cout << "DH(" << (int)Src << ") - ";
-			break;
-		case 7:
-			Src = BX >> 8;
-			if (log_to_console) cout << "BH(" << (int)Src << ") - ";
-			break;
-		}
-		break;
+		Result = -*ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		if (log_to_console) cout << "SBB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") (CF=" << (int)Flag_CF << ") from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		Flag_AF = ((-(*ptr_r8[byte2 & 7] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (!*ptr_r8[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = -memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		OF_Carry = (-(memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		Flag_AF = ((-(memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		if (log_to_console) cout << "SBB M" << OPCODE_comment << " (CF=" << (int)Flag_CF << ") from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (!*ptr_r8[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2 + additional_IPs;
 	}
 
-	//определяем объект назначения и результат операции SUB
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Dest = AX & 255;
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		AX = (AX & 0xFF00) | (Result & 255);
-		if (log_to_console) cout << " from AL = " << (int)(Result & 255);
-		break;
-	case 1:
-		Dest = CX & 255;
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		CX = (CX & 0xFF00) | (Result & 255);
-		if (log_to_console) cout << " from CL = " << (int)(Result & 255);
-		break;
-	case 2:
-		Dest = DX & 255;
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		DX = (DX & 0xFF00) | (Result & 255);
-		if (log_to_console) cout << " from DL = " << (int)(Result & 255);
-		break;
-	case 3:
-		Dest = BX & 255;
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		BX = (BX & 0xFF00) | (Result & 255);
-		if (log_to_console) cout << " from BL = " << (int)(Result & 255);
-		break;
-	case 4:
-		Dest = AX >> 8;
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		AX = (AX & 0x00FF) | (Result << 8);
-		if (log_to_console) cout << " from AH = " << (int)(Result & 255);
-		break;
-	case 5:
-		Dest = CX >> 8;
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		CX = (CX & 0x00FF) | (Result << 8);
-		if (log_to_console) cout << " from CH = " << (int)(Result & 255);
-		break;
-	case 6:
-		Dest = DX >> 8;
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		DX = (DX & 0x00FF) | (Result << 8);
-		if (log_to_console) cout << " from DH = " << (int)(Result & 255);
-		break;
-	case 7:
-		Dest = BX >> 8;
-		Result = Dest - Src - Flag_CF;
-		OF_Carry = ((Dest & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = (((Dest & 0x0F) - (Src & 0x0F) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		BX = (BX & 0x00FF) | (Result << 8);
-		if (log_to_console) cout << " from BH = " << (int)(Result & 255);
-		break;
-	}
-	Instruction_Pointer += 2 + additional_IPs;
 }
 void SBB_RM_from_R_16()			// SBB R/M -> R 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "SBB ";
 	//определяем 1-й операнд
-	switch (byte2 >> 6)
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		if (log_to_console) cout << "M" << OPCODE_comment << " ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX;
-			if (log_to_console) cout << "AX(" << (int)AX << ") ";
-			break;
-		case 1:
-			Src = CX;
-			if (log_to_console) cout << "CX(" << (int)CX << ") ";
-			break;
-		case 2:
-			Src = DX;
-			if (log_to_console) cout << "DX(" << (int)DX << ") ";
-			break;
-		case 3:
-			Src = BX;
-			if (log_to_console) cout << "BX(" << (int)BX << ") ";
-			break;
-		case 4:
-			Src = Stack_Pointer;
-			if (log_to_console) cout << "SP(" << (int)Stack_Pointer << ") ";
-			break;
-		case 5:
-			Src = Base_Pointer;
-			if (log_to_console) cout << "BP(" << (int)Base_Pointer << ") ";
-			break;
-		case 6:
-			Src = Source_Index;
-			if (log_to_console) cout << "SI(" << (int)Source_Index << ") ";
-			break;
-		case 7:
-			Src = Destination_Index;
-			if (log_to_console) cout << "DI(" << (int)Destination_Index << ") ";
-			break;
-		}
-		break;
+		Result = -*ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
+		if (log_to_console) cout << "SBB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") (CF=" << (int)Flag_CF << ") from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
+		Flag_AF = ((-(*ptr_r16[byte2 & 7] & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (!*ptr_r16[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
+		Instruction_Pointer += 2;
 	}
-
-	//определяем объект назначения и результат операции SUB
-	switch ((byte2 >> 3) & 7)
+	else
 	{
-	case 0:
-		Result = AX - Src - Flag_CF;
-		OF_Carry = (((AX) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((AX) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
+		if (log_to_console) cout << "SBB M" << OPCODE_comment << " (CF=" << (int)Flag_CF << ") from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
+		Flag_AF = ((-(*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
+		if (!*ptr_r16[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from AX(" << (int)(AX) << ") = " << (int)(Result & 0xFFFF);
-		AX = Result;
-		break;
-	case 1:
-		Result = CX - Src - Flag_CF;
-		OF_Carry = (((CX) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((CX) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from CX(" << (int)(CX) << ") = " << (int)(Result & 0xFFFF);
-		CX = Result;
-		break;
-	case 2:
-		Result = DX - Src - Flag_CF;
-		OF_Carry = (((DX) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((DX) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from DX(" << (int)(DX) << ") = " << (int)(Result & 0xFFFF);
-		DX = Result;
-		break;
-	case 3:
-		Result = BX - Src - Flag_CF;
-		OF_Carry = (((BX) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((BX) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from BX(" << (int)(BX) << ") = " << (int)(Result & 0xFFFF);
-		BX = Result;
-		break;
-	case 4:
-		Result = Stack_Pointer - Src - Flag_CF;
-		OF_Carry = (((Stack_Pointer) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((Stack_Pointer) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from SP(" << (int)(Stack_Pointer) << ") = " << (int)(Result & 0xFFFF);
-		Stack_Pointer = Result;
-		break;
-	case 5:
-		Result = Base_Pointer - Src - Flag_CF;
-		OF_Carry = (((Base_Pointer) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((Base_Pointer) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from BP(" << (int)(Base_Pointer) << ") = " << (int)(Result & 0xFFFF);
-		Base_Pointer = Result;
-		break;
-	case 6:
-		Result = Source_Index - Src - Flag_CF;
-		OF_Carry = (((Source_Index) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((Source_Index) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from SI(" << (int)(Source_Index) << ") = " << (int)(Result & 0xFFFF);
-		Source_Index = Result;
-		break;
-	case 7:
-		Result = Destination_Index - Src - Flag_CF;
-		OF_Carry = (((Destination_Index) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-		Flag_AF = ((((Destination_Index) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		//Result = Result & 0xFFFF;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "from DI(" << (int)(Destination_Index) << ") = " << (int)(Result & 0xFFFF);
-		Destination_Index = Result;
-		break;
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
+		Instruction_Pointer += 2 + additional_IPs;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
 }
 
 void SBB_IMM_from_ACC_8()		// SBB ACC  8bit - IMM -> ACC
@@ -7101,17 +4733,18 @@ void SBB_IMM_from_ACC_8()		// SBB ACC  8bit - IMM -> ACC
 	uint16 Result = 0;
 	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
 	bool OF_Carry = 0;
-	if (log_to_console) cout << "SBB IMM (" << (int)imm << ") from AL(" << setw(2) << (int)(AX & 255) << ") = ";
+	if (log_to_console) cout << "SBB IMM (" << (int)imm << ") from AL(" << setw(2) << (int)*ptr_AL << ") = ";
 	OF_Carry = ((AX & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
 	Flag_AF = (((AX & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
 	Result = (AX & 255) - imm - Flag_CF;
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
 	Flag_OF = Flag_CF ^ OF_Carry;
+	if (!*ptr_AL) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
-	AX = (AX & 0xFF00) | (Result & 255);
+	*ptr_AL = Result & 255;
 	if (log_to_console) cout << (int)(Result & 255);
 	Instruction_Pointer += 2;
 }
@@ -7127,6 +4760,7 @@ void SBB_IMM_from_ACC_16()		// SBB ACC 16bit - IMM -> ACC
 	Flag_CF = (Result >> 16) & 1;
 	Flag_SF = (Result >> 15) & 1;
 	Flag_OF = Flag_CF ^ OF_Carry;
+	if (!AX) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 	if (Result & 0xFFFF) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -7138,518 +4772,205 @@ void SBB_IMM_from_ACC_16()		// SBB ACC 16bit - IMM -> ACC
 
 void DEC_Reg()			//  DEC reg 16 bit
 {
-	uint8 byte1 = memory.read_2(Instruction_Pointer + *CS * 16);//второй байт
-	uint16 Src = 0;		//источник данных
+	uint8 reg = memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7;//регистр
+	Flag_AF = (((*ptr_r16[reg] & 0x0F) - 1) >> 4) & 1;
+	Flag_OF = (((*ptr_r16[reg] & 0x7FFF) - 1) >> 15);
+	if (!*ptr_r16[reg]) Flag_OF = 0;
+	(*ptr_r16[reg])--;
+	if (*ptr_r16[reg]) Flag_ZF = 0;
+	else Flag_ZF = 1;
+	Flag_SF = (*ptr_r16[reg] >> 15) & 1;
+	Flag_PF = parity_check[*ptr_r16[reg] & 255];
 
-	switch (byte1 & 7)
-	{
-	case 0:
-		Flag_AF = (((AX & 0x0F) - 1) >> 4) & 1;
-		Flag_OF = (((AX & 0x7FFF) - 1) >> 15);
-		AX--;
-		Src = AX;
-		if (Src) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (Src >> 15) & 1;
-		Flag_PF = parity_check[Src & 255];
-		if (log_to_console) cout << "DEC AX = " << (int)Src;
-		break;
-	case 1:
-		Flag_AF = (((CX & 0x0F) - 1) >> 4) & 1;
-		Flag_OF = (((CX & 0x7FFF) - 1) >> 15);
-		CX--;
-		Src = CX;
-		if (Src) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (Src >> 15) & 1;
-		Flag_PF = parity_check[Src & 255];
-		if (log_to_console) cout << "DEC CX = " << (int)Src;
-		break;
-	case 2:
-		Flag_AF = (((DX & 0x0F) - 1) >> 4) & 1;
-		Flag_OF = (((DX & 0x7FFF) - 1) >> 15);
-		DX--;
-		Src = DX;
-		if (Src) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (Src >> 15) & 1;
-		Flag_PF = parity_check[Src & 255];
-		if (log_to_console) cout << "DEC DX = " << (int)Src;
-		break;
-	case 3:
-		Flag_AF = (((BX & 0x0F) - 1) >> 4) & 1;
-		Flag_OF = (((BX & 0x7FFF) - 1) >> 15);
-		BX--;
-		Src = BX;
-		if (Src) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (Src >> 15) & 1;
-		Flag_PF = parity_check[Src & 255];
-		if (log_to_console) cout << "DEC BX = " << (int)Src;
-		break;
-	case 4:
-		Flag_AF = (((Stack_Pointer & 0x0F) - 1) >> 4) & 1;
-		Flag_OF = (((Stack_Pointer & 0x7FFF) - 1) >> 15);
-		Stack_Pointer--;
-		Src = Stack_Pointer;
-		if (Src) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (Src >> 15) & 1;
-		Flag_PF = parity_check[Src & 255];
-		if (log_to_console) cout << "DEC SP = " << (int)Src;
-		break;
-	case 5:
-		Flag_AF = (((Base_Pointer & 0x0F) - 1) >> 4) & 1;
-		Flag_OF = (((Base_Pointer & 0x7FFF) - 1) >> 15);
-		Base_Pointer--;
-		Src = Base_Pointer;
-		if (Src) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (Src >> 15) & 1;
-		Flag_PF = parity_check[Src & 255];
-		if (log_to_console) cout << "DEC BP = " << (int)Src;
-		break;
-	case 6:
-		Flag_AF = (((Source_Index & 0x0F) - 1) >> 4) & 1;
-		Flag_OF = (((Source_Index & 0x7FFF) - 1) >> 15);
-		Source_Index--;
-		Src = Source_Index;
-		if (Src) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (Src >> 15) & 1;
-		Flag_PF = parity_check[Src & 255];
-		if (log_to_console) cout << "DEC SI = " << (int)Src;
-		break;
-	case 7:
-		Flag_AF = (((Destination_Index & 0x0F) - 1) >> 4) & 1;
-		Flag_OF = (((Destination_Index & 0x7FFF) - 1) >> 15);
-		Destination_Index--;
-		Src = Destination_Index;
-		if (Src) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (Src >> 15) & 1;
-		Flag_PF = parity_check[Src & 255];
-		if (log_to_console) cout << "DEC DI = " << (int)Src;
-		break;
-	}
+	if (log_to_console) cout << "DEC " << reg16_name[reg] << " = " << (int)*ptr_r16[reg];
+
 	Instruction_Pointer += 1;
 }
 
 void CMP_Reg_RM_8()		//  CMP Reg with R/M 8 bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Dst = 0;
-	uint8 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	bool OF_Carry = false;
-	
-	//в данном случае Src(вычитаемое) - регистр, Destination - память
-	//определяем 1-й операнд
-	
-	Src = *ptr_r8[(byte2 >> 3) & 7];
-	if (log_to_console) cout << "CMP " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)Src << ") ";
-		
-	//определяем объект назначения и результат операции SUB
-	if((byte2 >> 6) == 3)
-	{
-		// mod 11 приемник - регистр (byte2 & 7)
-		additional_IPs = 0;
-		Dst = *ptr_r8[byte2 & 7];
-		if (log_to_console) cout << "with " << reg8_name[byte2 & 7] << "(" << (int)Dst << ") = ";
-	}
-	else
-	{
-		//приемник - память
-		mod_RM_3(byte2);
-		Dst = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
-		if (log_to_console) cout << "with M" << OPCODE_comment << " = ";
-	}
 
-	Result = Dst - Src;
-	Flag_CF = (Result >> 8) & 1;
-	Flag_SF = ((Result >> 7) & 1);
-	OF_Carry = ((Dst & 0x7F) - (Src & 0x7F)) >> 7;
-	Flag_OF = Flag_CF ^ OF_Carry;
-	if (Result & 255) Flag_ZF = false;
-	else Flag_ZF = true;
-	Flag_PF = parity_check[Result & 255];
-	Flag_AF = (((Dst & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-	if (log_to_console) cout << "with M" << (int)(Result & 255);
-	Instruction_Pointer += 2 + additional_IPs;
-}
-void CMP_Reg_RM_16()	//  CMP Reg with R/M 16 bit
-{
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint32 Result = 0;
-	bool OF_Carry = false;
+	if (log_to_console) cout << "CMP " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") with ";
 
-	//определяем SRC, это вычитаемое
-	Src = *ptr_r16[(byte2 >> 3) & 7];
-	if (log_to_console) cout << "CMP " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)Src << ") ";
-	
-	//определяем объект назначения и результат операции SUB
+	//определяем объект назначения и результат операции ADD
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
-		additional_IPs = 0;
-		Dst = *ptr_r16[byte2 & 7];
-		if (log_to_console) cout << "with " << reg16_name[byte2 & 7] << "(" << (int)Dst << ") = ";
+		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+
+		//складываем два регистра
+		Result = *ptr_r8[byte2 & 7] - *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << (int)(Result & 255);
+		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//*ptr_r8[byte2 & 7] = Result;
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+
+		Instruction_Pointer += 2;
 	}
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Dst_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
-		operand_RM_offset++;
-		*ptr_Dst_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
-		if (log_to_console) cout << "with M" << OPCODE_comment << " = ";
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] - *ptr_r8[(byte2 >> 3) & 7];
+		Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		Flag_CF = Result >> 8;
+		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		//memory_2[New_Addr_32] = Result;
+		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 255);
+
+		Instruction_Pointer += 2 + additional_IPs;
 	}
+}
+void CMP_Reg_RM_16()	//  CMP Reg with R/M 16 bit
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint32 Result = 0;
 
-	Result = Dst - Src;
-	Flag_CF = (Result >> 16) & 1;
-	Flag_SF = ((Result >> 15) & 1);
-	OF_Carry = ((Dst & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-	Flag_OF = Flag_CF ^ OF_Carry;
-	if (Result & 0xFFFF) Flag_ZF = false;
-	else Flag_ZF = true;
-	Flag_PF = (parity_check[Result & 255]);
-	Flag_AF = (((Dst & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-	if (log_to_console) cout << (int)(Result);
+	if (log_to_console) cout << "CMP " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") with ";
 
-	Instruction_Pointer += 2 + additional_IPs;
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
+	{
+		// mod 11 источник - регистр
+		Result = *ptr_r16[byte2 & 7] - *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7];
+		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 //доработать
 void CMP_RM_Reg_8()		//  CMP R/M with Reg 8 bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "CMP ";
-	//определяем операнд Src - вычитаемое
-	switch (byte2 >> 6)
+	//определяем 1-й операнд
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr);
-		if (log_to_console) cout << "M" << OPCODE_comment << " with ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX & 255;
-			if (log_to_console) cout << "AL("<<(int)Src<<") with ";
-			break;
-		case 1:
-			Src = CX & 255;
-			if (log_to_console) cout << "CL(" << (int)Src << ") with ";
-			break;
-		case 2:
-			Src = DX & 255;
-			if (log_to_console) cout << "DL(" << (int)Src << ") with ";
-			break;
-		case 3:
-			Src = BX & 255;
-			if (log_to_console) cout << "BL(" << (int)Src << ") with ";
-			break;
-		case 4:
-			Src = AX >> 8;
-			if (log_to_console) cout << "AH(" << (int)Src << ") with ";
-			break;
-		case 5:
-			Src = CX >> 8;
-			if (log_to_console) cout << "CH(" << (int)Src << ") with ";
-			break;
-		case 6:
-			Src = DX >> 8;
-			if (log_to_console) cout << "DH(" << (int)Src << ") with ";
-			break;
-		case 7:
-			Src = BX >> 8;
-			if (log_to_console) cout << "BH(" << (int)Src << ") with ";
-			break;
-		}
-		break;
-	}
+		Result = -*ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "CMP " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") with " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = ((-(*ptr_r8[byte2 & 7] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		//*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 
-	//определяем объект назначения и результат операции CMP
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Result = (AX & 255) - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((AX & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((AX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "AL(" << (int)(AX & 255) << ") = " << (int)(Result);
-		break;
-	case 1:
-		Result = (CX & 255) - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((CX & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((CX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "CL(" << (int)(CX & 255) << ") = " << (int)(Result);
-		break;
-	case 2:
-		Result = (DX & 255) - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((DX & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((DX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "DL(" << (int)(DX & 255) << ") = " << (int)(Result);
-		break;
-	case 3:
-		Result = (BX & 255) - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((BX & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((BX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "BL(" << (int)(BX & 255) << ") = " << (int)(Result);
-		break;
-	case 4:
-		Result = (AX >> 8) - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (((AX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((AX >> 8) & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "AH(" << (int)((AX >> 8) & 255) << ") = " << (int)(Result);
-		break;
-	case 5:
-		Result = (CX >> 8) - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (((CX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((CX >> 8) & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "CH(" << (int)((CX >> 8) & 255) << ") = " << (int)(Result);
-		break;
-	case 6:
-		Result = (DX >> 8) - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (((DX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((DX >> 8) & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "DH(" << (int)((DX >> 8) & 255) << ") = " << (int)(Result);
-		break;
-	case 7:
-		Result = (BX >> 8) - Src;
-		Flag_CF = (Result >> 8) & 1;
-		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (((BX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 255) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((((BX >> 8) & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << "BH(" << (int)((BX >> 8) & 255) << ") = " << (int)(Result);
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = -memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "CMP M" << OPCODE_comment << " with " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = (Result >> 8) & 1;
+		Flag_SF = ((Result >> 7) & 1);
+		OF_Carry = (-(memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = ((-(memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		//*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void CMP_RM_Reg_16()	//  CMP R/M with Reg 16 bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Result = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "CMP ";
-	//определяем операнд Src - вычитаемое
-	switch (byte2 >> 6)
+	//определяем 1-й операнд
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX;
-			if (log_to_console) cout << "AX(" << (int)Src << ") ";
-			break;
-		case 1:
-			Src = CX;
-			if (log_to_console) cout << "CX(" << (int)Src << ") ";
-			break;
-		case 2:
-			Src = DX;
-			if (log_to_console) cout << "DX(" << (int)Src << ") ";
-			break;
-		case 3:
-			Src = BX;
-			if (log_to_console) cout << "BX(" << (int)Src << ") ";
-			break;
-		case 4:
-			Src = Stack_Pointer;
-			if (log_to_console) cout << "SP(" << (int)Src << ") ";
-			break;
-		case 5:
-			Src = Base_Pointer;
-			if (log_to_console) cout << "BP(" << (int)Src << ") ";
-			break;
-		case 6:
-			Src = Source_Index;
-			if (log_to_console) cout << "SI(" << (int)Src << ") ";
-			break;
-		case 7:
-			Src = Destination_Index;
-			if (log_to_console) cout << "DI(" << (int)Src << ") ";
-			break;
-		}
-		break;
+		Result = -*ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "CMP " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") with " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = (Result >> 16) & 1;
+		Flag_SF = ((Result >> 15) & 1);
+		OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		Flag_OF = Flag_CF ^ OF_Carry;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		Flag_AF = ((-(*ptr_r16[byte2 & 7] & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+
+		Instruction_Pointer += 2;
 	}
-	if (log_to_console) cout << "with ";
-	//определяем объект назначения и результат операции SUB
-	switch ((byte2 >> 3) & 7)
+	else
 	{
-	case 0:
-		Result = AX - Src;
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "CMP M" << OPCODE_comment << "(" << (int)*ptr_Src << ") with " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((AX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
+		OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((AX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << " AX(" << (int) AX<< ") = " << (int)(Result);
-		break;
-	case 1:
-		Result = CX - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((CX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((CX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << " CX(" << (int)CX << ") = " << (int)(Result);
-		break;
-	case 2:
-		Result = DX - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((DX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((DX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << " DX(" << (int)DX << ") = " << (int)(Result);
-		break;
-	case 3:
-		Result = BX - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((BX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((BX & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << " BX(" << (int)BX << ") = " << (int)(Result);
-		break;
-	case 4:
-		Result = Stack_Pointer - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((Stack_Pointer & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Stack_Pointer & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << " SP(" << (int)Stack_Pointer << ") = " << (int)(Result);
-		break;
-	case 5:
-		Result = Base_Pointer - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((Base_Pointer & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Base_Pointer & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << " BP(" << (int)Base_Pointer << ") = " << (int)(Result);
-		break;
-	case 6:
-		Result = Source_Index - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((Source_Index & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Source_Index & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << " SI(" << (int)Source_Index << ") = " << (int)(Result);
-		break;
-	case 7:
-		Result = Destination_Index - Src;
-		Flag_CF = (Result >> 16) & 1;
-		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((Destination_Index & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (Result & 0xFFFF) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((Destination_Index & 0x0F) - (Src & 0x0F)) >> 4) & 1;
-		if (log_to_console) cout << " DI(" << (int)Destination_Index << ") = " << (int)(Result);
-		break;
+		Flag_AF = ((-(*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+
+		Instruction_Pointer += 2 + additional_IPs;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
 }
 void CMP_IMM_with_ACC_8()		// CMP IMM  8bit - ACC
 {
 	uint16 Result = 0;
 	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
-	bool OF_Carry = false;
 
-	if (log_to_console) cout << "CMP IMM (" << (int)(imm) << ") with AL(" << (int)(AX & 255) << ") = ";
+	if (log_to_console) cout << "CMP IMM (" << (int)(imm) << ") with AL(" << (int)*ptr_AL << ") = ";
 
-	Result = (uint16)(AX & 255) - (uint16)imm;
+	Result = *ptr_AL - imm;
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
 	OF_Carry = ((AX & 0x7F) - (imm & 0x7F)) >> 7;
@@ -7666,12 +4987,12 @@ void CMP_IMM_with_ACC_8()		// CMP IMM  8bit - ACC
 void CMP_IMM_with_ACC_16()		// CMP IMM 16bit - ACC
 {
 	uint32 Result = 0;
-	bool OF_Carry = false;
+	
 	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
 	
 	if (log_to_console) cout << "CMP IMM (" << (int)(imm) << ") with AX(" << (int)AX << ") = ";
 
-	Result = (uint32)AX - (uint32)imm;
+	Result = AX - imm;
 	Flag_CF = (Result >> 16) & 1;
 	Flag_SF = (Result >> 15) & 1;
 	OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF)) >> 15;
@@ -7680,7 +5001,7 @@ void CMP_IMM_with_ACC_16()		// CMP IMM 16bit - ACC
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
 	Flag_AF = (((AX & 15) - (imm & 15)) >> 4) & 1;
-	if (log_to_console) cout << (int)(Result);
+	if (log_to_console) cout << (int)(Result & 0xFFFF);
 
 	Instruction_Pointer += 3;
 }
@@ -7712,27 +5033,30 @@ void DAS() //DAS = Decimal Adjust for Subtract
 {
 	uint16 AL = AX & 255;
 	uint8 low_AL = AL & 15;
-	
-	if (low_AL > 9 || Flag_AF)
-	{
-		AL = AL - 6;
-		Flag_AF = true;
-		if ((AL >> 8) & 1) Flag_CF = true;
-	}
-	
 	uint8 high_AL = (AL >> 4) & 15;
 
-	if (high_AL > 9 || Flag_CF)
+	if ((*ptr_AL & 15) > 9)
 	{
-		AL = AL - 0x60; // -6 к старшим битам
+		*ptr_AL = *ptr_AL - 6;
+		Flag_AF = 1;
+	}
+	else
+	{
+		if (Flag_AF)
+		{
+			*ptr_AL = *ptr_AL - 6;
+		}
+	}
+
+	if ((*ptr_AL >> 4) > 9 || Flag_CF)
+	{
+		*ptr_AL = *ptr_AL - 0x60; // -6 к старшим битам
 		Flag_CF = true;
 	}
-	AX = (AX & 0xFF00) | (AL & 255);
-
-	if (AX & 255) Flag_ZF = false;
+	if (*ptr_AL) Flag_ZF = false;
 	else Flag_ZF = true;
-	Flag_SF = (AL >> 7) & 1;
-	Flag_PF = parity_check[AX & 255];
+	Flag_SF = (*ptr_AL >> 7) & 1;
+	Flag_PF = parity_check[*ptr_AL];
 	Flag_OF = 0;
 	if (log_to_console) cout << "DAS AL = " << (int)((AX >> 4) & 15) << " + " << (int)(AX & 15);
 	Instruction_Pointer += 1;
@@ -7746,23 +5070,25 @@ void AAM() //AAM = ASCII Adjust for Multiply
 	{
 		//DIV 0
 		exeption = 0x10;
-		Instruction_Pointer += 2;
+		Flag_ZF = true;  //недокументированное поведение
+		Flag_SF = false; //недокументированное поведение
+		Flag_PF = true;  //недокументированное поведение
+		//Instruction_Pointer += 2;
 		if (log_to_console) cout << " [DIV0] ";
 		return;
 	}
 	
-	uint8 AH = (AX & 255) / base;
-	uint8 AL = (AX & 255) % base;
-	AX = (AH << 8) | AL;
+	*ptr_AH = *ptr_AL / base;
+	*ptr_AL = *ptr_AL % base;
 
-	if (AX & 255) Flag_ZF = false;
+	if (*ptr_AL) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_SF = ((AX >> 7) & 1);
-	Flag_PF = parity_check[AX & 255];
+	Flag_PF = parity_check[*ptr_AL];
 	Flag_AF = 0;
 	Flag_CF = 0;
 	Flag_OF = 0;
-	if (log_to_console) cout << (int)(AX >> 8) << " + " << (int)(AX & 255);
+	if (log_to_console) cout << (int)*ptr_AH << " + " << (int)*ptr_AL;
 	Instruction_Pointer += 2;
 }
 
@@ -7815,31 +5141,42 @@ void CWD() //CWD = Convert Word to Double Word
 // TEST/NOT/NEG/MUL/IMUL/DIV/IDIV  R/M 8 bit
 void Invert_RM_8()			
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
-	uint8 OP = (byte2 >> 3) & 7;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
 	uint16 disp = 0;		//смещение
 	uint16 Src = 0;		//источник данных
+	uint8 imm = 0;
 	uint8 Result = 0;
 	uint16 Result_16 = 0;
-	additional_IPs = 0;
 	uint8 rem; //остаток от деления
-	bool OF_Carry = 0;
 	bool old_SF = 0;
 
-	switch (OP)
+	switch ((byte2 >> 3) & 7)
 	{
 	case 0:  //TEST_IMM_8
 	case 1:  //недокументированный алиас
 		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);//IMM
-			if (log_to_console) cout << "TEST IMM(" << (int)Src << ") AND ";
-			Result = memory.read_2(New_Addr) & Src;
+			// mod 11 источник - регистр
+			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "TEST IMM(" << (int)imm << ") AND ";
+			Result = *ptr_r8[byte2 & 7] & imm;
+			Flag_CF = 0;
+			Flag_OF = 0;
+			Flag_SF = (Result >> 7) & 1;
+			if (Result) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result];
+			if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = " << (int)Result;
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];//IMM
+			if (log_to_console) cout << "TEST IMM(" << (int)imm << ") AND ";
+			Result = memory_2[New_Addr_32] & imm;
 			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
 			Flag_CF = 0;
 			Flag_OF = 0;
@@ -7847,465 +5184,126 @@ void Invert_RM_8()
 			if (Result) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result & 255];
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "TEST IMM(" << (int)Src << ") AND ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result = (AX & 255) & Src;
-				//AX = (AX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result];
-				if (log_to_console) cout << "AL(" << (int)(AX & 255) << ") = " << (int)(Result & 255);
-				break;
-			case 1:
-				Result = (CX & 255) & Src;
-				//CX = (CX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result];
-				if (log_to_console) cout << "CL(" << (int)(CX & 255) << ") = " << (int)(Result & 255);
-				break;
-			case 2:
-				Result = (DX & 255) & Src;
-				//DX = (DX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result];
-				if (log_to_console) cout << "DL(" << (int)(DX & 255) << ") = " << (int)(Result & 255);
-				break;
-			case 3:
-				Result = (BX & 255) & Src;
-				//BX = (BX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result];
-				if (log_to_console) cout << "BL(" << (int)(BX & 255) << ") = " << (int)(Result & 255);
-				break;
-			case 4:
-				Result = ((AX >> 8)) & Src;
-				//AX = (AX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result];
-				if (log_to_console) cout << "AH(" << (int)((AX >> 8) & 255) << ") = " << (int)(Result & 255);
-				break;
-			case 5:
-				Result = ((CX >> 8)) & Src;
-				//CX = (CX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result];
-				if (log_to_console) cout << "CH(" << (int)((CX >> 8) & 255) << ") = " << (int)(Result & 255);
-				break;
-			case 6:
-				Result = ((DX >> 8)) & Src;
-				//DX = (DX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result];
-				if (log_to_console) cout << "DH(" << (int)((DX >> 8) & 255) << ") = " << (int)(Result & 255);
-				break;
-			case 7:
-				Result = ((BX >> 8)) & Src;
-				//BX = (BX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result];
-				if (log_to_console) cout << "BH(" << (int)((BX >> 8) & 255) << ") = " << (int)(Result & 255);
-				break;
-			}
-			break;
+			Instruction_Pointer += 3 + additional_IPs;
 		}
-		Instruction_Pointer += 3 + additional_IPs;
 		break;
 
 	case 2:  //NOT(Invert) RM_8
 		//определяем адрес или регистр
-		switch (byte2 >> 6)
+		if((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = ~memory.read_2(New_Addr);
-			memory.write_2(New_Addr,  Src & 255);
-			break;
-		case 3:
 			// mod 11 - регистр 8bit
-			switch (byte2 & 7)
-			{
-			case 0: //AL
-				AX = (AX & 0xFF00) | (~AX & 255);
-				break;
-			case 1: //CL
-				CX = (CX & 0xFF00) | (~CX & 255);
-				break;
-			case 2: //DL
-				DX = (DX & 0xFF00) | (~DX & 255);
-				break;
-			case 3: //BL
-				BX = (BX & 0xFF00) | (~BX & 255);
-				break;
-			case 4: //AH
-				AX = (AX & 0x00FF) | (~AX & 0xFF00);
-				break;
-			case 5: //CH
-				CX = (CX & 0x00FF) | (~CX & 0xFF00);
-				break;
-			case 6: //DH
-				DX = (DX & 0x00FF) | (~DX & 0xFF00);
-				break;
-			case 7: //BH
-				BX = (BX & 0x00FF) | (~BX & 0xFF00);
-				break;
-			}
-			break;
+			if (log_to_console) cout << "Invert " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") -> ";
+			*ptr_r8[byte2 & 7] = ~(*ptr_r8[byte2 & 7]);
+			if (log_to_console) cout << *ptr_r8[byte2 & 7];
+			Instruction_Pointer += 2;
 		}
-		if (log_to_console) cout << "Invert 8 bit R/M";
-		Instruction_Pointer += 2 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			if (log_to_console) cout << "Invert M" << OPCODE_comment << "(" << (int)memory_2[New_Addr_32] << ") -> ";
+			memory_2[New_Addr_32] = ~memory_2[New_Addr_32];
+			if (log_to_console) cout << (int)memory_2[New_Addr_32];
+			Instruction_Pointer += 2 + additional_IPs;
+		}
 		break;
 
 	case 3: //NEG_8
-		//определяем адрес или регистр
-		if (log_to_console) cout << "NEG_8 ";
-		switch (byte2 >> 6)
+		
+		if (log_to_console) cout << "NEGATE ";
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (memory.read_2(New_Addr)) Flag_CF = 1;
-			else Flag_CF = 0;
-			if (memory.read_2(New_Addr) == 0x80) Flag_OF = 1;
-			else Flag_OF = 0;
-			//Flag_AF = (((~memory.read_2(New_Addr) & 15) + 1) >> 4) & 1;
-			//OF_Carry = ((~memory.read_2(New_Addr) & 0x7F) + 1) >> 7;
-			Src = ~memory.read_2(New_Addr) + 1;
-			//Flag_CF = (Src >> 8) & 1;
-			Flag_SF = ((Src >> 7) & 1);
-			//Flag_OF = Flag_CF ^ OF_Carry;
-			if (Src & 0xFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
-			if (Src & 15) Flag_AF = 1;
-			else Flag_AF = 0;
-			memory.write_2(New_Addr,  Src & 255);
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Src & 255);
-			break;
-		case 3:
 			// mod 11 - регистр 8bit
-			switch (byte2 & 7)
-			{
-			case 0: //AL
-				if (AX & 255) Flag_CF = 1;
-				else Flag_CF = 0;
-				if ((AX & 255) == 0x80) Flag_OF = 1;
-				else Flag_OF = 0;
-				//Flag_AF = (((~AX & 15) + 1) >> 4) & 1;
-				//OF_Carry = ((~AX & 0x7F) + 1) >> 7;
-				Src = (~AX & 255) + 1;
-				//Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				//Flag_OF = Flag_CF ^ OF_Carry;
-				if (Src & 0xFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (Src & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				AX = (AX & 0xFF00) | (Src & 255);
-				if (log_to_console) cout << " AL = " << (int)(AX & 255);
-				break;
-			case 1: //CL
-				if (CX & 255) Flag_CF = 1;
-				else Flag_CF = 0;
-				if ((CX & 255) == 0x80) Flag_OF = 1;
-				else Flag_OF = 0;
-				//Flag_AF = (((~CX & 15) + 1) >> 4) & 1;
-				//OF_Carry = ((~CX & 0x7F) + 1) >> 7;
-				Src = (~CX & 255) + 1;
-				//Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				//Flag_OF = Flag_CF ^ OF_Carry;
-				if (Src & 0xFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (Src & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				CX = (CX & 0xFF00) | (Src & 255);
-				if (log_to_console) cout << " CL = " << (int)(CX & 255);
-				break;
-			case 2: //DL
-				if (DX & 255) Flag_CF = 1;
-				else Flag_CF = 0;
-				if ((DX & 255) == 0x80) Flag_OF = 1;
-				else Flag_OF = 0;
-				//Flag_AF = (((~DX & 15) + 1) >> 4) & 1;
-				//OF_Carry = ((~DX & 0x7F) + 1) >> 7;
-				Src = (~DX & 255) + 1;
-				//Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				//Flag_OF = Flag_CF ^ OF_Carry;
-				if (Src & 0xFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (Src & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				DX = (DX & 0xFF00) | (Src & 255);
-				if (log_to_console) cout << " DL = " << (int)(DX & 255);
-				break;
-			case 3: //BL
-				if (BX & 255) Flag_CF = 1;
-				else Flag_CF = 0;
-				if ((BX & 255) == 0x80) Flag_OF = 1;
-				else Flag_OF = 0;
-				//Flag_AF = (((~BX & 15) + 1) >> 4) & 1;
-				//OF_Carry = ((~BX & 0x7F) + 1) >> 7;
-				Src = (~BX & 255) + 1;
-				//Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				//Flag_OF = Flag_CF ^ OF_Carry;
-				if (Src & 0xFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				BX = (BX & 0xFF00) | (Src & 255);
-				Flag_PF = parity_check[Src & 255];
-				if (Src & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				if (log_to_console) cout << " BL = " << (int)(BX & 255);
-				break;
-			case 4: //AH
-				if ((AX >> 8) & 255) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (((AX >> 8) & 255) == 0x80) Flag_OF = 1;
-				else Flag_OF = 0;
-				//Flag_AF = (((~(AX >> 8) & 15) + 1) >> 4) & 1;
-				//OF_Carry = ((~(AX >> 8) & 0x7F) + 1) >> 7;
-				Src = (~AX >> 8) + 1;
-				//Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				//Flag_OF = Flag_CF ^ OF_Carry;
-				if (Src & 0xFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (Src & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				AX = (AX & 0x00FF) | (Src << 8);
-				if (log_to_console) cout << " AH = " << (int)(AX >> 8);
-				break;
-			case 5: //CH
-				if ((CX >> 8) & 255) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (((CX >> 8) & 255) == 0x80) Flag_OF = 1;
-				else Flag_OF = 0;
-				//Flag_AF = (((~(CX >> 8) & 15) + 1) >> 4) & 1;
-				//OF_Carry = ((~(CX >> 8) & 0x7F) + 1) >> 7;
-				Src = (~CX >> 8) + 1;
-				//Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				//Flag_OF = Flag_CF ^ OF_Carry;
-				if (Src & 0xFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (Src & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				CX = (CX & 0x00FF) | (Src << 8);
-				if (log_to_console) cout << " CH = " << (int)(CX >> 8);
-				break;
-			case 6: //DH
-				if ((DX >> 8) & 255) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (((DX >> 8) & 255) == 0x80) Flag_OF = 1;
-				else Flag_OF = 0;
-				//Flag_AF = (((~(DX >> 8) & 15) + 1) >> 4) & 1;
-				//OF_Carry = ((~(DX >> 8) & 0x7F) + 1) >> 7;
-				Src = (~DX >> 8) + 1;
-				//Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				//Flag_OF = Flag_CF ^ OF_Carry;
-				if (Src & 0xFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (Src & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				DX = (DX & 0x00FF) | (Src << 8);
-				if (log_to_console) cout << " DH = " << (int)(DX >> 8);
-				break;
-			case 7: //BH
-				if ((BX >> 8) & 255) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (((BX >> 8) & 255) == 0x80) Flag_OF = 1;
-				else Flag_OF = 0;
-				//Flag_AF = (((~(BX >> 8) & 15) + 1) >> 4) & 1;
-				//OF_Carry = ((~(BX >> 8) & 0x7F) + 1) >> 7;
-				Src = (~BX >> 8) + 1;
-				//Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				//Flag_OF = Flag_CF ^ OF_Carry;
-				if (Src & 0xFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (Src & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				BX = (BX & 0x00FF) | (Src << 8);
-				if (log_to_console) cout << " BH = " << (int)(BX >> 8);
-				break;
-			}
-			break;
+			
+
+			if (*ptr_r8[byte2 & 7]) Flag_CF = 1;
+			else Flag_CF = 0;
+			if (*ptr_r8[byte2 & 7] == 0x80) Flag_OF = 1;
+			else Flag_OF = 0;
+			*ptr_r8[byte2 & 7] = ~*ptr_r8[byte2 & 7] + 1;
+			Flag_SF = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (*ptr_r8[byte2 & 7] & 15) Flag_AF = 1;
+			else Flag_AF = 0;
+			if (log_to_console) cout << reg8_name[byte2 & 7] << " = " << (int)*ptr_r8[byte2 & 7];
+			Instruction_Pointer += 2;
 		}
-		//if (log_to_console) cout << "NEG 8 bit R/M";
-		Instruction_Pointer += 2 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			if (memory_2[New_Addr_32]) Flag_CF = 1;
+			else Flag_CF = 0;
+			if (memory_2[New_Addr_32] == 0x80) Flag_OF = 1;
+			else Flag_OF = 0;
+			memory_2[New_Addr_32] = ~memory_2[New_Addr_32] + 1;
+			Flag_SF = (memory_2[New_Addr_32] >> 7) & 1;
+			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			if (memory_2[New_Addr_32] & 15) Flag_AF = 1;
+			else Flag_AF = 0;
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(memory_2[New_Addr_32]);
+			Instruction_Pointer += 2 + additional_IPs;
+		}
 		break;
 		
 	case 4: //MUL = Multiply (Unsigned)
 
-		if (log_to_console) cout << "MUL AL(" << int(AX & 255) << ") x ";
+		if (log_to_console) cout << "MUL AL(" << (int)*ptr_AL << ") x ";
 		//определяем множитель
-		switch (byte2 >> 6)
+		if((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			if (log_to_console) cout << "M" << OPCODE_comment << "=";
-			break;
-		case 3:
 			// mod 11 - регистр 8bit
-			switch (byte2 & 7)
-			{
-			case 0: //AL
-				Src = (AX & 255);
-				if (log_to_console) cout << "AL(" << int(Src) << ")=";
-				break;
-			case 1: //CL
-				Src = (CX & 255);
-				if (log_to_console) cout << "CL(" << int(Src) << ")=";
-				break;
-			case 2: //DL
-				Src = (DX & 255);
-				if (log_to_console) cout << "DL(" << int(Src) << ")=";
-				break;
-			case 3: //BL
-				Src = (BX & 255);
-				if (log_to_console) cout << "BL(" << int(Src) << ")=";
-				break;
-			case 4: //AH
-				Src = (AX >> 8) & 255;
-				if (log_to_console) cout << "AH(" << int(Src) << ")=";
-				break;
-			case 5: //CH
-				Src = (CX >> 8) & 255;
-				if (log_to_console) cout << "CH(" << int(Src) << ")=";
-				break;
-			case 6: //DH
-				Src = (DX >> 8) & 255;
-				if (log_to_console) cout << "DH(" << int(Src) << ")=";
-				break;
-			case 7: //BH
-				Src = (BX >> 8) & 255;
-				if (log_to_console) cout << "BH(" << int(Src) << ")=";
-				break;
-			}
-			break;
+			Src = *ptr_r8[byte2 & 7];
+			if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << int(Src) << ") = ";
+			additional_IPs = 0;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Src = memory_2[New_Addr_32];
+			if (log_to_console) cout << "M" << OPCODE_comment << "=";
 		}
 
-		AX = (AX & 255) * Src;
+		AX = *ptr_AL * Src;
 		if (AX >> 8)
 		{
-			Flag_CF = true; Flag_OF = true; Flag_ZF = 0;
+			Flag_CF = true; Flag_OF = true; 
 		}
 		else 
 		{
-			Flag_CF = false; Flag_OF = false; Flag_ZF = 1;
+			Flag_CF = false; Flag_OF = false;
 		}
 
-		Flag_SF = ((AX >> 8) >> 7) & 1;
-		Flag_PF = parity_check[(AX >> 8)];
+		Flag_AF = 0; //undefined
 		if (log_to_console) cout << (int)(AX);
 		Instruction_Pointer += 2 + additional_IPs;
 		break;
 
 	case 5: //IMUL = Integer Multiply(Signed)
-		if (log_to_console) cout << "IMUL AL(" << int(AX & 255) << ") * ";
+		if (log_to_console) cout << "IMUL AL(" << (int)*ptr_AL  << ") x ";
 		//определяем множитель
-		switch (byte2 >> 6)
+		if((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
-			break;
-		case 3:
 			// mod 11 - регистр 8bit
-			switch (byte2 & 7)
-			{
-			case 0: //AL
-				Src = (AX & 255);
-				if (log_to_console) cout << "AL(" << int(Src) << ") = ";
-				break;
-			case 1: //CL
-				Src = (CX & 255);
-				if (log_to_console) cout << "CL(" << int(Src) << ") = ";
-				break;
-			case 2: //DL
-				Src = (DX & 255);
-				if (log_to_console) cout << "DL(" << int(Src) << ") = ";
-				break;
-			case 3: //BL
-				Src = (BX & 255);
-				if (log_to_console) cout << "BL(" << int(Src) << ") = ";
-				break;
-			case 4: //AH
-				Src = (AX >> 8) & 255;
-				if (log_to_console) cout << "AH(" << int(Src) << ") = ";
-				break;
-			case 5: //CH
-				Src = (CX >> 8) & 255;
-				if (log_to_console) cout << "CH(" << int(Src) << ") = ";
-				break;
-			case 6: //DH
-				Src = (DX >> 8) & 255;
-				if (log_to_console) cout << "DH(" << int(Src) << ") = ";
-				break;
-			case 7: //BH
-				Src = (BX >> 8) & 255;
-				if (log_to_console) cout << "BH(" << int(Src) << ") = ";
-				break;
-			}
-			break;
+			Src = *ptr_r8[byte2 & 7];
+			if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << int(Src) << ") = ";
+			additional_IPs = 0;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Src = memory_2[New_Addr_32];
+			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
 		}
 
-		AX = ((__int8)(AX & 0xFF) * (__int8)Src);
+		AX = ((__int8)*ptr_AL * (__int8)Src);
 		if ((AX >> 7) == 0 || (AX >> 7) == 0b111111111)
 		{
 			Flag_CF = false; Flag_OF = false;
@@ -8314,10 +5312,6 @@ void Invert_RM_8()
 		{
 			Flag_CF = true; Flag_OF = true; 
 		}
-		if (AX >> 8) Flag_ZF = 0;
-		else Flag_ZF = 1;
-		Flag_SF = (AX >> 15) & 1;
-		Flag_PF = parity_check[AX >> 8];
 		if (log_to_console) cout << (__int16)(AX);
 		Instruction_Pointer += 2 + additional_IPs;
 		break;
@@ -8326,59 +5320,25 @@ void Invert_RM_8()
 
 		if (log_to_console) cout << "DIV AX(" << int(AX) << ") : ";
 		//определяем делитель
-		switch (byte2 >> 6)
+		if((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			if (log_to_console) cout << "M[" << (int)(New_Addr) << "](" << (int)Src << ") = ";
-			break;
-		case 3:
 			// mod 11 - регистр 8bit
-			switch (byte2 & 7)
-			{
-			case 0: //AL
-				Src = (AX & 255);
-				if (log_to_console) cout << "AL(" << int(Src) << ") = ";
-				break;
-			case 1: //CL
-				Src = (CX & 255);
-				if (log_to_console) cout << "CL(" << int(Src) << ") = ";
-				break;
-			case 2: //DL
-				Src = (DX & 255);
-				if (log_to_console) cout << "DL(" << int(Src) << ") = ";
-				break;
-			case 3: //BL
-				Src = (BX & 255);
-				if (log_to_console) cout << "BL(" << int(Src) << ") = ";
-				break;
-			case 4: //AH
-				Src = (AX >> 8);
-				if (log_to_console) cout << "AH(" << int(Src) << ") = ";
-				break;
-			case 5: //CH
-				Src = (CX >> 8);
-				if (log_to_console) cout << "CH(" << int(Src) << ") = ";
-				break;
-			case 6: //DH
-				Src = (DX >> 8);
-				if (log_to_console) cout << "DH(" << int(Src) << ") = ";
-				break;
-			case 7: //BH
-				Src = (BX >> 8);
-				if (log_to_console) cout << "BH(" << int(Src) << ") = ";
-				break;
-			}
-			break;
+			Src = *ptr_r8[byte2 & 7];
+			if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << int(Src) << ") = ";
+			additional_IPs = 0;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Src = memory_2[New_Addr_32];
+			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
 		}
 
 		//бросаем исключение при делении на 0
 		if (Src == 0) {
 			exeption = 0x10;
-			Instruction_Pointer += (2 + additional_IPs);
+			//Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [DIV0] ";
 			return;
 		}
@@ -8388,13 +5348,14 @@ void Invert_RM_8()
 
 		//бросаем исключение при переполнении
 		if (Result_16 > 0xFF) {
-			exeption = 0x10;
+			exeption = 0x14;
 			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [OVERFLOW] ";
 			return;
 		}
 
-		AX = (rem << 8) | (Result_16);
+		*ptr_AH = rem;
+		*ptr_AL = Result_16;
 
 		if (log_to_console) cout << (int)(Result_16) << " rem " << (int)rem;
 		Instruction_Pointer += 2 + additional_IPs;
@@ -8404,59 +5365,25 @@ void Invert_RM_8()
 		
 		if (log_to_console) cout << "IDIV AX(" << setw(4) << (int)AX << ") : ";
 		//определяем делитель
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
-			break;
-		case 3:
 			// mod 11 - регистр 8bit
-			switch (byte2 & 7)
-			{
-			case 0: //AL
-				Src = (AX & 255);
-				if (log_to_console) cout << "AL(" << setw(2) << (int)Src << ")=";
-				break;
-			case 1: //CL
-				Src = (CX & 255);
-				if (log_to_console) cout << "CL(" << setw(2) << (int)Src << ")=";
-				break;
-			case 2: //DL
-				Src = (DX & 255);
-				if (log_to_console) cout << "DL(" << setw(2) << (int)Src << ")=";
-				break;
-			case 3: //BL
-				Src = (BX & 255);
-				if (log_to_console) cout << "BL(" << setw(2) << (int)Src << ")=";
-				break;
-			case 4: //AH
-				Src = (AX >> 8) & 255;
-				if (log_to_console) cout << "AH(" << setw(2) << (int)Src << ")=";
-				break;
-			case 5: //CH
-				Src = (CX >> 8) & 255;
-				if (log_to_console) cout << "CH(" << setw(2) << (int)Src << ")=";
-				break;
-			case 6: //DH
-				Src = (DX >> 8) & 255;
-				if (log_to_console) cout << "DH(" << setw(2) << (int)Src << ")=";
-				break;
-			case 7: //BH
-				Src = (BX >> 8) & 255;
-				if (log_to_console) cout << "BH(" << setw(2) << (int)Src << ")=";
-				break;
-			}
-			break;
+			Src = *ptr_r8[byte2 & 7];
+			if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << int(Src) << ") = ";
+			additional_IPs = 0;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Src = memory_2[New_Addr_32];
+			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
 		}
 
 		//бросаем исключение при делении на 0
 		if (Src == 0) {
 			exeption = 0x10;
-			Instruction_Pointer += (2 + additional_IPs);
+			//Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [DIV0] ";
 			negate_IDIV = 0; //убираем флаг инверсии знака
 			return;
@@ -8473,14 +5400,15 @@ void Invert_RM_8()
 		
 		//бросаем исключение при переполнении
 		if (abs(quotient) > 0x7F) {
-			exeption = 0x10;
+			exeption = 0x14;
 			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [OVERFLOW] ";
 			return;
 		}
 
 		rem = ((__int16)AX % (__int8)Src);
-		AX = (quotient & 255) | (rem << 8);
+		*ptr_AH = rem;
+		*ptr_AL = quotient;
 		if (log_to_console) cout << setw(2) << (int)(AX & 255) << " rem " << (int)rem;
 		Instruction_Pointer += 2 + additional_IPs;
 		break;
@@ -8490,389 +5418,143 @@ void Invert_RM_8()
 // TEST/NOT/NEG/MUL/IMUL/DIV/IDIV   16 bit
 void Invert_RM_16()		
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
-	uint8 OP = (byte2 >> 3) & 7;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
 	uint16 disp = 0;		//смещение
-	uint16 Src = 0;			//источник данных
 	uint16 Result = 0;
 	uint32 Result_32 = 0;
 	additional_IPs = 0;
 	uint16 rem = 0;   //остаток деления
-	bool OF_Carry;
 
-	switch (OP)
+	switch ((byte2 >> 3) & 7)
 	{
 	case 0:  //TEST_IMM_16
 	case 1:  //Alias
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "TEST IMM[" << (int)Src << "] AND ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & Src;
+			// mod 11 источник - регистр
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "TEST IMM[" << (int)*ptr_Src << "] AND ";
+			Result = *ptr_r16[byte2 & 7] & Src;
+			Flag_CF = 0;
+			Flag_OF = 0;
+			Flag_SF = ((Result >> 15) & 1);
+			Flag_AF = 0; //undefined
+			if (Result) Flag_ZF = false;
+			else Flag_ZF = true;
+			if (log_to_console) cout << reg16_name[byte2 & 7] << " = " << (int)Result;
+			Flag_PF = parity_check[Result & 255];
+			Instruction_Pointer += 4;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "TEST IMM[" << (int)*ptr_Src << "] AND ";
+			Result = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & *ptr_Src;
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = ((Result >> 15) & 1);
+			Flag_AF = 0; //undefined
 			if (Result) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result & 255];
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "TEST IMM[" << (int)Src << "] AND ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result = AX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 15) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " AX = " << (int)Result;
-				Flag_PF = parity_check[Result & 255];
-				break;
-			case 1:
-				Result = CX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 15) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " CX = " << (int)Result;
-				Flag_PF = parity_check[Result & 255];
-				break;
-			case 2:
-				Result = DX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 15) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " DX = " << (int)Result;
-				Flag_PF = parity_check[Result & 255];
-				break;
-			case 3:
-				Result = BX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 15) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " BX = " << (int)Result;
-				Flag_PF = parity_check[Result & 255];
-				break;
-			case 4:
-				Result = Stack_Pointer & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 15) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " SP = " << (int)Result;
-				Flag_PF = parity_check[Result & 255];
-				break;
-			case 5:
-				Result = Base_Pointer & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 15) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " BP = " << (int)Result;
-				Flag_PF = parity_check[Result & 255];
-				break;
-			case 6:
-				Result = Source_Index & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 15) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " SI = " << (int)Result;
-				Flag_PF = parity_check[Result & 255];
-				break;
-			case 7:
-				Result = Destination_Index & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 15) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (log_to_console) cout << " DI = " << (int)Result;
-				Flag_PF = parity_check[Result & 255];
-				break;
-			}
-			break;
+			Instruction_Pointer += 4 + additional_IPs;
 		}
-		Instruction_Pointer += 4 + additional_IPs;
 		break;
 
 	case 2: //NOT (Invert) 16 R/M
 
 		//определяем адрес или регистр
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = ~memory.read_2(New_Addr);
-			memory.write_2(New_Addr,  Src & 255);
-			Src = ~memory.read_2(New_Addr + 1);
-			memory.write_2(New_Addr + 1,  Src & 255);
-			break;
-		case 3:
 			// mod 11 - регистр 16bit
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = ~AX;
-				break;
-			case 1:
-				CX = ~CX;
-				break;
-			case 2:
-				DX = ~DX;
-				break;
-			case 3:
-				BX = ~BX;
-				break;
-			case 4:
-				Stack_Pointer = ~Stack_Pointer;
-				break;
-			case 5:
-				Base_Pointer = ~Base_Pointer;
-				break;
-			case 6:
-				Source_Index = ~Source_Index;
-				break;
-			case 7:
-				Destination_Index = ~Destination_Index;
-				break;
-			}
-			break;
+			*ptr_r16[byte2 & 7] = ~(*ptr_r16[byte2 & 7]);
+			if (log_to_console) cout << "Invert " << reg16_name[byte2 & 7] << " = " << (int)*ptr_r16[byte2 & 7];
+			Instruction_Pointer += 2;
 		}
-		if (log_to_console) cout << "Invert 16 bit R/M";
-		Instruction_Pointer += 2 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			memory_2[New_Addr_32] = ~memory_2[New_Addr_32];
+			memory_2[New_Addr_32 + 1] = ~memory_2[New_Addr_32 + 1];
+			if (log_to_console) cout << "Invert M" << OPCODE_comment << " = " << (int)(memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256);
+			Instruction_Pointer += 2 + additional_IPs;
+		}
+		
 		break;
 
 	case 3:  //NEG 16 R/M
-		if (log_to_console) cout << "NEG_16 ";
-		//определяем адрес или регистр
-		switch (byte2 >> 6)
+
+		if (log_to_console) cout << "NEGATE ";
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			if (Src) Flag_CF = 1;
+			// mod 11 - регистр 8bit
+
+			if (*ptr_r16[byte2 & 7]) Flag_CF = 1;
 			else Flag_CF = 0;
-			if (Src == 0x8000) Flag_OF = 1;
+			if (*ptr_r16[byte2 & 7] == 0x80) Flag_OF = 1;
 			else Flag_OF = 0;
-			Result_32 = ~Src + 1;
-			Flag_SF = ((Result_32 >> 15) & 1);
-			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			*ptr_r16[byte2 & 7] = ~*ptr_r16[byte2 & 7] + 1;
+			Flag_SF = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[Result_32 & 255];
-			if (Result_32 & 15) Flag_AF = 1;
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+			if (*ptr_r16[byte2 & 7] & 15) Flag_AF = 1;
 			else Flag_AF = 0;
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Src & 255);
-			break;
-		case 3:
-			// mod 11 - регистр 16bit
-			switch (byte2 & 7)
-			{
-			case 0:
-				if (AX) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (AX == 0x8000) Flag_OF = 1;
-				else Flag_OF = 0;
-				Result_32 = ~AX + 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				AX = Result_32;
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				if (CX) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (CX == 0x8000) Flag_OF = 1;
-				else Flag_OF = 0;
-				Result_32 = ~CX + 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				CX = Result_32;
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				if (DX) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (DX == 0x8000) Flag_OF = 1;
-				else Flag_OF = 0;
-				Result_32 = ~DX + 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				DX = Result_32;
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				if (BX) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (BX == 0x8000) Flag_OF = 1;
-				else Flag_OF = 0;
-				Result_32 = ~BX + 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				BX = Result_32;
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				if (Stack_Pointer) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (Stack_Pointer == 0x8000) Flag_OF = 1;
-				else Flag_OF = 0;
-				Result_32 = ~Stack_Pointer + 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				Stack_Pointer = Result_32;
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				if (Base_Pointer) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (Base_Pointer == 0x8000) Flag_OF = 1;
-				else Flag_OF = 0;
-				Result_32 = ~Base_Pointer + 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				Base_Pointer = Result_32;
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				if (Source_Index) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (Source_Index == 0x8000) Flag_OF = 1;
-				else Flag_OF = 0;
-				Result_32 = ~Source_Index + 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				Source_Index = Result_32;
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				if (Destination_Index) Flag_CF = 1;
-				else Flag_CF = 0;
-				if (Destination_Index == 0x8000) Flag_OF = 1;
-				else Flag_OF = 0;
-				Result_32 = ~Destination_Index + 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (Result_32 & 15) Flag_AF = 1;
-				else Flag_AF = 0;
-				Destination_Index = Result_32;
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
+			if (log_to_console) cout << reg16_name[byte2 & 7] << " = " << (int)*ptr_r16[byte2 & 7];
+			Instruction_Pointer += 2;
 		}
-		
-		Instruction_Pointer += 2 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			if (*ptr_Src) Flag_CF = 1;
+			else Flag_CF = 0;
+			if (*ptr_Src == 0x8000) Flag_OF = 1;
+			else Flag_OF = 0;
+			*ptr_Src = ~(*ptr_Src) + 1;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			Flag_SF = (*ptr_Src_H) >> 7;
+			if (*ptr_Src) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_Src_L];
+			if (*ptr_Src_L & 15) Flag_AF = 1;
+			else Flag_AF = 0;
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)*ptr_Src;
+			Instruction_Pointer += 2 + additional_IPs;
+		}
 		break;
 
 	case 4: //MUL = Multiply (Unsigned)
 
-		if (log_to_console) cout << "MUL AX(" << int(AX) << ")*";
+		if (log_to_console) cout << "MUL AX(" << int(AX) << ") x ";
 		//определяем множитель
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
-			break;
-		case 3:
 			// mod 11 - регистр 16bit
-			switch (byte2 & 7)
-			{
-			case 0: //AX
-				Src = AX;
-				if (log_to_console) cout << "AX(" << int(AX) << ")=";
-				break;
-			case 1: //CX
-				Src = CX;
-				if (log_to_console) cout << "CX(" << int(CX) << ")=";
-				break;
-			case 2: //DX
-				Src = DX;
-				if (log_to_console) cout << "DX(" << int(DX) << ")=";
-				break;
-			case 3: //BX
-				Src = BX;
-				if (log_to_console) cout << "BX(" << int(BX) << ")=";
-				break;
-			case 4: //SP
-				Src = Stack_Pointer;
-				if (log_to_console) cout << "SP(" << int(Stack_Pointer) << ")=";
-				break;
-			case 5: //BP
-				Src = Base_Pointer;
-				if (log_to_console) cout << "BP(" << int(Base_Pointer) << ")=";
-				break;
-			case 6: //SI
-				Src = Source_Index;
-				if (log_to_console) cout << "SI(" << int(Source_Index) << ")=";
-				break;
-			case 7: //DI
-				Src = Destination_Index;
-				if (log_to_console) cout << "DI(" << int(Destination_Index) << ")=";
-				break;
-			}
-			break;
+			Result_32 = AX * (*ptr_r16[byte2 & 7]);
+			if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
+			additional_IPs = 0;
 		}
-
-		Result_32 = AX * Src;
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
+			Result_32 = AX * (*ptr_Src);
+		}
+		
 		DX = Result_32 >> 16;
 		AX = Result_32 & 0xFFFF;
 		if (DX)
@@ -8885,6 +5567,7 @@ void Invert_RM_16()
 		}
 		Flag_SF = ((DX >> 8) >> 7) & 1;
 		Flag_PF = parity_check[(DX & 255)];
+		Flag_AF = 0; //undefined
 		if (log_to_console) cout << (uint32)(Result_32);
 		Instruction_Pointer += 2 + additional_IPs;
 		break;
@@ -8892,56 +5575,24 @@ void Invert_RM_16()
 	case 5: //IMUL = Integer Multiply(Signed)
 		if (log_to_console) cout << "IMUL AX(" << __int16(AX) << ") * ";
 		//определяем множитель
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			if (log_to_console) cout << "M" << OPCODE_comment << "=";
-			break;
-		case 3:
 			// mod 11 - регистр 16bit
-			switch (byte2 & 7)
-			{
-			case 0: //AX
-				Src = AX;
-				if (log_to_console) cout << "AX(" << __int16(Src) << ")=";
-				break;
-			case 1: //CX
-				Src = CX;
-				if (log_to_console) cout << "CX(" << __int16(Src) << ")=";
-				break;
-			case 2: //DX
-				Src = DX;
-				if (log_to_console) cout << "DX(" << __int16(Src) << ")=";
-				break;
-			case 3: //BX
-				Src = BX;
-				if (log_to_console) cout << "BX(" << __int16(Src) << ")=";
-				break;
-			case 4: //SP
-				Src = Stack_Pointer;
-				if (log_to_console) cout << "SP(" << __int16(Src) << ")=";
-				break;
-			case 5: //BP
-				Src = Base_Pointer;
-				if (log_to_console) cout << "BP(" << __int16(Src) << ")=";
-				break;
-			case 6: //SI
-				Src = Source_Index;
-				if (log_to_console) cout << "SI(" << __int16(Src) << ")=";
-				break;
-			case 7: //DI
-				Src = Destination_Index;
-				if (log_to_console) cout << "DI(" << __int16(Src) << ")=";
-				break;
-			}
-			break;
+			Src = *ptr_r16[byte2 & 7];
+			Result_32 = ((__int16)AX * (__int16)Src);
+			if (log_to_console) cout <<reg16_name[byte2 & 7] << "(" << __int16(Src) << ")=";
+			Instruction_Pointer += 2;
 		}
-		
-		Result_32 = ((__int16)AX * (__int16)Src);
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Result_32 = ((__int16)AX * (__int16)*ptr_Src);
+			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
+			Instruction_Pointer += 2 + additional_IPs;
+		}
 
 		DX = Result_32 >> 16;
 		AX = Result_32 & 0xFFFF;
@@ -8959,85 +5610,43 @@ void Invert_RM_16()
 		Flag_SF = (DX >> 15) & 1;
 		Flag_PF = parity_check[DX & 255];
 		if (log_to_console) cout << (__int32)(Result_32);
-		Instruction_Pointer += 2 + additional_IPs;
+		
 		break;
 
 	case 6: //DIV = Divide (Unsigned)
 
 		if (log_to_console) cout << "DIV DXAX(" << int(DX * 256 * 256 + AX) << ") : ";
 		//определяем делитель
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-			if ((byte2 & 7) == 6) additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
-			break;
-		case 1:
-			additional_IPs = 1;
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
-			break;
-		case 2:
-			additional_IPs = 2;
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
-			break;
-		case 3:
 			// mod 11 - регистр 16bit
-			switch (byte2 & 7)
-			{
-			case 0: //AX
-				Src = AX;
-				if (log_to_console) cout << "AX(" << int(Src) << ") = ";
-				break;
-			case 1: //CX
-				Src = CX;
-				if (log_to_console) cout << "CX(" << int(Src) << ") = ";
-				break;
-			case 2: //DX
-				Src = DX;
-				if (log_to_console) cout << "DX(" << int(Src) << ") = ";
-				break;
-			case 3: //BX
-				Src = BX;
-				if (log_to_console) cout << "BX(" << int(Src) << ") = ";
-				break;
-			case 4: //SP
-				Src = Stack_Pointer;
-				if (log_to_console) cout << "SP(" << int(Src) << ") = ";
-				break;
-			case 5: //BP
-				Src = Base_Pointer;
-				if (log_to_console) cout << "BP(" << int(Src) << ") = ";
-				break;
-			case 6: //SI
-				Src = Source_Index;
-				if (log_to_console) cout << "SI(" << int(Src) << ") = ";
-				break;
-			case 7: //DI
-				Src = Destination_Index;
-				if (log_to_console) cout << "DI(" << int(Src) << ") = ";
-				break;
-			}
-			break;
+			Src = *ptr_r16[byte2 & 7];
+			if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << int(Src) << ") = ";
+			Instruction_Pointer += 2;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Src = *ptr_Src;
+			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
+			Instruction_Pointer += 2 + additional_IPs;
 		}
 
 		//бросаем исключение при делении на 0
 		if (Src == 0) {
 			exeption = 0x10;
 			if (log_to_console) cout << " [DIV 0] ";
-			Instruction_Pointer += 2 + additional_IPs;
+			//Instruction_Pointer += 2 + additional_IPs;
 			return;
 		}
 
 		Result_32 = ((uint32)(DX * 256 * 256 + AX) / Src);
 		//бросаем исключение при переполнении
 		if (Result_32 > 0xFFFF) {
-			exeption = 0x10;
+			exeption = 0x14;
 			if (log_to_console) cout << " [OVERFLOW] ";
 			Instruction_Pointer += 2 + additional_IPs;
 			return;
@@ -9047,66 +5656,34 @@ void Invert_RM_16()
 		AX = Result_32;
 		DX = rem;
 		if (log_to_console) cout << (int)(AX) << " rem " << (int)rem;
-		Instruction_Pointer += 2 + additional_IPs;
+		
 		break;
 
 	case 7: //IDIV = Integer Divide (Signed)
 
 		if (log_to_console) cout << "IDIV DXAX(" << setw(8) << (int)(DX * 256 * 256 + AX) << ") : ";
 		//определяем делитель
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
-			break;
-		case 3:
 			// mod 11 - регистр 16bit
-			switch (byte2 & 7)
-			{
-			case 0: //AX
-				Src = AX;
-				if (log_to_console) cout << "AX(" << int(Src) << ") = ";
-				break;
-			case 1: //CX
-				Src = CX;
-				if (log_to_console) cout << "CX(" << int(Src) << ") = ";
-				break;
-			case 2: //DX
-				Src = DX;
-				if (log_to_console) cout << "DX(" << int(Src) << ") = ";
-				break;
-			case 3: //BX
-				Src = BX;
-				if (log_to_console) cout << "BX(" << int(Src) << ") = ";
-				break;
-			case 4: //SP
-				Src = Stack_Pointer;
-				if (log_to_console) cout << "SP(" << int(Src) << ") = ";
-				break;
-			case 5: //BP
-				Src = Base_Pointer;
-				if (log_to_console) cout << "BP(" << int(Src) << ") = ";
-				break;
-			case 6: //SI
-				Src = Source_Index;
-				if (log_to_console) cout << "SI(" << int(Src) << ") = ";
-				break;
-			case 7: //DI
-				Src = Destination_Index;
-				if (log_to_console) cout << "DI(" << int(Src) << ") = ";
-				break;
-			}
-			break;
+			Src = *ptr_r16[byte2 & 7];
+			if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << int(Src) << ") = ";
+			additional_IPs = 0;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Src = *ptr_Src;
+			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
 		}
 
 		//бросаем исключение при делении на 0
 		if (Src == 0) {
 			exeption = 0x10;
-			Instruction_Pointer += (2 + additional_IPs);
+			//Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [DIV0] ";
 			negate_IDIV = 0; //убираем флаг инверсии знака
 			return;
@@ -9123,7 +5700,7 @@ void Invert_RM_16()
 		
 		//бросаем исключение при переполнении
 		if (abs(quotient) > 0x7FFF) {
-			exeption = 0x10;
+			exeption = 0x14;
 			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [OVERFLOW] ";
 			return;
@@ -9136,11 +5713,10 @@ void Invert_RM_16()
 		Instruction_Pointer += 2 + additional_IPs;
 		break;
 	}
-	
 }
 void SHL_ROT_8()			// Shift/ROL	8bit / once
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint8 Result = 0;
 	uint16 Src = 0;
 	uint8 MSB = 0;
@@ -9150,804 +5726,212 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 	{
 	case 0:  //ROL Rotate Left
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
-			Flag_CF = (Src >> 7) & 1;
-			Src = (Src << 1) | Flag_CF;
-			Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-			memory.write_2(New_Addr,  Src & 255);
-			if (log_to_console) cout << "ROL M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = AX & 255;
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
-				AX = (AX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL AL";
-				break;
-			case 1:
-				Src = CX & 255;
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
-				CX = (CX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL CL";
-				break;
-			case 2:
-				Src = DX & 255;
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
-				DX = (DX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL DL";
-				break;
-			case 3:
-				Src = BX & 255;
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
-				BX = (BX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL BL";
-				break;
-			case 4:
-				Src = (AX >> 8) & 255;
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL AH";
-				break;
-			case 5:
-				Src = (CX >> 8) & 255;
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL CH";
-				break;
-			case 6:
-				Src = (DX >> 8) & 255;
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL DH";
-				break;
-			case 7:
-				Src = (BX >> 8) & 255;
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL BH";
-				break;
-			}
-			break;
+			Flag_CF = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] << 1) | Flag_CF;
+			Flag_OF = (*ptr_r8[byte2 & 7] >> 7) ^ Flag_CF;
+			if (log_to_console) cout << "ROL " << reg8_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Flag_CF = (memory_2[New_Addr_32] >> 7) & 1;
+			memory_2[New_Addr_32] = (memory_2[New_Addr_32] << 1) | Flag_CF;
+			Flag_OF = (memory_2[New_Addr_32] >> 7) ^ Flag_CF;
+			if (log_to_console) cout << "ROL M" << OPCODE_comment << "";
 		}
 		break;
 
 	case 1:  //ROR = Rotate Right
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Flag_CF = (memory.read_2(New_Addr)) & 1;
-			Src = (Flag_CF * 0x80) | (memory.read_2(New_Addr) >> 1);
-			memory.write_2(New_Addr,  Src & 255);
-			Flag_OF = !parity_check[Src & 0b11000000];
-			if (log_to_console) cout << "ROR M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_CF = (AX) & 1;
-				Src = (Flag_CF * 0x80) | ((AX & 255) >> 1);
-				AX = (AX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "ROR AL = " << (int)Src;
-				break;
-			case 1:
-				Flag_CF = (CX) & 1;
-				Src = (Flag_CF * 0x80) | ((CX & 255) >> 1);
-				CX = (CX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "ROR CL = " << (int)Src;
-				break;
-			case 2:
-				Flag_CF = (DX) & 1;
-				Src = (Flag_CF * 0x80) | ((DX & 255) >> 1);
-				DX = (DX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "ROR DL = " << (int)Src;
-				break;
-			case 3:
-				Flag_CF = (BX) & 1;
-				Src = (Flag_CF * 0x80) | ((BX & 255) >> 1);
-				BX = (BX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "ROR BL = " << (int)Src;
-				break;
-			case 4:
-				Flag_CF = (AX >> 8) & 1;
-				Src = (Flag_CF * 0x80) | (AX >> 9);
-				AX = (AX & 0x00FF) | (Src << 8);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "ROR AH = " << (int)Src;
-				break;
-			case 5:
-				Flag_CF = (CX >> 8) & 1;
-				Src = (Flag_CF * 0x80) | (CX >> 9);
-				CX = (CX & 0x00FF) | (Src << 8);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "ROR CH = " << (int)Src;
-				break;
-			case 6:
-				Flag_CF = (DX >> 8) & 1;
-				Src = (Flag_CF * 0x80) | (DX >> 9);
-				DX = (DX & 0x00FF) | (Src << 8);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "ROR DH = " << (int)Src;
-				break;
-			case 7:
-				Flag_CF = (BX >> 8) & 1;
-				Src = (Flag_CF * 0x80) | (BX >> 9);
-				BX = (BX & 0x00FF) | (Src << 8);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "ROR BH = " << (int)Src;
-				break;
-			}
-			break;
+			Flag_CF = *ptr_r8[byte2 & 7] & 1;
+			*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] >> 1) | (Flag_CF * 0x80);
+			Flag_OF = !parity_check[*ptr_r8[byte2 & 7] & 0b11000000];
+			if (log_to_console) cout << "ROR " << reg8_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Flag_CF = memory_2[New_Addr_32] & 1;
+			memory_2[New_Addr_32] = (memory_2[New_Addr_32] >> 1) | (Flag_CF * 0x80);
+			Flag_OF = !parity_check[memory_2[New_Addr_32] & 0b11000000];
+			if (log_to_console) cout << "ROR M" << OPCODE_comment << "";
 		}
 		break;
 	
 	case 2:  //RCL Rotate Left throught carry
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = (memory.read_2(New_Addr) << 1) | Flag_CF;
+			// mod 11 источник - регистр
+			Src = (*ptr_r8[byte2 & 7] << 1) | Flag_CF;
 			Flag_CF = (Src >> 8) & 1;
-			memory.write_2(New_Addr,  Src & 255);
+			*ptr_r8[byte2 & 7] = Src;
+			Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
+			if (log_to_console) cout << "RCL " << reg8_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Src = (memory_2[New_Addr_32] << 1) | Flag_CF;
+			Flag_CF = (Src >> 8) & 1;
+			memory_2[New_Addr_32] = Src;
 			Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
 			if (log_to_console) cout << "RCL M" << OPCODE_comment << "";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = ((AX & 255) << 1) + Flag_CF;
-				Flag_CF = (Src >> 8) & 1;
-				AX = (AX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL AL";
-				break;
-			case 1:
-				Src = ((CX & 255) << 1) + Flag_CF;
-				Flag_CF = (Src >> 8) & 1;
-				CX = (CX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL CL";
-				break;
-			case 2:
-				Src = ((DX & 255) << 1) + Flag_CF;
-				Flag_CF = (Src >> 8) & 1;
-				DX = (DX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL DL";
-				break;
-			case 3:
-				Src = ((BX & 255) << 1) + Flag_CF;
-				Flag_CF = (Src >> 8) & 1;
-				BX = (BX & 0xFF00) | (Src & 255);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL BL";
-				break;
-			case 4:
-				Src = (((AX >> 8) & 255) << 1) + Flag_CF;
-				Flag_CF = (Src >> 8) & 1;
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL AH";
-				break;
-			case 5:
-				Src = (((CX >> 8) & 255) << 1) + Flag_CF;
-				Flag_CF = (Src >> 8) & 1;
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL CH";
-				break;
-			case 6:
-				Src = (((DX >> 8) & 255) << 1) + Flag_CF;
-				Flag_CF = (Src >> 8) & 1;
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL DH";
-				break;
-			case 7:
-				Src = (((BX >> 8) & 255) << 1) + Flag_CF;
-				Flag_CF = (Src >> 8) & 1;
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL BH";
-				break;
-			}
-			break;
 		}
 		break;
 
 	case 3:  //RCR = Rotate Right throught carry
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = (Flag_CF << 7) | (memory.read_2(New_Addr) >> 1);
-			Flag_CF = (memory.read_2(New_Addr)) & 1;
-			memory.write_2(New_Addr,  Src & 255);
-			Flag_OF = !parity_check[(Src ) & 0b11000000];
-			if (log_to_console) cout << "RCR M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_OF = (AX) & 1;  //временное значение
-				Src = (Flag_CF << 7) | ((AX & 255) >> 1);
-				Flag_CF = Flag_OF;
-				AX = (AX & 0xFF00) | (Src);
-				Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "RCR AL = " << (int)(Src & 255);
-				break;
-			case 1:
-				Flag_OF = (CX) & 1;  //временное значение
-				Src = (Flag_CF << 7) | ((CX & 255) >> 1);
-				Flag_CF = Flag_OF;
-				CX = (CX & 0xFF00) | (Src);
-				Flag_OF = !parity_check[(Src ) & 0b11000000];
-				if (log_to_console) cout << "RCR CL = " << (int)(Src & 255);;
-				break;
-			case 2:
-				Flag_OF = (DX) & 1;  //временное значение
-				Src = (Flag_CF << 7) | ((DX & 255) >> 1);
-				Flag_CF = Flag_OF;
-				DX = (DX & 0xFF00) | (Src);
-				Flag_OF = !parity_check[(Src ) & 0b11000000];
-				if (log_to_console) cout << "RCR DL = " << (int)(Src & 255);
-				break;
-			case 3:
-				Flag_OF = (BX) & 1;  //временное значение
-				Src = (Flag_CF << 7) | ((BX & 255) >> 1);
-				Flag_CF = Flag_OF;
-				BX = (BX & 0xFF00) | (Src);
-				Flag_OF = !parity_check[(Src ) & 0b11000000];
-				if (log_to_console) cout << "RCR BL = " << (int)(Src & 255);
-				break;
-			case 4:
-				Flag_OF = (AX >> 8) & 1;  //временное значение
-				Src = (Flag_CF << 7) | ((AX >> 8) & 255) >> 1;
-				Flag_CF = Flag_OF;
-				AX = (AX & 0x00FF) | ((Src ) << 8);
-				Flag_OF = !parity_check[(Src ) & 0b11000000];
-				if (log_to_console) cout << "RCR AH = " << (int)(Src & 255);
-				break;
-			case 5:
-				Flag_OF = (CX >> 8) & 1;  //временное значение
-				Src = (Flag_CF << 7) | ((CX >> 8) & 255) >> 1;
-				Flag_CF = Flag_OF;
-				CX = (CX & 0x00FF) | ((Src ) << 8);
-				Flag_OF = !parity_check[(Src ) & 0b11000000];
-				if (log_to_console) cout << "RCR CH = " << (int)(Src & 255);
-				break;
-			case 6:
-				Flag_OF = (DX >> 8) & 1;  //временное значение
-				Src = (Flag_CF << 7) | ((DX >> 8) & 255) >> 1;
-				Flag_CF = Flag_OF;
-				DX = (DX & 0x00FF) | ((Src ) << 8);
-				Flag_OF = !parity_check[(Src ) & 0b11000000];
-				if (log_to_console) cout << "RCR DH = " << (int)(Src & 255);
-				break;
-			case 7:
-				Flag_OF = (BX >> 8) & 1;  //временное значение
-				Src = (Flag_CF << 7) | ((BX >> 8) & 255) >> 1;
-				Flag_CF = Flag_OF;
-				BX = (BX & 0x00FF) | ((Src) << 8);
-				Flag_OF = !parity_check[(Src ) & 0b11000000];
-				if (log_to_console) cout << "RCR BH = " << (int)(Src & 255);
-				break;
-			}
-			break;
+			Src = (*ptr_r8[byte2 & 7] >> 1) | (Flag_CF << 7);
+			Flag_CF = *ptr_r8[byte2 & 7] & 1;
+			*ptr_r8[byte2 & 7] = Src;
+			Flag_OF = !parity_check[Src & 0b11000000];
+			if (log_to_console) cout << "RCR " << reg8_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Src = (memory_2[New_Addr_32] >> 1) | (Flag_CF << 7);
+			Flag_CF = memory_2[New_Addr_32] & 1;
+			memory_2[New_Addr_32] = Src;
+			Flag_OF = !parity_check[Src & 0b11000000];
+			if (log_to_console) cout << "RCR M" << OPCODE_comment << "";
 		}
 		break;
 	
 	case 4:  //Shift Left (SHL/SAL)
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) << 1;
-			memory.write_2(New_Addr,  Src & 255);
+			// mod 11 источник - регистр
+			Src = *ptr_r8[byte2 & 7] << 1;
+			*ptr_r8[byte2 & 7] = Src;
 			Flag_CF = (Src >> 8) & 1;
 			Flag_SF = (Src >> 7) & 1;
-			Flag_OF = !parity_check[(Src >> 7) & 3];
-			if (Src & 255) Flag_ZF = false;
+			Flag_OF = !parity_check[Src >> 7];
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << "Shift left " << reg8_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Src = memory_2[New_Addr_32] << 1;
+			memory_2[New_Addr_32] = Src;
+			Flag_CF = (Src >> 8) & 1;
+			Flag_SF = (Src >> 7) & 1;
+			Flag_OF = !parity_check[Src >> 7];
+			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
 			if (log_to_console) cout << "Shift left M" << OPCODE_comment << "";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = (AX & 255) << 1;
-				AX = (AX & 0xFF00) | (Src & 255);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_OF = !parity_check[(Src >> 7) & 3];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left AL";
-				break;
-			case 1:
-				Src = (CX & 255) << 1;
-				CX = (CX & 0xFF00) | (Src & 255);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_OF = !parity_check[(Src >> 7) & 3];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left CL";
-				break;
-			case 2:
-				Src = (DX & 255) << 1;
-				DX = (DX & 0xFF00) | (Src & 255);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_OF = !parity_check[(Src >> 7) & 3];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left DL";
-				break;
-			case 3:
-				Src = (BX & 255) << 1;
-				BX = (BX & 0xFF00) | (Src & 255);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_OF = !parity_check[(Src >> 7) & 3];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left BL";
-				break;
-			case 4:
-				Src = ((AX >> 8) & 255) << 1;
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_OF = !parity_check[(Src >> 7) & 3];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left AH";
-				break;
-			case 5:
-				Src = ((CX >> 8) & 255) << 1;
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_OF = !parity_check[(Src >> 7) & 3];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left CH";
-				break;
-			case 6:
-				Src = ((DX >> 8) & 255) << 1;
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_OF = !parity_check[(Src >> 7) & 3];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left DH";
-				break;
-			case 7:
-				Src = ((BX >> 8) & 255) << 1;
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = (Src >> 7) & 1;
-				Flag_OF = !parity_check[(Src >> 7) & 3];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left BH";
-				break;
-			}
-			break;
 		}
 		break;
-
+			 
 	case 5:  //Shift Right (SHR)
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Flag_CF = (memory.read_2(New_Addr)) & 1;
-			Src = memory.read_2(New_Addr) >> 1;
-			memory.write_2(New_Addr,  Src & 255);
-			Flag_SF = ((Src >> 7) & 1);
-			Flag_OF = !parity_check[Src & 0b11000000];
-			if (Src & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_CF = (AX) & 1;
-				Src = (AX & 255) >> 1;
-				AX = (AX & 0xFF00) | (Src & 255);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right AL";
-				break;
-			case 1:
-				Flag_CF = (CX) & 1;
-				Src = (CX & 255) >> 1;
-				CX = (CX & 0xFF00) | (Src & 255);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right CL";
-				break;
-			case 2:
-				Flag_CF = (DX) & 1;
-				Src = (DX & 255) >> 1;
-				DX = (DX & 0xFF00) | (Src & 255);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right DL";
-				break;
-			case 3:
-				Flag_CF = (BX) & 1;
-				Src = (BX & 255) >> 1;
-				BX = (BX & 0xFF00) | (Src & 255);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right BL";
-				break;
-			case 4:
-				Src = ((AX >> 8) & 255) >> 1;
-				Flag_CF = (AX >> 8) & 1;
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right AH";
-				break;
-			case 5:
-				Src = ((CX >> 8) & 255) >> 1;
-				Flag_CF = (CX >> 8) & 1;
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right CH";
-				break;
-			case 6:
-				Src = ((DX >> 8) & 255) >> 1;
-				Flag_CF = (DX >> 8) & 1;
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right DH";
-				break;
-			case 7:
-				Src = ((BX >> 8) & 255) >> 1;
-				Flag_CF = (BX >> 8) & 1;
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right BH";
-				break;
-			}
-			break;
+			Flag_CF = *ptr_r8[byte2 & 7] & 1;
+			Src = *ptr_r8[byte2 & 7] >> 1;
+			*ptr_r8[byte2 & 7] = Src;
+			Flag_SF = 0;
+			Flag_OF = Src >> 6;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << "Shift(SHR) right " << reg8_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Flag_CF = memory_2[New_Addr_32] & 1;
+			Src = memory_2[New_Addr_32] >> 1;
+			memory_2[New_Addr_32] = Src;
+			Flag_SF = 0;
+			Flag_OF = Src >> 6;
+			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << "";
 		}
 		break;
-
+		
 	case 6: //SETMO byte R/M
 
-		Src = 0xFF; 
 		if (log_to_console) cout << "SETMO_B ";
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Result = memory.read_2(New_Addr) | Src;
-			memory.write_2(New_Addr,  Result);
+			// mod 11 источник - регистр
+			*ptr_r8[byte2 & 7] = 0xFF;
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = true;
 			Flag_ZF = false;
 			Flag_PF = true;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result = (AX & 255) | Src;
-				AX = (AX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "AL = " << (int)Result;
-				break;
-			case 1:
-				Result = (CX & 255) | Src;
-				CX = (CX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "CL = " << (int)Result;
-				break;
-			case 2:
-				Result = (DX & 255) | Src;
-				DX = (DX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "DL = " << (int)Result;
-				break;
-			case 3:
-				Result = (BX & 255) | Src;
-				BX = (BX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "BL = " << (int)Result;
-				break;
-			case 4:
-				Result = ((AX >> 8) & 255) | Src;
-				AX = (AX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "AH = " << (int)Result;
-				break;
-			case 5:
-				Result = ((CX >> 8) & 255) | Src;
-				CX = (CX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "CH = " << (int)Result;
-				break;
-			case 6:
-				Result = ((DX >> 8) & 255) | Src;
-				DX = (DX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "DH = " << (int)Result;
-				break;
-			case 7:
-				Result = ((BX >> 8) & 255) | Src;
-				BX = (BX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "BH = " << (int)Result;
-				break;
-			}
-			break;
+			if (log_to_console) cout << reg8_name[byte2 & 7] << " = " << (int)*ptr_r8[byte2 & 7];
 		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			memory_2[New_Addr_32] = 0xFF;
+			Flag_CF = 0;
+			Flag_OF = 0;
+			Flag_SF = true;
+			Flag_ZF = false;
+			Flag_PF = true;
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)memory_2[New_Addr_32];
+		}
+
 		Flag_AF = 0;
 		break;
 
 	case 7:  //Shift Arithm Right (SAR)
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Flag_CF = (memory.read_2(New_Addr)) & 1;
-			MSB = (memory.read_2(New_Addr)) & 128;
-			Src = (memory.read_2(New_Addr) >> 1) | MSB;
-			memory.write_2(New_Addr,  Src & 255);
-			Flag_SF = ((Src >> 7) & 1);
-			Flag_OF = !parity_check[Src & 0b11000000];
-			if (Src & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_CF = (AX) & 1;
-				MSB = (AX) & 128;
-				Src = ((AX & 255) >> 1) | MSB;
-				AX = (AX & 0xFF00) | (Src);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right AL";
-				break;
-			case 1:
-				Flag_CF = (CX) & 1;
-				MSB = (CX) & 128;
-				Src = ((CX & 255) >> 1) | MSB;
-				CX = (CX & 0xFF00) | (Src);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right CL";
-				break;
-			case 2:
-				Flag_CF = (DX) & 1;
-				MSB = (DX) & 128;
-				Src = ((DX & 255) >> 1) | MSB;
-				DX = (DX & 0xFF00) | (Src);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right DL";
-				break;
-			case 3:
-				Flag_CF = (BX) & 1;
-				MSB = (BX) & 128;
-				Src = ((BX & 255) >> 1) | MSB;
-				BX = (BX & 0xFF00) | (Src);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right BL";
-				break;
-			case 4:
-				MSB = (AX >> 8) & 128;
-				Src = ((AX >> 9) & 0x7F)| MSB;
-				Flag_CF = (AX >> 8) & 1;
-				AX = (AX & 0x00FF) | (Src << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right AH";
-				break;
-			case 5:
-				MSB = (CX >> 8) & 128;
-				Src = ((CX >> 9) & 0x7F) | MSB;
-				Flag_CF = (CX >> 8) & 1;
-				CX = (CX & 0x00FF) | (Src << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right CH";
-				break;
-			case 6:
-				MSB = (DX >> 8) & 128;
-				Src = ((DX >> 9) & 0x7F) | MSB;
-				Flag_CF = (DX >> 8) & 1;
-				DX = (DX & 0x00FF) | (Src << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right DH";
-				break;
-			case 7:
-				MSB = (BX >> 8) & 128;
-				Src = ((BX >> 9) & 0x7F) | MSB;
-				Flag_CF = (BX >> 8) & 1;
-				BX = (BX & 0x00FF) | (Src << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				Flag_OF = !parity_check[Src & 0b11000000];
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right BH";
-				break;
-			}
-			break;
+			Flag_CF = *ptr_r8[byte2 & 7] & 1;
+			MSB = *ptr_r8[byte2 & 7] & 128;
+			*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] >> 1) | MSB;
+			Flag_SF = ((*ptr_r8[byte2 & 7] >> 7) & 1);
+			Flag_OF = !parity_check[*ptr_r8[byte2 & 7] & 0b11000000];
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << "Shift(SAR) right " << reg8_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Flag_CF = memory_2[New_Addr_32] & 1;
+			MSB = memory_2[New_Addr_32] & 128;
+			memory_2[New_Addr_32] = (memory_2[New_Addr_32] >> 1) | MSB;
+			Flag_SF = ((memory_2[New_Addr_32] >> 7) & 1);
+			Flag_OF = !parity_check[memory_2[New_Addr_32] & 0b11000000];
+			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << "";
 		}
 		break;
 	}
@@ -9955,7 +5939,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 }
 void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Src = 0;
 	uint16 MSB = 0;
 	additional_IPs = 0;
@@ -9965,799 +5949,242 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 	{
 
 	case 0:  //ROL Rotate Left
-	
-			//определяем объект
-		switch (byte2 >> 6)
+			
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			Flag_CF = (Src >> 15) & 1;
-			Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-			Src = (Src << 1) | Flag_CF;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			if (log_to_console) cout << "ROL M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = AX;
-				Flag_CF = (Src >> 15) & 1;
-				AX = (Src << 1) | Flag_CF;
-				Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-				if (log_to_console) cout << "ROL AX";
-				break;
-			case 1:
-				Src = CX;
-				Flag_CF = (Src >> 15) & 1;
-				CX = (Src << 1) | Flag_CF;
-				Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-				if (log_to_console) cout << "ROL CX";
-				break;
-			case 2:
-				Src = DX;
-				Flag_CF = (Src >> 15) & 1;
-				DX = (Src << 1) | Flag_CF;
-				Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-				if (log_to_console) cout << "ROL DX";
-				break;
-			case 3:
-				Src = BX;
-				Flag_CF = (Src >> 15) & 1;
-				BX = (Src << 1) | Flag_CF;
-				Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-				if (log_to_console) cout << "ROL BX";
-				break;
-			case 4:
-				Src = Stack_Pointer;
-				Flag_CF = (Src >> 15) & 1;
-				Stack_Pointer = (Src << 1) | Flag_CF;
-				Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-				if (log_to_console) cout << "ROL SP";
-				break;
-			case 5:
-				Src = Base_Pointer;
-				Flag_CF = (Src >> 15) & 1;
-				Base_Pointer = (Src << 1) | Flag_CF;
-				Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-				if (log_to_console) cout << "ROL BP";
-				break;
-			case 6:
-				Src = Source_Index;
-				Flag_CF = (Src >> 15) & 1;
-				Source_Index = (Src << 1) | Flag_CF;
-				Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-				if (log_to_console) cout << "ROL SI";
-				break;
-			case 7:
-				Src = Destination_Index;
-				Flag_CF = (Src >> 15) & 1;
-				Destination_Index = (Src << 1) | Flag_CF;
-				Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-				if (log_to_console) cout << "ROL DI";
-				break;
-			}
-			break;
+			Flag_CF = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] << 1) | Flag_CF;
+			Flag_OF = (*ptr_r16[byte2 & 7] >> 15) ^ Flag_CF;
+			if (log_to_console) cout << "ROL " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Flag_CF = (*ptr_Src >> 15) & 1;
+			*ptr_Src = (*ptr_Src << 1) | Flag_CF;
+			Flag_OF = (*ptr_Src >> 15) ^ Flag_CF;
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (log_to_console) cout << "ROL M" << OPCODE_comment << "";
 		}
 		break;
 	
 	case 1:  //ROR = Rotate Right
 	
-			//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Flag_CF = memory.read_2(New_Addr) & 1;
-			Src = (Flag_CF * 0x8000) | ((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) >> 1);
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  Src >> 8);
-			Flag_OF = !parity_check[(Src >> 14) & 3];
-			if (log_to_console) cout << "ROR M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_CF = (AX) & 1;
-				Result = AX << 15;
-				AX = (AX >> 1) | Result;
-				Flag_OF = !parity_check[AX >> 14];
-				if (log_to_console) cout << "ROR AX";
-				break;
-			case 1:
-				Flag_CF = (CX) & 1;
-				Result = CX << 15;
-				CX = (CX >> 1) | Result;
-				Flag_OF = !parity_check[CX >> 14];
-				if (log_to_console) cout << "ROR CX";
-				break;
-			case 2:
-				Flag_CF = (DX) & 1;
-				Result = DX << 15;
-				DX = (DX >> 1) | Result;
-				Flag_OF = !parity_check[DX >> 14];
-				if (log_to_console) cout << "ROR DX";
-				break;
-			case 3:
-				Flag_CF = (BX) & 1;
-				Result = BX << 15;
-				BX = (BX >> 1) | Result;
-				Flag_OF = !parity_check[BX >> 14];
-				if (log_to_console) cout << "ROR BX";
-				break;
-			case 4:
-				Flag_CF = (Stack_Pointer) & 1;
-				Result = Stack_Pointer << 15;
-				Stack_Pointer = (Stack_Pointer >> 1) | Result;
-				Flag_OF = !parity_check[Stack_Pointer >> 14];
-				if (log_to_console) cout << "ROR SP";
-				break;
-			case 5:
-				Flag_CF = (Base_Pointer) & 1;
-				Result = Base_Pointer << 15;
-				Base_Pointer = (Base_Pointer >> 1) | Result;
-				Flag_OF = !parity_check[Base_Pointer >> 14];
-				if (log_to_console) cout << "ROR BP";
-				break;
-			case 6:
-				Flag_CF = (Source_Index) & 1;
-				Result = Source_Index << 15;
-				Source_Index = (Source_Index >> 1) | Result;
-				Flag_OF = !parity_check[Source_Index >> 14];
-				if (log_to_console) cout << "ROR SI";
-				break;
-			case 7:
-				Flag_CF = (Destination_Index) & 1;
-				Result = Destination_Index << 15;
-				Destination_Index = (Destination_Index >> 1) | Result;
-				Flag_OF = !parity_check[Destination_Index >> 14];
-				if (log_to_console) cout << "ROR DI";
-				break;
-			}
-			break;
+			Flag_CF = *ptr_r16[byte2 & 7] & 1;
+			*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] >> 1) | (Flag_CF * 0x8000);
+			Flag_OF = !parity_check[(*ptr_r16[byte2 & 7] >> 8) & 0b11000000];
+			if (log_to_console) cout << "ROR " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Flag_CF = *ptr_Src & 1;
+			*ptr_Src = (*ptr_Src >> 1) | (Flag_CF * 0x8000);
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			Flag_OF = !parity_check[(*ptr_Src >> 8) & 0b11000000];
+			if (log_to_console) cout << "ROR M" << OPCODE_comment << "";
 		}
 		break;
 	
 	case 2:  //RCL Rotate Left throught carry
 	
-			//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = ((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) << 1) | Flag_CF;
-			Flag_CF = (Src >> 16) & 1;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			Flag_OF = !parity_check[(Src >> 15) & 3];
-			if (log_to_console) cout << "RCL M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = (AX << 1) | Flag_CF;
-				AX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (log_to_console) cout << "RCL AX";
-				break;
-			case 1:
-				Src = (CX << 1) | Flag_CF;
-				CX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (log_to_console) cout << "RCL CX";
-				break;
-			case 2:
-				Src = (DX << 1) | Flag_CF;
-				DX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (log_to_console) cout << "RCL DX";
-				break;
-			case 3:
-				Src = (BX << 1) | Flag_CF;
-				BX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (log_to_console) cout << "RCL BX";
-				break;
-			case 4:
-				Src = (Stack_Pointer << 1) | Flag_CF;
-				Stack_Pointer = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (log_to_console) cout << "RCL SP";
-				break;
-			case 5:
-				Src = (Base_Pointer << 1) | Flag_CF;
-				Base_Pointer = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (log_to_console) cout << "RCL BP";
-				break;
-			case 6:
-				Src = (Source_Index << 1) | Flag_CF;
-				Source_Index = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (log_to_console) cout << "RCL SI";
-				break;
-			case 7:
-				Src = (Destination_Index << 1) | Flag_CF;
-				Destination_Index = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (log_to_console) cout << "RCL DI";
-				break;
-			}
-			break;
+			Src = (*ptr_r16[byte2 & 7] << 1) | Flag_CF;
+			Flag_CF = (Src >> 16) & 1;
+			*ptr_r16[byte2 & 7] = Src;
+			Flag_OF = !parity_check[(Src >> 9) & 0b11000000];
+			if (log_to_console) cout << "RCL " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Src = (*ptr_Src << 1) | Flag_CF;
+			Flag_CF = (Src >> 16) & 1;
+			*ptr_Src = Src;
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			Flag_OF = !parity_check[(Src >> 9) & 0b11000000];
+			if (log_to_console) cout << "RCL M" << OPCODE_comment << "";
 		}
 		break;
 	
 	case 3:  //RCR = Rotate Right throught carry
 	
-			//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Flag_OF = memory.read_2(New_Addr) & 1; //tmp
-			Src = (Flag_CF << 15) | ((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) >> 1);
-			Flag_CF = Flag_OF;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			Flag_OF = !parity_check[(Src >> 14) & 3];
-			if (log_to_console) cout << "RCR M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_OF = (AX) & 1;
-				Src = (AX >> 1) | (Flag_CF << 15);
-				AX = Src & 0xFFFF;
-				Flag_CF = Flag_OF;
-				Flag_OF = !parity_check[(Src >> 14) & 3];
-				if (log_to_console) cout << "RCR AX";
-				break;
-			case 1:
-				Flag_OF = (CX) & 1;
-				Src = (CX >> 1) | (Flag_CF << 15);
-				CX = Src & 0xFFFF;
-				Flag_CF = Flag_OF;
-				Flag_OF = !parity_check[(Src >> 14) & 3];
-				if (log_to_console) cout << "RCR CX";
-				break;
-			case 2:
-				Flag_OF = (DX) & 1;
-				Src = (DX >> 1) | (Flag_CF << 15);
-				DX = Src & 0xFFFF;
-				Flag_CF = Flag_OF;
-				Flag_OF = !parity_check[(Src >> 14) & 3];
-				if (log_to_console) cout << "RCR DX";
-				break;
-			case 3:
-				Flag_OF = (BX) & 1;
-				Src = (BX >> 1) | (Flag_CF << 15);
-				BX = Src & 0xFFFF;
-				Flag_CF = Flag_OF;
-				Flag_OF = !parity_check[(Src >> 14) & 3];
-				if (log_to_console) cout << "RCR BX";
-				break;
-			case 4:
-				Flag_OF = (Stack_Pointer) & 1;
-				Src = (Stack_Pointer >> 1) | (Flag_CF << 15);
-				Stack_Pointer = Src & 0xFFFF;
-				Flag_CF = Flag_OF;
-				Flag_OF = !parity_check[(Src >> 14) & 3];
-				if (log_to_console) cout << "RCR SP";
-				break;
-			case 5:
-				Flag_OF = (Base_Pointer) & 1;
-				Src = (Base_Pointer >> 1) | (Flag_CF << 15);
-				Base_Pointer = Src & 0xFFFF;
-				Flag_CF = Flag_OF;
-				Flag_OF = !parity_check[(Src >> 14) & 3];
-				if (log_to_console) cout << "RCR BP";
-				break;
-			case 6:
-				Flag_OF = (Source_Index) & 1;
-				Src = (Source_Index >> 1) | (Flag_CF << 15);
-				Source_Index = Src & 0xFFFF;
-				Flag_CF = Flag_OF;
-				Flag_OF = !parity_check[(Src >> 14) & 3];
-				if (log_to_console) cout << "RCR SI";
-				break;
-			case 7:
-				Flag_OF = (Destination_Index) & 1;
-				Src = (Destination_Index >> 1) | (Flag_CF << 15);
-				Destination_Index = Src & 0xFFFF;
-				Flag_CF = Flag_OF;
-				Flag_OF = !parity_check[(Src >> 14) & 3];
-				if (log_to_console) cout << "RCR DI";
-				break;
-			}
-			break;
+			Src = (*ptr_r16[byte2 & 7] >> 1) | (Flag_CF << 15);
+			Flag_CF = *ptr_r16[byte2 & 7] & 1;
+			*ptr_r16[byte2 & 7] = Src;
+			Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
+			if (log_to_console) cout << "RCR " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Src = (*ptr_Src >> 1) | (Flag_CF << 15);
+			Flag_CF = *ptr_Src & 1;
+			*ptr_Src = Src;
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
+			if (log_to_console) cout << "RCR M" << OPCODE_comment << "";
 		}
 		break;
 	
 	case 4:  //Shift Left
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) << 1;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
+			// mod 11 источник - регистр
+			Src = *ptr_r16[byte2 & 7] << 1;
+			*ptr_r16[byte2 & 7] = Src;
 			Flag_CF = (Src >> 16) & 1;
 			Flag_SF = (Src >> 15) & 1;
-			Flag_OF = !parity_check[(Src >> 15) & 3];
-			if (Src & 0xFFFF) Flag_ZF = false;
+			Flag_OF = !parity_check[Src >> 15];
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+			if (log_to_console) cout << "Shift left " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Src = *ptr_Src << 1;
+			*ptr_Src = Src;
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			Flag_CF = (Src >> 16) & 1;
+			Flag_SF = (Src >> 15) & 1;
+			Flag_OF = !parity_check[Src >> 15];
+			if (*ptr_Src) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_Src_L];
 			if (log_to_console) cout << "Shift left M" << OPCODE_comment << "";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = AX << 1;
-				AX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left AX";
-				break;
-			case 1:
-				Src = CX << 1;
-				CX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left CX";
-				break;
-			case 2:
-				Src = DX << 1;
-				DX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left DX";
-				break;
-			case 3:
-				Src = BX << 1;
-				BX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left BX";
-				break;
-			case 4:
-				Src = Stack_Pointer << 1;
-				Stack_Pointer = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left SP";
-				break;
-			case 5:
-				Src = Base_Pointer << 1;
-				Base_Pointer = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left BP";
-				break;
-			case 6:
-				Src = Source_Index << 1;
-				Source_Index = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left SI";
-				break;
-			case 7:
-				Src = Destination_Index << 1;
-				Destination_Index = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_OF = !parity_check[(Src >> 15) & 3];
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left DI";
-				break;
-			}
-			break;
 		}
 		break;
 
 	case 5:  //Shift right (SHR)
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Flag_CF = memory.read_2(New_Addr) & 1;
-			Src = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) >> 1;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			Flag_SF = false;
-			Flag_OF = (Src >> 14) & 1;
-			if (Src & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = AX >> 1;
-				Flag_CF = (AX) & 1;
-				AX = Src & 0xFFFF;				
-				Flag_SF = false;
-				Flag_OF = (Src >> 14) & 1;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right AX";
-				break;
-			case 1:
-				Src = CX >> 1;
-				Flag_CF = (CX) & 1;
-				CX = Src & 0xFFFF;
-				Flag_SF = false;
-				Flag_OF = (Src >> 14) & 1;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right CX";
-				break;
-			case 2:
-				Src = DX >> 1;
-				Flag_CF = (DX) & 1;
-				DX = Src & 0xFFFF;
-				Flag_SF = false;
-				Flag_OF = (Src >> 14) & 1;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right DX";
-				break;
-			case 3:
-				Src = BX >> 1;
-				Flag_CF = (BX) & 1;
-				BX = Src & 0xFFFF;
-				Flag_SF = false;
-				Flag_OF = (Src >> 14) & 1;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right BX";
-				break;
-			case 4:
-				Src = Stack_Pointer >> 1;
-				Flag_CF = (Stack_Pointer) & 1;
-				Stack_Pointer = Src & 0xFFFF;
-				Flag_SF = false;
-				Flag_OF = (Src >> 14) & 1;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right SP";
-				break;
-			case 5:
-				Src = Base_Pointer >> 1;
-				Flag_CF = (Base_Pointer) & 1;
-				Base_Pointer = Src & 0xFFFF;
-				Flag_SF = false;
-				Flag_OF = (Src >> 14) & 1;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right BP";
-				break;
-			case 6:
-				Src = Source_Index >> 1;
-				Flag_CF = (Source_Index) & 1;
-				Source_Index = Src & 0xFFFF;
-				Flag_SF = false;
-				Flag_OF = (Src >> 14) & 1;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right SI";
-				break;
-			case 7:
-				Src = Destination_Index >> 1;
-				Flag_CF = (Destination_Index) & 1;
-				Destination_Index = Src & 0xFFFF;
-				Flag_SF = false;
-				Flag_OF = (Src >> 14) & 1;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right DI";
-				break;
-			}
-			break;
+			Flag_CF = *ptr_r16[byte2 & 7] & 1;
+			Src = *ptr_r16[byte2 & 7] >> 1;
+			*ptr_r16[byte2 & 7] = Src;
+			Flag_SF = 0;
+			Flag_OF = Src >> 14;
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+			if (log_to_console) cout << "Shift(SHR) right " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Flag_CF = *ptr_Src & 1;
+			Src = *ptr_Src >> 1;
+			*ptr_Src = Src;
+			Flag_SF = 0;
+			Flag_OF = Src >> 14;
+			if (*ptr_Src) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_Src_L];
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << "";
 		}
 		break;
 
 	case 6:  //SETMO 
 
-		Src = 0xFFFF;
 		if (log_to_console) cout << "SETMO WORD ";
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) | Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  (Result >> 8) & 255);
+			// mod 11 источник - регистр
+			*ptr_r16[byte2 & 7] = 0xFFFF;
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = true;
 			Flag_ZF = false;
 			Flag_PF = true;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = AX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "AL = " << (int)Result;
-				break;
-			case 1:
-				CX = CX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "CL = " << (int)Result;
-				break;
-			case 2:
-				DX = DX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "DL = " << (int)Result;
-				break;
-			case 3:
-				BX = BX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "BL = " << (int)Result;
-				break;
-			case 4:
-				Stack_Pointer = Stack_Pointer | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "AH = " << (int)Result;
-				break;
-			case 5:
-				Base_Pointer = Base_Pointer | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "CH = " << (int)Result;
-				break;
-			case 6:
-				Source_Index = Source_Index | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "DH = " << (int)Result;
-				break;
-			case 7:
-				Destination_Index = Destination_Index | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "BH = " << (int)Result;
-				break;
-			}
-			break;
+			if (log_to_console) cout << reg16_name[byte2 & 7] << " = " << (int)*ptr_r16[byte2 & 7];
 		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			memory_2[New_Addr_32] = 0xFF;
+			memory_2[New_Addr_32 + 1] = 0xFF;
+			Flag_CF = 0;
+			Flag_OF = 0;
+			Flag_SF = true;
+			Flag_ZF = false;
+			Flag_PF = true;
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)0xFFFF;
+		}
+
 		Flag_AF = 0;
 		break;
-
+	
 	case 7:  //Shift arithm right (SAR)
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Flag_CF = memory.read_2(New_Addr) & 1;
-			Src = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256);
-			MSB = Src & 0x8000;
-			Src = (Src >> 1) | MSB;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			Flag_SF = ((Src >> 15) & 1);
-			Flag_OF = 0;
-			if (Src & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << "";
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				MSB = AX & 0x8000;
-				Src = (AX >> 1) | MSB;
-				Flag_CF = (AX) & 1;
-				AX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				Flag_OF = 0;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right AX";
-				break;
-			case 1:
-				MSB = CX & 0x8000;
-				Src = (CX >> 1) | MSB;
-				Flag_CF = (CX) & 1;
-				CX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				Flag_OF = 0;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right CX";
-				break;
-			case 2:
-				MSB = DX & 0x8000;
-				Src = (DX >> 1) | MSB;
-				Flag_CF = (DX) & 1;
-				DX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				Flag_OF = 0;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right DX";
-				break;
-			case 3:
-				MSB = BX & 0x8000;
-				Src = (BX >> 1) | MSB;
-				Flag_CF = (BX) & 1;
-				BX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				Flag_OF = 0;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right BX";
-				break;
-			case 4:
-				MSB = Stack_Pointer & 0x8000;
-				Src = (Stack_Pointer >> 1) | MSB;
-				Flag_CF = (Stack_Pointer) & 1;
-				Stack_Pointer = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				Flag_OF = 0;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right SP";
-				break;
-			case 5:
-				MSB = Base_Pointer & 0x8000;
-				Src = (Base_Pointer >> 1) | MSB;
-				Flag_CF = (Base_Pointer) & 1;
-				Base_Pointer = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				Flag_OF = 0;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right BP";
-				break;
-			case 6:
-				MSB = Source_Index & 0x8000;
-				Src = (Source_Index >> 1) | MSB;
-				Flag_CF = (Source_Index) & 1;
-				Source_Index = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				Flag_OF = 0;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right SI";
-				break;
-			case 7:
-				MSB = Destination_Index & 0x8000;
-				Src = (Destination_Index >> 1) | MSB;
-				Flag_CF = (Destination_Index) & 1;
-				Destination_Index = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				Flag_OF = 0;
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right DI";
-				break;
-			}
-			break;
+			Flag_CF = *ptr_r16[byte2 & 7] & 1;
+			MSB = *ptr_r16[byte2 & 7] & 0x8000;
+			*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] >> 1) | MSB;
+			Flag_SF = ((*ptr_r16[byte2 & 7] >> 15) & 1);
+			Flag_OF = !parity_check[(*ptr_r16[byte2 & 7] >> 8) & 0b11000000];
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+			if (log_to_console) cout << "Shift(SAR) right " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			Flag_CF = *ptr_Src & 1;
+			MSB = *ptr_Src & 0x8000;
+			*ptr_Src = (*ptr_Src >> 1) | MSB;
+			Flag_SF = ((*ptr_Src >> 15) & 1);
+			Flag_OF = !parity_check[(*ptr_Src >> 8) & 0b11000000];
+			if (*ptr_Src) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_Src & 255];
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << "";
 		}
 		break;
 		
@@ -10768,995 +6195,275 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 }
 void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Src = 0;
 	uint16 Result = 0;
 	uint8 repeats = CX & 255;
 	uint8 MSB = 0;
 	additional_IPs = 0;
-	uint8 oldCF;
 
 	switch ((byte2 >> 3) & 7)
 	{
 	case 0:  //ROL Rotate Left
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr);
+			// mod 11 источник - регистр
 			for (int i = 0; i < repeats; i++)
 			{
-				Flag_CF = (Src >> 7) & 1;
-				Src = (Src << 1) | Flag_CF;
+				Flag_CF = (*ptr_r8[byte2 & 7] >> 7) & 1;
+				*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] << 1) | Flag_CF;
 			}
-			memory.write_2(New_Addr,  Src & 255);
-			if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-			if (log_to_console) cout << "ROL M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
+			if (repeats == 1) Flag_OF = (*ptr_r8[byte2 & 7] >> 7) ^ Flag_CF;
+			if (log_to_console) cout << "ROL " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 7) & 1;
-					Src = (Src << 1) | Flag_CF;
-				}
-				AX = (AX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL AL " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 7) & 1;
-					Src = (Src << 1) | Flag_CF;
-				}
-				CX = (CX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL CL " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 7) & 1;
-					Src = (Src << 1) | Flag_CF;
-				}
-				DX = (DX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL DL " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 7) & 1;
-					Src = (Src << 1) | Flag_CF;
-				}
-				BX = (BX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL BL " << (int)repeats << " times";
-				break;
-			case 4:
-				Src = ((AX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 7) & 1;
-					Src = (Src << 1) | Flag_CF;
-				}
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL AH " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = ((CX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 7) & 1;
-					Src = (Src << 1) | Flag_CF;
-				}
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL CH " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = ((DX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 7) & 1;
-					Src = (Src << 1) | Flag_CF;
-				}
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL DH " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = ((BX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 7) & 1;
-					Src = (Src << 1) | Flag_CF;
-				}
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "ROL BH " << (int)repeats << " times";
-				break;
+				Flag_CF = (memory_2[New_Addr_32] >> 7) & 1;
+				memory_2[New_Addr_32] = (memory_2[New_Addr_32] << 1) | Flag_CF;
 			}
-			break;
+			if (repeats == 1) Flag_OF = (memory_2[New_Addr_32] >> 7) ^ Flag_CF;
+			if (log_to_console) cout << "ROL M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 
 	case 1:  //ROR = Rotate Right
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr);
+			// mod 11 источник - регистр
+			
 			for (int i = 0; i < repeats; i++)
 			{
-				Flag_CF = Src & 1;
-				Src = (Src >> 1) | (Flag_CF * 0x80);
+				Flag_CF = *ptr_r8[byte2 & 7] & 1;
+				*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] >> 1) | (Flag_CF * 0x80);
 			}
-			memory.write_2(New_Addr,  Src & 255);
-			if (log_to_console) cout << "ROR M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
+			if (repeats == 1) Flag_OF = !parity_check[*ptr_r8[byte2 & 7] & 0b11000000];
+			if (log_to_console) cout << "ROR " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x80);
-				}
-				AX = (AX & 0xFF00) | (Src & 255);
-				if (log_to_console) cout << "ROR AL " << (int)repeats << " times = " << (int)Src;
-				break;
-			case 1:
-				Src = CX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x80);
-				}
-				CX = (CX & 0xFF00) | (Src & 255);
-				if (log_to_console) cout << "ROR CL " << (int)repeats << " times = " << (int)Src;
-				break;
-			case 2:
-				Src = DX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x80);
-				}
-				DX = (DX & 0xFF00) | (Src & 255);
-				if (log_to_console) cout << "ROR DL " << (int)repeats << " times = " << (int)Src;
-				break;
-			case 3:
-				Src = BX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x80);
-				}
-				BX = (BX & 0xFF00) | (Src & 255);
-				if (log_to_console) cout << "ROR BL " << (int)repeats << " times = " << (int)Src;
-				break;
-			case 4:
-				Src = ((AX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x80);
-				}
-				AX = (AX & 0x00FF) | ((Src) << 8);
-				if (log_to_console) cout << "ROR AH " << (int)repeats << " times = " << (int)Src;
-				break;
-			case 5:
-				Src = ((CX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x80);
-				}
-				CX = (CX & 0x00FF) | ((Src) << 8);
-				if (log_to_console) cout << "ROR CH " << (int)repeats << " times = " << (int)Src;
-				break;
-			case 6:
-				Src = ((DX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x80);
-				}
-				DX = (DX & 0x00FF) | ((Src) << 8);
-				if (log_to_console) cout << "ROR DH " << (int)repeats << " times = " << (int)Src;
-				break;
-			case 7:
-				Src = ((BX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x80);
-				}
-				BX = (BX & 0x00FF) | ((Src) << 8);
-				if (log_to_console) cout << "ROR BH " << (int)repeats << " times = " << (int)Src;
-				break;
+				Flag_CF = memory_2[New_Addr_32] & 1;
+				memory_2[New_Addr_32] = (memory_2[New_Addr_32] >> 1) | (Flag_CF * 0x80);
 			}
-			break;
+			if (repeats == 1) Flag_OF = !parity_check[memory_2[New_Addr_32] & 0b11000000];
+			if (log_to_console) cout << "ROR M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 
 	case 2:  //RCL Rotate Left throught carry
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr);
+			// mod 11 источник - регистр
 			for (int i = 0; i < repeats; i++)
 			{
-				Src = (Src << 1) | Flag_CF;
+				Src = (*ptr_r8[byte2 & 7] << 1) | Flag_CF;
 				Flag_CF = (Src >> 8) & 1;
+				*ptr_r8[byte2 & 7] = Src;
 			}
-			memory.write_2(New_Addr,  Src & 255);
+			if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
+			if (log_to_console) cout << "RCL " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			for (int i = 0; i < repeats; i++)
+			{
+				Src = (memory_2[New_Addr_32] << 1) | Flag_CF;
+				Flag_CF = (Src >> 8) & 1;
+				memory_2[New_Addr_32] = Src;
+			}
 			if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
 			if (log_to_console) cout << "RCL M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = AX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 8) & 1;
-				}
-				AX = (AX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL AL " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 8) & 1;
-				}
-				CX = (CX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL CL " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 8) & 1;
-				}
-				DX = (DX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL DL " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 8) & 1;
-				}
-				BX = (BX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL BL " << (int)repeats << " times";
-				break;
-			case 4:
-				Src = ((AX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 8) & 1;
-				}
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL AH " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = ((CX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 8) & 1;
-				}
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL CH " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = ((DX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 8) & 1;
-				}
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL DH " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = ((BX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 8) & 1;
-				}
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				if (log_to_console) cout << "RCL BH " << (int)repeats << " times";
-				break;
-			}
-			break;
 		}
 		break;
 
 	case 3:  //RCR = Rotate Right throught carry
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr);
+			// mod 11 источник - регистр
 			for (int i = 0; i < repeats; i++)
 			{
-				oldCF = Src & 1; // tmp
-				Src = (Src >> 1) | (Flag_CF << 7);
-				Flag_CF = oldCF;
+				Src = (*ptr_r8[byte2 & 7] >> 1) | (Flag_CF << 7);
+				Flag_CF = *ptr_r8[byte2 & 7] & 1;
+				*ptr_r8[byte2 & 7] = Src;
 			}
-			memory.write_2(New_Addr,  Src & 255);
+			if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
+			if (log_to_console) cout << "RCR " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			for (int i = 0; i < repeats; i++)
+			{
+				Src = (memory_2[New_Addr_32] >> 1) | (Flag_CF << 7);
+				Flag_CF = memory_2[New_Addr_32] & 1;
+				memory_2[New_Addr_32] = Src;
+			}
 			if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
 			if (log_to_console) cout << "RCR M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = AX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Src & 1;// tmp
-					Src = (Src >> 1) | (Flag_CF << 7);
-					Flag_CF = oldCF;
-				}
-				AX = (AX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "RCR AL = " << (int)(Src & 255);
-				break;
-			case 1:
-				Src = CX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Src & 1;// tmp
-					Src = (Src >> 1) | (Flag_CF << 7);
-					Flag_CF = oldCF;
-				}
-				CX = (CX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "RCR CL = " << (int)(Src & 255);
-				break;
-			case 2:
-				Src = DX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Src & 1;// tmp
-					Src = (Src >> 1) | (Flag_CF << 7);
-					Flag_CF = oldCF;
-				}
-				DX = (DX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "RCR DL = " << (int)(Src & 255);
-				break;
-			case 3:
-				Src = BX & 255;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Src & 1;// tmp
-					Src = (Src >> 1) | (Flag_CF << 7);
-					Flag_CF = oldCF;
-				}
-				BX = (BX & 0xFF00) | (Src & 255);
-				if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "RCR BL = " << (int)(Src & 255);
-				break;
-			case 4:
-				Src = ((AX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Src & 1;// tmp
-					Src = (Src >> 1) | (Flag_CF << 7);
-					Flag_CF = oldCF;
-				}
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "RCR AH = " << (int)(Src & 255);
-				break;
-			case 5:
-				Src = ((CX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Src & 1;// tmp
-					Src = (Src >> 1) | (Flag_CF << 7);
-					Flag_CF = oldCF;
-				}
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "RCR CH = " << (int)(Src & 255);
-				break;
-			case 6:
-				Src = ((DX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Src & 1;// tmp
-					Src = (Src >> 1) | (Flag_CF << 7);
-					Flag_CF = oldCF;
-				}
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "RCR DH = " << (int)(Src & 255);
-				break;
-			case 7:
-				Src = ((BX >> 8) & 255);
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Src & 1;// tmp
-					Src = (Src >> 1) | (Flag_CF << 7);
-					Flag_CF = oldCF;
-				}
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-				if (log_to_console) cout << "RCR BH = " << (int)(Src & 255);
-				break;
-			}
-			break;
 		}
 		break;
 
 	case 4:  //Shift Left
 		
-		if (repeats > 9) repeats = 9;
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr) << repeats;
-			memory.write_2(New_Addr,  Src & 255);
-			Flag_CF = (Src >> 8) & 1;
-			Flag_SF = (Src >> 7) & 1;
-			if (Src & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "Shift left M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			if (!repeats) break;
-			switch (byte2 & 7)
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = (AX & 255) << repeats;
-				AX = (AX & 0xFF00) | (Src & 255);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				Flag_PF = parity_check[AX & 255];
-				if (log_to_console) cout << "Shift left AL " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = (CX & 255) << repeats;
-				CX = (CX & 0xFF00) | (Src & 255);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				Flag_PF = parity_check[CX & 255];
-				if (log_to_console) cout << "Shift left CL " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = (DX & 255) << repeats;
-				DX = (DX & 0xFF00) | (Src & 255);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left DL " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = (BX & 255) << repeats;
-				BX = (BX & 0xFF00) | (Src & 255);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left BL " << (int)repeats << " times";
-				break;
-			case 4:
-				Src = ((AX >> 8) & 255) << repeats;
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left AH " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = ((CX >> 8) & 255) << repeats;
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left CH " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = (DX >> 8) << repeats;
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left DH " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = ((BX >> 8) & 255) << repeats;
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				Flag_CF = (Src >> 8) & 1;
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left BH " << (int)repeats << " times";
-				break;
+				Src = *ptr_r8[byte2 & 7] << 1;
+				*ptr_r8[byte2 & 7] = Src;
 			}
-			break;
+			Flag_CF = (Src >> 8) & 1;
+			Flag_SF = (Src >> 7) & 1;
+			if (repeats == 1) Flag_OF = !parity_check[Src >> 7];
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << "Shift left " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			if (!repeats) break;
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			for (int i = 0; i < repeats; i++)
+			{
+				Src = memory_2[New_Addr_32] << 1;
+				memory_2[New_Addr_32] = Src;
+			}
+			Flag_CF = (Src >> 8) & 1;
+			Flag_SF = (Src >> 7) & 1;
+			if (repeats == 1) Flag_OF = !parity_check[Src >> 7];
+			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			if (log_to_console) cout << "Shift left M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 
 	case 5:  //Shift Right (SHR)
 
-		if (repeats > 9) repeats = 9;
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Flag_CF = (memory.read_2(New_Addr) >> (repeats - 1)) & 1;
-			Src = memory.read_2(New_Addr) >> repeats;
-			memory.write_2(New_Addr,  Src & 255);
-			Flag_SF = ((Src >> 7) & 1);
-			if (Src & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
-			if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			if (!repeats) break;
-			switch (byte2 & 7)
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = (AX & 255);
-				Flag_CF = (Src >> (repeats - 1)) & 1;
-				Src = Src >> repeats;
-				AX = (AX & 0xFF00) | (Src & 255);
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "Shift(SHR) right AL " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = (CX & 255);
-				Flag_CF = (Src >> (repeats - 1)) & 1;
-				Src = Src >> repeats;
-				CX = (CX & 0xFF00) | (Src & 255);
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "Shift(SHR) right CL " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = (DX & 255);
-				Flag_CF = (Src >> (repeats - 1)) & 1;
-				Src = Src >> repeats;
-				DX = (DX & 0xFF00) | (Src & 255);
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "Shift(SHR) right DL " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = (BX & 255);
-				Flag_CF = (Src >> (repeats - 1)) & 1;
-				Src = Src >> repeats;
-				BX = (BX & 0xFF00) | (Src & 255);
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "Shift(SHR) right BL " << (int)repeats << " times";
-				break;
-			case 4:
-				Src = AX >> 8;
-				Flag_CF = (Src >> (repeats - 1)) & 1;
-				Src = Src >> repeats;
-				AX = (AX & 0x00FF) | ((Src & 255) << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "Shift(SHR) right AH " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = CX >> 8;
-				Flag_CF = (Src >> (repeats - 1)) & 1;
-				Src = Src >> repeats;
-				CX = (CX & 0x00FF) | ((Src & 255) << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "Shift(SHR) right CH " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = DX >> 8;
-				Flag_CF = (Src >> (repeats - 1)) & 1;
-				Src = Src >> repeats;
-				DX = (DX & 0x00FF) | ((Src & 255) << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "Shift(SHR) right DH " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = BX >> 8;
-				Flag_CF = (Src >> (repeats - 1)) & 1;
-				Src = Src >> repeats;
-				BX = (BX & 0x00FF) | ((Src & 255) << 8);
-				Flag_SF = ((Src >> 7) & 1);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = !parity_check[(Src) & 0b11000000];
-				if (log_to_console) cout << "Shift(SHR) right BH " << (int)repeats << " times";
-				break;
+				Flag_CF = *ptr_r8[byte2 & 7] & 1;
+				Src = *ptr_r8[byte2 & 7] >> 1;
+				*ptr_r8[byte2 & 7] = Src;
 			}
-			break;
+			Flag_SF = 0;
+			if (repeats == 1) Flag_OF = Src >> 6;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << "Shift(SHR) right AL" << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			if (!repeats) break;
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			for (int i = 0; i < repeats; i++)
+			{
+				Flag_CF = memory_2[New_Addr_32] & 1;
+				Src = memory_2[New_Addr_32] >> 1;
+				memory_2[New_Addr_32] = Src;
+			}
+			Flag_SF = 0;
+			if (repeats == 1) Flag_OF = Src >> 6;
+			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 
 	case 6: //SETMOC byte R/M
 
+		if (log_to_console) cout << "SETMO_B ";
 		
-		Src = 0xFF;
-		if (log_to_console) cout << "SETMOC_B ";
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!(CX & 255)) break;
-			Result = memory.read_2(New_Addr) | Src;
-			memory.write_2(New_Addr,  Result);
+			// mod 11 источник - регистр
+			if (!*ptr_CL) break;
+			*ptr_r8[byte2 & 7] = 0xFF;
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = true;
 			Flag_ZF = false;
 			Flag_PF = true;
-			Flag_AF = 0;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			if (!(CX & 255)) break;
-			Flag_AF = 0;
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result = (AX & 255) | Src;
-				AX = (AX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "AL = " << (int)Result;
-				break;
-			case 1:
-				Result = (CX & 255) | Src;
-				CX = (CX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "CL = " << (int)Result;
-				break;
-			case 2:
-				Result = (DX & 255) | Src;
-				DX = (DX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "DL = " << (int)Result;
-				break;
-			case 3:
-				Result = (BX & 255) | Src;
-				BX = (BX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "BL = " << (int)Result;
-				break;
-			case 4:
-				Result = ((AX >> 8) & 255) | Src;
-				AX = (AX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "AH = " << (int)Result;
-				break;
-			case 5:
-				Result = ((CX >> 8) & 255) | Src;
-				CX = (CX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "CH = " << (int)Result;
-				break;
-			case 6:
-				Result = ((DX >> 8) & 255) | Src;
-				DX = (DX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "DH = " << (int)Result;
-				break;
-			case 7:
-				Result = ((BX >> 8) & 255) | Src;
-				BX = (BX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "BH = " << (int)Result;
-				break;
-			}
-			break;
+			if (log_to_console) cout << reg8_name[byte2 & 7] << " = " << (int)*ptr_r8[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			if (!*ptr_CL) break;
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			memory_2[New_Addr_32] = 0xFF;
+			Flag_CF = 0;
+			Flag_OF = 0;
+			Flag_SF = true;
+			Flag_ZF = false;
+			Flag_PF = true;
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)memory_2[New_Addr_32];
 		}
 
+		Flag_AF = 0;
 		break;
 
 	case 7:  //Shift Right (SAR)
 
-		if (repeats > 9) repeats = 9;
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr);
-			for (int v = 0; v < repeats; v++)
-			{
-				Flag_CF = Src & 1;
-				Flag_SF = MSB = Src & 0b10000000;
-				Src = (Src >> 1) | MSB;
-			}
-			memory.write_2(New_Addr,  Src & 255);
-			if (Src & 255) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
-			if (repeats == 1) Flag_OF = false;
-			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			if (!repeats) break;
-			switch (byte2 & 7)
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX & 255;
-				for (int v = 0; v < repeats; v++)
-				{
-					Flag_CF = Src & 1;
-					Flag_SF = MSB = Src & 0b10000000;
-					Src = (Src >> 1) | MSB;
-				}
-				AX = (AX & 0xFF00) | (Src);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = false;
-				if (log_to_console) cout << "Shift(SAR) right AL " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX & 255;
-				for (int v = 0; v < repeats; v++)
-				{
-					Flag_CF = Src & 1;
-					Flag_SF = MSB = Src & 0b10000000;
-					Src = (Src >> 1) | MSB;
-				}
-				CX = (CX & 0xFF00) | (Src);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = false;
-				if (log_to_console) cout << "Shift(SAR) right CL " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX & 255;
-				for (int v = 0; v < repeats; v++)
-				{
-					Flag_CF = Src & 1;
-					Flag_SF = MSB = Src & 0b10000000;
-					Src = (Src >> 1) | MSB;
-				}
-				DX = (DX & 0xFF00) | (Src);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = false;
-				if (log_to_console) cout << "Shift(SAR) right DL " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX & 255;
-				for (int v = 0; v < repeats; v++)
-				{
-					Flag_CF = Src & 1;
-					Flag_SF = MSB = Src & 0b10000000;
-					Src = (Src >> 1) | MSB;
-				}
-				BX = (BX & 0xFF00) | (Src);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = false;
-				if (log_to_console) cout << "Shift(SAR) right BL " << (int)repeats << " times";
-				break;
-			case 4:
-				Src = (AX >> 8) & 255;
-				for (int v = 0; v < repeats; v++)
-				{
-					Flag_CF = Src & 1;
-					Flag_SF = MSB = Src & 0b10000000;
-					Src = (Src >> 1) | MSB;
-				}
-				AX = (AX & 0x00FF) | (Src << 8);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = false;
-				if (log_to_console) cout << "Shift(SAR) right AH " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = (CX >> 8) & 255;
-				for (int v = 0; v < repeats; v++)
-				{
-					Flag_CF = Src & 1;
-					Flag_SF = MSB = Src & 0b10000000;
-					Src = (Src >> 1) | MSB;
-				}
-				CX = (CX & 0x00FF) | (Src << 8);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = false;
-				if (log_to_console) cout << "Shift(SAR) right CH " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = (DX >> 8) & 255;
-				for (int v = 0; v < repeats; v++)
-				{
-					Flag_CF = Src & 1;
-					Flag_SF = MSB = Src & 0b10000000;
-					Src = (Src >> 1) | MSB;
-				}
-				DX = (DX & 0x00FF) | (Src << 8);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = false;
-				if (log_to_console) cout << "Shift(SAR) right DH " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = (BX >> 8) & 255;
-				for (int v = 0; v < repeats; v++)
-				{
-					Flag_CF = Src & 1;
-					Flag_SF = MSB = Src & 0b10000000;
-					Src = (Src >> 1) | MSB;
-				}
-				BX = (BX & 0x00FF) | (Src << 8);
-				if (Src & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (repeats == 1) Flag_OF = false;
-				if (log_to_console) cout << "Shift(SAR) right BH " << (int)repeats << " times";
-				break;
+				Flag_CF = *ptr_r8[byte2 & 7] & 1;
+				MSB = *ptr_r8[byte2 & 7] & 128;
+				*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] >> 1) | MSB;
 			}
-			break;
+			Flag_SF = ((*ptr_r8[byte2 & 7] >> 7) & 1);
+			if (repeats == 1) Flag_OF = !parity_check[*ptr_r8[byte2 & 7] & 0b11000000];
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << "Shift(SAR) right " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			if (!repeats) break;
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			for (int i = 0; i < repeats; i++)
+			{
+				Flag_CF = memory_2[New_Addr_32] & 1;
+				MSB = memory_2[New_Addr_32] & 128;
+				memory_2[New_Addr_32] = (memory_2[New_Addr_32] >> 1) | MSB;
+			}
+			Flag_SF = ((memory_2[New_Addr_32] >> 7) & 1);
+			if (repeats == 1) Flag_OF = !parity_check[memory_2[New_Addr_32] & 0b11000000];
+			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 	
@@ -11767,995 +6474,308 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 }
 void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Src = 0;
 	uint32 Result = 0;
 	uint8 repeats = CX & 255;
 	uint16 MSB = 0;
 	additional_IPs = 0;
-	uint16 oldCF;
 
 	switch ((byte2 >> 3) & 7)
 	{
 	case 0:  //ROL Rotate Left
 
-		//while (repeats > 16) repeats -= 16;
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
+			// mod 11 источник - регистр 
 			for (int i = 0; i < repeats; i++)
 			{
-				Flag_CF = (Src >> 15) & 1;
-				Src = Src << 1;
-				Src = Src | Flag_CF;
+				Flag_CF = (*ptr_r16[byte2 & 7] >> 15) & 1;
+				*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] << 1) | Flag_CF;
 			}
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			if (log_to_console) cout << "ROL M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			if (!repeats) break;
-			switch (byte2 & 7)
+			if (repeats == 1) Flag_OF = (*ptr_r16[byte2 & 7] >> 15) ^ Flag_CF;
+			if (log_to_console) cout << "ROL " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 15) & 1;
-					Src = Src << 1;
-					Src = Src | Flag_CF;
-				}
-				AX = Src & 0xFFFF;
-				if (log_to_console) cout << "ROL AX" << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 15) & 1;
-					Src = Src << 1;
-					Src = Src | Flag_CF;
-				}
-				CX = Src & 0xFFFF;
-				if (log_to_console) cout << "ROL CX" << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 15) & 1;
-					Src = Src << 1;
-					Src = Src | Flag_CF;
-				}
-				DX = Src & 0xFFFF;
-				if (log_to_console) cout << "ROL DX" << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 15) & 1;
-					Src = Src << 1;
-					Src = Src | Flag_CF;
-				}
-				BX = Src & 0xFFFF;
-				if (log_to_console) cout << "ROL BX" << (int)repeats << " times";
-				break;
-			case 4:
-				Src = Stack_Pointer;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 15) & 1;
-					Src = Src << 1;
-					Src = Src | Flag_CF;
-				}
-				Stack_Pointer = Src & 0xFFFF;
-				if (log_to_console) cout << "ROL SP" << (int)repeats << " times";
-				break;
-			case 5:
-				Src = Base_Pointer;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 15) & 1;
-					Src = Src << 1;
-					Src = Src | Flag_CF;
-				}
-				Base_Pointer = Src & 0xFFFF;
-				if (log_to_console) cout << "ROL BP" << (int)repeats << " times";
-				break;
-			case 6:
-				Src = Source_Index;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 15) & 1;
-					Src = Src << 1;
-					Src = Src | Flag_CF;
-				}
-				Source_Index = Src & 0xFFFF;
-				if (log_to_console) cout << "ROL SI" << (int)repeats << " times";
-				break;
-			case 7:
-				Src = Destination_Index;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = (Src >> 15) & 1;
-					Src = Src << 1;
-					Src = Src | Flag_CF;
-				}
-				Destination_Index = Src & 0xFFFF;
-				if (log_to_console) cout << "ROL DI" << (int)repeats << " times";
-				break;
+				Flag_CF = (*ptr_Src >> 15) & 1;
+				*ptr_Src = (*ptr_Src << 1) | Flag_CF;
 			}
-			break;
+			if (repeats == 1) Flag_OF = (*ptr_Src >> 15) ^ Flag_CF;
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (log_to_console) cout << "ROL M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 
 	case 1:  //ROR = Rotate Right
 		
-		//while (repeats > 16) repeats -= 16;
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
+			// mod 11 источник - регистр
 			for (int i = 0; i < repeats; i++)
 			{
-				Flag_CF = Src & 1;
-				Src = (Src >> 1) | (Flag_CF * 0x8000);
+				Flag_CF = *ptr_r16[byte2 & 7] & 1;
+				*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] >> 1) | (Flag_CF * 0x8000);
 			}
-			if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			if (log_to_console) cout << "ROR M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			if (!repeats) break;
-			switch (byte2 & 7)
+			if (repeats == 1) Flag_OF = !parity_check[(*ptr_r16[byte2 & 7] >> 8) & 0b11000000];
+			if (log_to_console) cout << "ROR " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			operand_RM_offset++;
+			New_Addr_32_2 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32_2];
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x8000);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				AX = Src;
-				if (log_to_console) cout << "ROR AX" << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x8000);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				CX = Src;
-				if (log_to_console) cout << "ROR CX" << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x8000);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				DX = Src;
-				if (log_to_console) cout << "ROR DX" << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x8000);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				BX = Src;
-				if (log_to_console) cout << "ROR BX" << (int)repeats << " times";
-				break;
-			case 4:
-				Src = Stack_Pointer;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x8000);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				Stack_Pointer = Src;
-				if (log_to_console) cout << "ROR SP" << (int)repeats << " times";
-				break;
-			case 5:
-				Src = Base_Pointer;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x8000);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				Base_Pointer = Src;
-				if (log_to_console) cout << "ROR BP" << (int)repeats << " times";
-				break;
-			case 6:
-				Src = Source_Index;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x8000);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				Source_Index = Src;
-				if (log_to_console) cout << "ROR SI" << (int)repeats << " times";
-				break;
-			case 7:
-				Src = Destination_Index;
-				for (int i = 0; i < repeats; i++)
-				{
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (Flag_CF * 0x8000);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				Destination_Index = Src;
-				if (log_to_console) cout << "ROR DI" << (int)repeats << " times";
-				break;
+				Flag_CF = *ptr_Src & 1;
+				*ptr_Src = (*ptr_Src >> 1) | (Flag_CF * 0x8000);
 			}
-			break;
+			memory_2[New_Addr_32_2] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (repeats == 1) Flag_OF = !parity_check[(*ptr_Src >> 8) & 0b11000000];
+			if (log_to_console) cout << "ROR M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 
 	case 2:  //RCL Rotate Left throught carry
 		
-		//while (repeats > 17) repeats -= 17;
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
+			// mod 11 источник - регистр
 			for (int i = 0; i < repeats; i++)
 			{
-				Src = (Src << 1) | Flag_CF;
+				Src = (*ptr_r16[byte2 & 7] << 1) | Flag_CF;
 				Flag_CF = (Src >> 16) & 1;
+				*ptr_r16[byte2 & 7] = Src;
 			}
-			if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			if (log_to_console) cout << "RCL M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			if (!repeats) break;
-			switch (byte2 & 7)
+			if (repeats == 1) Flag_OF = !parity_check[(Src >> 9) & 0b11000000];
+			if (log_to_console) cout << "RCL " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 16) & 1;
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				AX = Src & 0xFFFF;
-				if (log_to_console) cout << "RCL AX " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 16) & 1;
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				CX = Src & 0xFFFF;
-				if (log_to_console) cout << "RCL CX " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 16) & 1;
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				DX = Src & 0xFFFF;
-				if (log_to_console) cout << "RCL DX " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 16) & 1;
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				BX = Src & 0xFFFF;
-				if (log_to_console) cout << "RCL BX " << (int)repeats << " times";
-				break;
-			case 4:
-				Src = Stack_Pointer;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 16) & 1;
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				Stack_Pointer = Src & 0xFFFF;
-				if (log_to_console) cout << "RCL SP " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = Base_Pointer;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 16) & 1;
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				Base_Pointer = Src & 0xFFFF;
-				if (log_to_console) cout << "RCL BP " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = Source_Index;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 16) & 1;
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				Source_Index = Src & 0xFFFF;
-				if (log_to_console) cout << "RCL SI " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = Destination_Index;
-				for (int i = 0; i < repeats; i++)
-				{
-					Src = (Src << 1) | Flag_CF;
-					Flag_CF = (Src >> 16) & 1;
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				Destination_Index = Src & 0xFFFF;
-				if (log_to_console) cout << "RCL DI " << (int)repeats << " times";
-				break;
+				Src = (*ptr_Src << 1) | Flag_CF;
+				Flag_CF = (Src >> 16) & 1;
+				*ptr_Src = Src;
 			}
-			break;
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (repeats == 1) Flag_OF = !parity_check[(Src >> 9) & 0b11000000];
+			if (log_to_console) cout << "RCL M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 
 	case 3:  //RCR = Rotate Right throught carry
 
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
+			// mod 11 источник - регистр
 			for (int i = 0; i < repeats; i++)
 			{
-				oldCF = Flag_CF;
-				Flag_CF = Src & 1;
-				Src = (Src >> 1) | (oldCF << 15);
+				Src = (*ptr_r16[byte2 & 7] >> 1) | (Flag_CF << 15);
+				Flag_CF = *ptr_r16[byte2 & 7] & 1;
+				*ptr_r16[byte2 & 7] = Src;
 			}
-			if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			if (log_to_console) cout << "RCR M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			if (!repeats) break;
-			switch (byte2 & 7)
+			if (repeats == 1) Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
+			if (log_to_console) cout << "RCR " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Flag_CF;
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (oldCF << 15);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				AX = Src;
-				if (log_to_console) cout << "RCR AX " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Flag_CF;
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (oldCF << 15);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				CX = Src;
-				if (log_to_console) cout << "RCR CX " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Flag_CF;
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (oldCF << 15);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				DX = Src;
-				if (log_to_console) cout << "RCR DX " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Flag_CF;
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (oldCF << 15);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				BX = Src;
-				if (log_to_console) cout << "RCR BX " << (int)repeats << " times";
-				break;
-			case 4:
-				Src = Stack_Pointer;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Flag_CF;
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (oldCF << 15);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				Stack_Pointer = Src;
-				if (log_to_console) cout << "RCR SP " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = Base_Pointer;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Flag_CF;
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (oldCF << 15);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				Base_Pointer = Src;
-				if (log_to_console) cout << "RCR BP " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = Source_Index;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Flag_CF;
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (oldCF << 15);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				Source_Index = Src;
-				if (log_to_console) cout << "RCR SI " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = Destination_Index;
-				for (int i = 0; i < repeats; i++)
-				{
-					oldCF = Flag_CF;
-					Flag_CF = Src & 1;
-					Src = (Src >> 1) | (oldCF << 15);
-				}
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 14];
-				Destination_Index = Src;
-				if (log_to_console) cout << "RCR DI " << (int)repeats << " times";
-				break;
+				Src = (*ptr_Src >> 1) | (Flag_CF << 15);
+				Flag_CF = *ptr_Src & 1;
+				*ptr_Src = Src;
 			}
-			break;
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (repeats == 1) Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
+			if (log_to_console) cout << "RCR M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 	
 	case 4:  //Shift Left
 
-		if (repeats > 17) repeats = 17;
-		//определяем объект
-		switch (byte2 >> 6)
+		
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) << repeats;
-			if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			Flag_CF = (Src >> 16) & 1;
-			Flag_SF = ((Src >> 15) & 1);
-			if (Src & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "Shift left M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			if (!repeats) break;
-			switch (byte2 & 7)
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX << repeats;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				AX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left AX " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX << repeats;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				CX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left CX " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX << repeats;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				DX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left DX " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX << repeats;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				BX = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left BX " << (int)repeats << " times" ;
-				break;
-			case 4:
-				Src = Stack_Pointer << repeats;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				Stack_Pointer = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left SP " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = Base_Pointer << repeats;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				Base_Pointer = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left BP " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = Source_Index << repeats;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				Source_Index = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left SI " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = Destination_Index << repeats;
-				if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
-				Destination_Index = Src & 0xFFFF;
-				Flag_CF = (Src >> 16) & 1;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift left DI " << (int)repeats << " times";
-				break;
+				Src = *ptr_r16[byte2 & 7] << 1;
+				*ptr_r16[byte2 & 7] = Src;
 			}
-			break;
+			Flag_CF = (Src >> 16) & 1;
+			Flag_SF = (Src >> 15) & 1;
+			if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+			if (log_to_console) cout << "Shift left " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			if (!repeats) break;
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			for (int i = 0; i < repeats; i++)
+			{
+				Src = *ptr_Src << 1;
+				*ptr_Src = Src;
+			}
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			Flag_CF = (Src >> 16) & 1;
+			Flag_SF = (Src >> 15) & 1;
+			if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
+			if (*ptr_Src) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_Src_L];
+			if (log_to_console) cout << "Shift left M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 
 	case 5:  //Shift right (SHR)
-		if (repeats > 17) repeats = 17;
-		//определяем объект
-		switch (byte2 >> 6)
+	
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256);
-			Flag_CF = (Src >> (repeats - 1)) & 1;
-			Src = Src >> repeats;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			Flag_SF = ((Src >> 15) & 1);
-			if (Src & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			if (repeats == 1) Flag_OF = Flag_SF;
-			else Flag_OF = 0;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			if (!repeats) break;
-			switch (byte2 & 7)
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				Src = AX >> repeats;
-				Flag_CF = (AX >> (repeats - 1)) & 1;
-				AX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = Flag_SF;
-				else Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right AX " << (int)repeats << " times";
-				break;
-			case 1:
-				Src = CX >> repeats;
-				Flag_CF = (CX >> (repeats - 1)) & 1;
-				CX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = Flag_SF;
-				else Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right CX " << (int)repeats << " times";
-				break;
-			case 2:
-				Src = DX >> repeats;
-				Flag_CF = (DX >> (repeats - 1)) & 1;
-				DX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = Flag_SF;
-				else Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right DX " << (int)repeats << " times";
-				break;
-			case 3:
-				Src = BX >> repeats;
-				Flag_CF = (BX >> (repeats - 1)) & 1;
-				BX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = Flag_SF;
-				else Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right BX " << (int)repeats << " times";
-				break;
-			case 4:
-				Src = Stack_Pointer >> repeats;
-				Flag_CF = (Stack_Pointer >> (repeats - 1)) & 1;
-				Stack_Pointer = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = Flag_SF;
-				else Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right SP " << (int)repeats << " times";
-				break;
-			case 5:
-				Src = Base_Pointer >> repeats;
-				Flag_CF = (Base_Pointer >> (repeats - 1)) & 1;
-				Base_Pointer = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = Flag_SF;
-				else Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right BP " << (int)repeats << " times";
-				break;
-			case 6:
-				Src = Source_Index >> repeats;
-				Flag_CF = (Source_Index >> (repeats - 1)) & 1;
-				Source_Index = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = Flag_SF;
-				else Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right SI " << (int)repeats << " times";
-				break;
-			case 7:
-				Src = Destination_Index >> repeats;
-				Flag_CF = (Destination_Index >> (repeats - 1)) & 1;
-				Destination_Index = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = Flag_SF;
-				else Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SHR) right DI " << (int)repeats << " times";
-				break;
+				Flag_CF = *ptr_r16[byte2 & 7] & 1;
+				Src = *ptr_r16[byte2 & 7] >> 1;
+				*ptr_r16[byte2 & 7] = Src;
 			}
-			break;
+			Flag_SF = 0;
+			if (repeats == 1)Flag_OF = Src >> 14;
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+			if (log_to_console) cout << "Shift(SHR) right " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			if (!repeats) break;
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			operand_RM_offset++;
+			New_Addr_32_2 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_H = memory_2[New_Addr_32_2];
+			for (int i = 0; i < repeats; i++)
+			{
+				Flag_CF = *ptr_Src & 1;
+				Src = *ptr_Src >> 1;
+				*ptr_Src = Src;
+			}
+			Flag_SF = 0;
+			if (repeats == 1) Flag_OF = Src >> 14;
+			if (*ptr_Src) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_Src_L];
+			memory_2[New_Addr_32_2] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << "";
 		}
 		break;
 
 	case 6:  //SETMOC word R/M
 		
-		Src = 0xFFFF;
-		if (log_to_console) cout << "SETMO WORD ";
-		switch (byte2 >> 6)
+		if (log_to_console) cout << "SETMOC WORD ";
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!(CX & 255)) break;
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) | Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  (Result >> 8) & 255);
+			// mod 11 источник - регистр
+			if (*ptr_CL == 0) break;
+			*ptr_r16[byte2 & 7] = 0xFFFF;
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = true;
 			Flag_ZF = false;
 			Flag_PF = true;
-			Flag_AF = 0;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			if (!(CX & 255)) break;
-			Flag_AF = 0;
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = AX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "AL = " << (int)Result;
-				break;
-			case 1:
-				CX = CX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "CL = " << (int)Result;
-				break;
-			case 2:
-				DX = DX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "DL = " << (int)Result;
-				break;
-			case 3:
-				BX = BX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "BL = " << (int)Result;
-				break;
-			case 4:
-				Stack_Pointer = Stack_Pointer | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "AH = " << (int)Result;
-				break;
-			case 5:
-				Base_Pointer = Base_Pointer | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "CH = " << (int)Result;
-				break;
-			case 6:
-				Source_Index = Source_Index | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "DH = " << (int)Result;
-				break;
-			case 7:
-				Destination_Index = Destination_Index | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = true;
-				Flag_ZF = false;
-				Flag_PF = true;
-				if (log_to_console) cout << "BH = " << (int)Result;
-				break;
-			}
-			break;
+			if (log_to_console) cout << reg16_name[byte2 & 7] << " = " << (int)*ptr_r16[byte2 & 7];
 		}
+		else
+		{
+			mod_RM_3(byte2);
+			if (*ptr_CL == 0) break;
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			memory_2[New_Addr_32] = 0xFF;
+			memory_2[New_Addr_32 + 1] = 0xFF;
+			Flag_CF = 0;
+			Flag_OF = 0;
+			Flag_SF = true;
+			Flag_ZF = false;
+			Flag_PF = true;
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)0xFFFF;
+		}
+
+		Flag_AF = 0;
 		break;
 
 	case 7:  //Shift right (SAR)
 
-		if (repeats > 16) repeats = 16;
-		//определяем объект
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			if (!repeats) break;
-			Src = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256);
-			if (Src & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-			Flag_CF = (Src >> (repeats - 1)) & 1;
-			Src = (Src >> repeats) | MSB;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  (Src >> 8) & 255);
-			Flag_SF = ((Src >> 15) & 1);
-			if (Src & 0xFFFF) Flag_ZF = false;
-			else Flag_ZF = true;
-			if (repeats == 1) Flag_OF = 0;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << " " << (int)repeats << " times";
-			break;
-		case 3:
 			// mod 11 источник - регистр
 			if (!repeats) break;
-			switch (byte2 & 7)
+			for (int i = 0; i < repeats; i++)
 			{
-			case 0:
-				if (AX & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-				Src = (AX >> repeats) | MSB;
-				Flag_CF = (AX >> (repeats - 1)) & 1;
-				AX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right AX " << (int)repeats << " times";
-				break;
-			case 1:
-				if (CX & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-				Src = (CX >> repeats) | MSB;
-				Flag_CF = (CX >> (repeats - 1)) & 1;
-				CX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right CX " << (int)repeats << " times";
-				break;
-			case 2:
-				if (DX & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-				Src = (DX >> repeats) | MSB;
-				Flag_CF = (DX >> (repeats - 1)) & 1;
-				DX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right DX " << (int)repeats << " times";
-				break;
-			case 3:
-				if (BX & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-				Src = (BX >> repeats) | MSB;
-				Flag_CF = (BX >> (repeats - 1)) & 1;
-				BX = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right BX " << (int)repeats << " times";
-				break;
-			case 4:
-				if (Stack_Pointer & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-				Src = (Stack_Pointer >> repeats) | MSB;
-				Flag_CF = (Stack_Pointer >> (repeats - 1)) & 1;
-				Stack_Pointer = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right SP " << (int)repeats << " times";
-				break;
-			case 5:
-				if (Base_Pointer & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-				Src = (Base_Pointer >> repeats) | MSB;
-				Flag_CF = (Base_Pointer >> (repeats - 1)) & 1;
-				Base_Pointer = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right BP " << (int)repeats << " times";
-				break;
-			case 6:
-				if (Source_Index & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-				Src = (Source_Index >> repeats) | MSB;
-				Flag_CF = (Source_Index >> (repeats - 1)) & 1;
-				Source_Index = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right SI " << (int)repeats << " times";
-				break;
-			case 7:
-				if (Destination_Index & 0x8000) MSB = 0b1111111111111111 << (16 - repeats);
-				Src = (Destination_Index >> repeats) | MSB;
-				Flag_CF = (Destination_Index >> (repeats - 1)) & 1;
-				Destination_Index = Src & 0xFFFF;
-				Flag_SF = ((Src >> 15) & 1);
-				if (Src & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				if (repeats == 1) Flag_OF = 0;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "Shift(SAR) right DI " << (int)repeats << " times";
-				break;
+				Flag_CF = *ptr_r16[byte2 & 7] & 1;
+				MSB = *ptr_r16[byte2 & 7] & 0x8000;
+				*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] >> 1) | MSB;
 			}
-			break;
+			Flag_SF = ((*ptr_r16[byte2 & 7] >> 15) & 1);
+			if (repeats == 1) Flag_OF = !parity_check[(*ptr_r16[byte2 & 7] >> 8) & 0b11000000];
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+			if (log_to_console) cout << "Shift(SAR) right " << reg16_name[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			if (!repeats) break;
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			for (int i = 0; i < repeats; i++)
+			{
+				Flag_CF = *ptr_Src & 1;
+				MSB = *ptr_Src & 0x8000;
+				*ptr_Src = (*ptr_Src >> 1) | MSB;
+			}
+			Flag_SF = ((*ptr_Src >> 15) & 1);
+			if (repeats == 1) Flag_OF = !parity_check[(*ptr_Src >> 8) & 0b11000000];
+			if (*ptr_Src) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_Src & 255];
+			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[New_Addr_32] = *ptr_Src_L;
+			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << "";
 		}
 		break;
 	
@@ -12768,686 +6788,209 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 //AND
 void AND_RM_8()				// AND R + R/M -> R/M 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint16 Result = 0;
 
-	//определяем регистр - источник
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX & 255;
-		if (log_to_console) cout << "AL(" << (int)Src << ") ";
-		break;
-	case 1:
-		Src = CX & 255;
-		if (log_to_console) cout << "CL(" << (int)Src << ") ";
-		break;
-	case 2:
-		Src = DX & 255;
-		if (log_to_console) cout << "DL(" << (int)Src << ") ";
-		break;
-	case 3:
-		Src = BX & 255;
-		if (log_to_console) cout << "BL(" << (int)Src << ") ";
-		break;
-	case 4:
-		Src = AX >> 8;
-		if (log_to_console) cout << "AH(" << (int)Src << ") ";
-		break;
-	case 5:
-		Src = CX >> 8;
-		if (log_to_console) cout << "CH(" << (int)Src << ") ";
-		break;
-	case 6:
-		Src = DX >> 8;
-		if (log_to_console) cout << "DH(" << (int)Src << ") ";
-		break;
-	case 7:
-		Src = BX >> 8;
-		if (log_to_console) cout << "BH(" << (int)Src << ") ";
-		break;
-	}
+	if (log_to_console) cout << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") ";
 
-	//определяем объект назначения и результат операции
-	switch (byte2 >> 6)
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		if (log_to_console) cout << "AND M" << OPCODE_comment << " = ";
-		Result = memory.read_2(New_Addr) & Src;
-		memory.write_2(New_Addr,  Result);
+		// mod 11 источник - регистр
+		if (log_to_console) cout << " AND " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+
+		//складываем два регистра
+		Result = *ptr_r8[(byte2 >> 3) & 7] & *ptr_r8[byte2 & 7];
+		if (log_to_console) cout << (int)(Result & 255);
+		*ptr_r8[byte2 & 7] = Result;
 		Flag_CF = 0;
-		Flag_OF = 0;
 		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			if (log_to_console) cout << "AND AL(" << (int)(AX & 255) << ") = ";
-			Result = (AX & 255) & Src;
-			AX = (AX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 1:
-			if (log_to_console) cout << "AND CL(" << (int)(CX & 255) << ") = ";
-			Result = (CX & 255) & Src;
-			CX = (CX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 2:
-			if (log_to_console) cout << "AND DL(" << (int)(DX & 255) << ") = ";
-			Result = (DX & 255) & Src;
-			DX = (DX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 3:
-			if (log_to_console) cout << "AND BL(" << (int)(BX & 255) << ") = ";
-			Result = (BX & 255) & Src;
-			BX = (BX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 4:
-			if (log_to_console) cout << "AND AH(" << (int)((AX >> 8) & 255) << ") = ";
-			Result = ((AX >> 8) & 255) & Src;
-			AX = (AX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 5:
-			if (log_to_console) cout << "AND CH(" << (int)((CX >> 8) & 255) << ") = ";
-			Result = ((CX >> 8) & 255) & Src;
-			CX = (CX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 6:
-			if (log_to_console) cout << "AND DH(" << (int)((DX >> 8) & 255) << ") = ";
-			Result = ((DX >> 8) & 255) & Src;
-			DX = (DX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 7:
-			if (log_to_console) cout << "AND BH(" << (int)((BX >> 8) & 255) << ") = ";
-			Result = ((BX >> 8) & 255) & Src;
-			BX = (BX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] & *ptr_r8[(byte2 >> 3) & 7];
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		memory_2[New_Addr_32] = Result;
+		if (log_to_console) cout << " AND M" << OPCODE_comment << " = " << (int)(Result & 255);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void AND_RM_16()			// AND R + R/M -> R/M 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint32 Result = 0;
 
-	//определяем регистр - источник
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX;
-		if (log_to_console) cout << "AX(" << (int)Src << ") ";
-		break;
-	case 1:
-		Src = CX;
-		if (log_to_console) cout << "CX(" << (int)Src << ") ";
-		break;
-	case 2:
-		Src = DX;
-		if (log_to_console) cout << "DX(" << (int)Src << ") ";
-		break;
-	case 3:
-		Src = BX;
-		if (log_to_console) cout << "BX(" << (int)Src << ") ";
-		break;
-	case 4:
-		Src = Stack_Pointer;
-		if (log_to_console) cout << "SP(" << (int)Src << ") ";
-		break;
-	case 5:
-		Src = Base_Pointer;
-		if (log_to_console) cout << "BP(" << (int)Src << ") ";
-		break;
-	case 6:
-		Src = Source_Index;
-		if (log_to_console) cout << "SI(" << (int)Src << ") ";
-		break;
-	case 7:
-		Src = Destination_Index;
-		if (log_to_console) cout << "DI(" << (int)Src << ") ";
-		break;
-	}
+	if (log_to_console) cout << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
 
-	//определяем объект назначения и результат операции
-	switch (byte2 >> 6)
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		if (log_to_console) cout << "AND M" << OPCODE_comment << " = ";
-		Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & Src;
-		memory.write_2(New_Addr,  Result & 255);
-		memory.write_2(New_Addr + 1,  Result >> 8);
+		// mod 11 источник - регистр
+		Result = *ptr_r16[(byte2 >> 3) & 7] & *ptr_r16[byte2 & 7];
+		if (log_to_console) cout << " AND " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
+		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = 0;
-		Flag_OF = 0;
 		Flag_SF = ((Result >> 15) & 1);
-		if (Result) Flag_ZF = false;
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			if (log_to_console) cout << "AND AX(" << (int)AX << ") = ";
-			AX = AX & Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((AX >> 15) & 1);
-			if (AX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[AX & 255];
-			if (log_to_console) cout << (int)AX;
-			break;
-		case 1:
-			if (log_to_console) cout << "AND CX(" << (int)CX << ") = ";
-			CX = CX & Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((CX >> 15) & 1);
-			if (CX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[CX & 255];
-			if (log_to_console) cout << (int)CX;
-			break;
-		case 2:
-			if (log_to_console) cout << "AND DX(" << (int)DX << ") = ";
-			DX = DX & Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((DX >> 15) & 1);
-			if (DX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[DX & 255];
-			if (log_to_console) cout << (int)DX;
-			break;
-		case 3:
-			if (log_to_console) cout << "AND BX(" << (int)BX << ") = ";
-			BX = BX & Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((BX >> 15) & 1);
-			if (BX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[BX & 255];
-			if (log_to_console) cout << (int)BX;
-			break;
-		case 4:
-			if (log_to_console) cout << "AND SP(" << (int)Stack_Pointer << ") = ";
-			Stack_Pointer = Stack_Pointer & Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Stack_Pointer >> 15) & 1);
-			if (Stack_Pointer) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Stack_Pointer & 255];
-			if (log_to_console) cout << (int)Stack_Pointer;
-			break;
-		case 5:
-			if (log_to_console) cout << "AND BP(" << (int)Base_Pointer << ") = ";
-			Base_Pointer = Base_Pointer & Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Base_Pointer >> 15) & 1);
-			if (Base_Pointer) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Base_Pointer & 255];
-			if (log_to_console) cout << (int)Base_Pointer;
-			break;
-		case 6:
-			if (log_to_console) cout << "AND SI(" << (int)Source_Index << ") = ";
-			Source_Index = Source_Index & Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Source_Index >> 15) & 1);
-			if (Source_Index) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Source_Index & 255];
-			if (log_to_console) cout << (int)Source_Index;
-			break;
-		case 7:
-			if (log_to_console) cout << "AND DI(" << (int)Destination_Index << ") = ";
-			Destination_Index = Destination_Index & Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Destination_Index >> 15) & 1);
-			if (Destination_Index) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Destination_Index & 255];
-			if (log_to_console) cout << (int)Destination_Index;
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src & *ptr_r16[(byte2 >> 3) & 7];
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		operand_RM_offset--;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << " AND M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void AND_RM_R_8()			// AND R + R/M -> R 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	New_Addr = 0;
-	uint8 Src = 0;
-	uint8 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint16 Result = 0;
 
-	//определяем источник
-	switch (byte2 >> 6)
+	//определяем 1-й операнд
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr);
-		if (log_to_console) cout << "M" << OPCODE_comment << " AND ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX & 255;
-			if (log_to_console) cout << "AL(" << (int)Src << ") AND ";
-			break;
-		case 1:
-			Src = CX & 255;
-			if (log_to_console) cout << "CL(" << (int)Src << ") AND ";
-			break;
-		case 2:
-			Src = DX & 255;
-			if (log_to_console) cout << "DL(" << (int)Src << ") AND ";
-			break;
-		case 3:
-			Src = BX & 255;
-			if (log_to_console) cout << "BL(" << (int)Src << ") AND ";
-			break;
-		case 4:
-			Src = AX >> 8;
-			if (log_to_console) cout << "AH(" << (int)Src << ") AND ";
-			break;
-		case 5:
-			Src = CX >> 8;
-			if (log_to_console) cout << "CH(" << (int)Src << ") AND ";
-			break;
-		case 6:
-			Src = DX >> 8;
-			if (log_to_console) cout << "DH(" << (int)Src << ") AND ";
-			break;
-		case 7:
-			Src = BX >> 8;
-			if (log_to_console) cout << "BH(" << (int)Src << ") AND ";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r8[byte2 & 7] & *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") AND " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 
-	//определяем регистр - получатель
-	switch ((byte2 >> 3) & 7)
+		Instruction_Pointer += 2;
+	}
+	else
 	{
-	case 0:
-		if (log_to_console) cout << "AL = ";
-		Result = Src & (AX & 255);
-		AX = (AX & 0xFF00) | Result;
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] & *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "M" << OPCODE_comment << " AND " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
+		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 1:
-		if (log_to_console) cout << "CL = ";
-		Result = Src & (CX & 255);
-		CX = (CX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 2:
-		if (log_to_console) cout << "DL = ";
-		Result = Src & (DX & 255);
-		DX = (DX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 3:
-		if (log_to_console) cout << "BL = ";
-		Result = Src & (BX & 255);
-		BX = (BX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 4:
-		if (log_to_console) cout << "AH = ";
-		Result = Src & (AX >> 8);
-		AX = (AX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 5:
-		if (log_to_console) cout << "CH = ";
-		Result = Src & (CX >> 8);
-		CX = (CX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 6:
-		if (log_to_console) cout << "DH = ";
-		Result = Src & (DX >> 8);
-		DX = (DX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 7:
-		if (log_to_console) cout << "BH = ";
-		Result = Src & (BX >> 8);
-		BX = (BX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2 + additional_IPs;
 	}
 
-	Instruction_Pointer += 2 + additional_IPs;
 }
 void AND_RM_R_16()			// AND R + R/M -> R 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint32 Result = 0;
 
-	//определяем источник
-	switch (byte2 >> 6)
+	//определяем 1-й операнд
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		if (log_to_console) cout << OPCODE_comment;
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX;
-			if (log_to_console) cout << "AX("<< (int)AX << ") ";
-			break;
-		case 1:
-			Src = CX;
-			if (log_to_console) cout << "CX(" << (int)CX << ") ";
-			break;
-		case 2:
-			Src = DX;
-			if (log_to_console) cout << "DX(" << (int)DX << ") ";
-			break;
-		case 3:
-			Src = BX;
-			if (log_to_console) cout << "BX(" << (int)BX << ") ";
-			break;
-		case 4:
-			Src = Stack_Pointer;
-			if (log_to_console) cout << "SP(" << (int)Stack_Pointer << ") ";
-			break;
-		case 5:
-			Src = Base_Pointer;
-			if (log_to_console) cout << "BP(" << (int)Base_Pointer << ") ";
-			break;
-		case 6:
-			Src = Source_Index;
-			if (log_to_console) cout << "SI(" << (int)Source_Index << ") ";
-			break;
-		case 7:
-			Src = Destination_Index;
-			if (log_to_console) cout << "DI(" << (int)Destination_Index << ") ";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r16[byte2 & 7] & *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") AND " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
 
-	//определяем регистр - получатель
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		if (log_to_console) cout << "AND AX(" << (int)AX << ") = ";
-		AX = Src & AX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((AX >> 15) & 1);
-		if (AX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[AX & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 1:
-		if (log_to_console) cout << "AND CX(" << (int)CX << ") = ";
-		CX = Src & CX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((CX >> 15) & 1);
-		if (CX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[CX & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 2:
-		if (log_to_console) cout << "AND DX(" << (int)DX << ") = ";
-		DX = Src & DX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((DX >> 15) & 1);
-		if (DX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[DX & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 3:
-		if (log_to_console) cout << "AND BX(" << (int)BX << ") = ";
-		BX = Src & BX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((BX >> 15) & 1);
-		if (BX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[BX & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 4:
-		if (log_to_console) cout << "AND SP(" << (int)Stack_Pointer << ") = ";
-		Stack_Pointer = Src & Stack_Pointer;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Stack_Pointer >> 15) & 1);
-		if (Stack_Pointer) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Stack_Pointer & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 5:
-		if (log_to_console) cout << "AND BP(" << (int)Base_Pointer << ") = ";
-		Base_Pointer = Src & Base_Pointer;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Base_Pointer >> 15) & 1);
-		if (Base_Pointer) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Base_Pointer & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 6:
-		if (log_to_console) cout << "AND SI(" << (int)Source_Index << ") = ";
-		Source_Index = Src & Source_Index;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Source_Index >> 15) & 1);
-		if (Source_Index) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Source_Index & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 7:
-		if (log_to_console) cout << "AND DI(" << (int)Destination_Index << ") = ";
-		Destination_Index = Src & Destination_Index;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Destination_Index >> 15) & 1);
-		if (Destination_Index) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Destination_Index & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src & *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "M" << OPCODE_comment << " AND " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void AND_IMM_ACC_8()		//AND IMM to ACC 8bit
 {
-	uint8 Src = 0;
 	uint8 Result = 0;
 
 	//непосредственный операнд
-	Src = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
 
-	if (log_to_console) cout << "IMM(" << (int)Src << ") AND AL(" << (int)(AX & 255) << ") ";
+	if (log_to_console) cout << "IMM(" << (int)imm << ") AND AL(" << (int)(AX & 255) << ") ";
 
 	//определяем объект назначения и результат операции
-	Result = (AX & 255) & Src;
-	AX = (AX & 0xFF00) | Result;
+	*ptr_AL = *ptr_AL & imm;
 	Flag_CF = 0;
 	Flag_OF = 0;
-	Flag_SF = ((Result >> 7) & 1);
-	if (Result) Flag_ZF = false;
+	Flag_SF = ((*ptr_AL >> 7) & 1);
+	if (*ptr_AL) Flag_ZF = false;
 	else Flag_ZF = true;
-	Flag_PF = parity_check[Result];
-	if (log_to_console) cout << " = " << (int)Result;
+	Flag_PF = parity_check[*ptr_AL];
+	if (log_to_console) cout << " = " << (int)*ptr_AL;
 
 	Instruction_Pointer += 2;
 }
 void AND_IMM_ACC_16()		//AND IMM to ACC 16bit
 {
-	uint16 Src = 0;
 	uint16 Result = 0;
 
 	//непосредственный операнд
-	Src = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
 
-	if (log_to_console) cout << "IMM(" << (int)Src << ") AND AX(" << (int)AX << ")";
+	if (log_to_console) cout << "IMM(" << (int)imm << ") AND AX(" << (int)AX << ")";
 
 	//определяем объект назначения и результат операции
-	Result = AX & Src;
-	AX = Result;
+	AX = AX & imm;
 	Flag_CF = 0;
 	Flag_OF = 0;
-	Flag_SF = ((Result >> 15) & 1);
-	if (Result) Flag_ZF = false;
+	Flag_SF = ((AX >> 15) & 1);
+	if (AX) Flag_ZF = false;
 	else Flag_ZF = true;
-	Flag_PF = parity_check[Result & 255];
-	if (log_to_console) cout << " = " << (int)Result;
+	Flag_PF = parity_check[AX & 255];
+	if (log_to_console) cout << " = " << (int)AX;
 
 	Instruction_Pointer += 3;
 }
@@ -13456,64 +6999,78 @@ void AND_IMM_ACC_16()		//AND IMM to ACC 16bit
 
 void TEST_8()		  //TEST = AND Function to Flags
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint8 Result = 0;
 
 	//определяем источник
 	if((byte2 >> 6 == 3))
 	{
 		// mod 11 источник - регистр (byte2 & 7)
-		additional_IPs = 0;
-		if (log_to_console) cout << "TEST " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") AND " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ")";
+		if (log_to_console) cout << "TEST " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") AND " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = ";
 		Result = *ptr_r8[byte2 & 7] & *ptr_r8[(byte2 >> 3) & 7];
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result];
+		if (log_to_console) cout << (int)Result;
+		Instruction_Pointer += 2;
 	}
 	else
 	{
 		//память
 		mod_RM_3(byte2);
 		Result = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] & *ptr_r8[(byte2 >> 3) & 7];
-		if (log_to_console) cout << "TEST M" << OPCODE_comment << " AND " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ")";
+		if (log_to_console) cout << "TEST M" << OPCODE_comment << " AND " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = ";
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result];
+		if (log_to_console) cout << (int)Result;
+		Instruction_Pointer += 2 + additional_IPs;
 	}
-	
-	Flag_CF = 0;
-	Flag_SF = ((Result >> 7) & 1);
-	Flag_OF = 0;
-	if (Result) Flag_ZF = false;
-	else Flag_ZF = true;
-	Flag_PF = parity_check[Result];
-	Instruction_Pointer += 2 + additional_IPs;
 }
 void TEST_16()       //TEST = AND Function to Flags
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем источник
 	if ((byte2 >> 6 == 3))
 	{
 		// mod 11 источник - регистр (byte2 & 7)
-		additional_IPs = 0;
-		if (log_to_console) cout << "TEST " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") AND " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ")";
+		if (log_to_console) cout << "TEST " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") AND " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = ";
 		Result = *ptr_r16[byte2 & 7] & *ptr_r16[(byte2 >> 3) & 7];
+		Flag_CF = 0;
+		Flag_SF = (Result >> 15) & 1;
+		Flag_OF = 0;
+		if (Result) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << (int)Result;
+		Instruction_Pointer += 2;
 	}
 	else
 	{
 		//память
 		mod_RM_3(byte2);
-		Result = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
 		operand_RM_offset++;
-		Result = Result + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
-		Result = Result & *ptr_r16[(byte2 >> 3) & 7];
-		if (log_to_console) cout << "TEST M" << OPCODE_comment << " AND " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ")";
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src & *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "TEST M" << OPCODE_comment << " AND " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = ";
+		Flag_CF = 0;
+		Flag_SF = (Result >> 15) & 1;
+		Flag_OF = 0;
+		if (Result) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << (int)Result;
+		Instruction_Pointer += 2 + additional_IPs;
 	}
-
-	Flag_CF = 0;
-	Flag_SF = ((Result >> 15) & 1);
-	Flag_OF = 0;
-	if (Result) Flag_ZF = false;
-	else Flag_ZF = true;
-	Flag_PF = parity_check[Result];
-	Instruction_Pointer += 2 + additional_IPs;
 }
 void TEST_IMM_ACC_8()		//TEST = AND Function to Flags
 {
@@ -13537,10 +7094,10 @@ void TEST_IMM_ACC_16()     //TEST = AND Function to Flags
 {
 	uint16 Result = 0;
 
-	if (log_to_console) cout << "TEST IMM[" << (int)(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256) << "] AND AX(" << (int)AX << ") = ";
+	if (log_to_console) cout << "TEST IMM[" << (int)(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256) << "] AND AX(" << (int)AX << ") = ";
 
 	//определяем объект назначения и результат операции
-	Result = AX & (memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256);
+	Result = AX & (memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256);
 	Flag_CF = 0;
 	Flag_OF = 0;
 	Flag_SF = ((Result >> 15) & 1);
@@ -13554,686 +7111,210 @@ void TEST_IMM_ACC_16()     //TEST = AND Function to Flags
 //OR = Or
 void OR_RM_8()		// OR R + R/M -> R/M 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint16 Result = 0;
 
-	//определяем регистр - источник
-	switch ((byte2 >> 3) & 7)
+	if (log_to_console) cout << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") ";
+
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-		Src = AX & 255;
-		if (log_to_console) cout << "AL(" << (int)Src << ") ";
-		break;
-	case 1:
-		Src = CX & 255;
-		if (log_to_console) cout << "CL(" << (int)Src << ") ";
-		break;
-	case 2:
-		Src = DX & 255;
-		if (log_to_console) cout << "DL(" << (int)Src << ") ";
-		break;
-	case 3:
-		Src = BX & 255;
-		if (log_to_console) cout << "BL(" << (int)Src << ") ";
-		break;
-	case 4:
-		Src = AX >> 8;
-		if (log_to_console) cout << "AH(" << (int)Src << ") ";
-		break;
-	case 5:
-		Src = CX >> 8;
-		if (log_to_console) cout << "CH(" << (int)Src << ") ";
-		break;
-	case 6:
-		Src = DX >> 8;
-		if (log_to_console) cout << "DH(" << (int)Src << ") ";
-		break;
-	case 7:
-		Src = BX >> 8;
-		if (log_to_console) cout << "BH(" << (int)Src << ") ";
-		break;
-	}
-	
-	//определяем объект назначения и результат операции
-	switch (byte2 >> 6)
-	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		if (log_to_console) cout << "OR M" << OPCODE_comment << " = ";
-		Result = memory.read_2(New_Addr) | Src;
-		memory.write_2(New_Addr,  Result);
+		// mod 11 источник - регистр
+		if (log_to_console) cout << " OR " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+
+		//складываем два регистра
+		Result = *ptr_r8[(byte2 >> 3) & 7] | *ptr_r8[byte2 & 7];
+		if (log_to_console) cout << (int)(Result & 255);
+		*ptr_r8[byte2 & 7] = Result;
 		Flag_CF = 0;
-		Flag_OF = 0;
 		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			if (log_to_console) cout << "OR AL(" << (int)(AX & 255) << ") = ";
-			Result = (AX & 255) | Src;
-			AX = (AX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 1:
-			if (log_to_console) cout << "OR CL(" << (int)(CX & 255) << ") = ";
-			Result = (CX & 255) | Src;
-			CX = (CX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 2:
-			if (log_to_console) cout << "OR DL(" << (int)(DX & 255) << ") = ";
-			Result = (DX & 255) | Src;
-			DX = (DX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 3:
-			if (log_to_console) cout << "OR BL(" << (int)(BX & 255) << ") = ";
-			Result = (BX & 255) | Src;
-			BX = (BX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 4:
-			if (log_to_console) cout << "OR AH(" << (int)((AX >> 8) & 255) << ") = ";
-			Result = ((AX >> 8) & 255) | Src;
-			AX = (AX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 5:
-			if (log_to_console) cout << "OR CH(" << (int)((CX >> 8) & 255) << ") = ";
-			Result = ((CX >> 8) & 255) | Src;
-			CX = (CX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 6:
-			if (log_to_console) cout << "OR DH(" << (int)((DX >> 8) & 255) << ") = ";
-			Result = ((DX >> 8) & 255) | Src;
-			DX = (DX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		case 7:
-			if (log_to_console) cout << "OR BH(" << (int)((BX >> 8) & 255) << ") = ";
-			Result = ((BX >> 8) & 255) | Src;
-			BX = (BX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << (int)Result;
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] | *ptr_r8[(byte2 >> 3) & 7];
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		memory_2[New_Addr_32] = Result;
+		if (log_to_console) cout << " OR M" << OPCODE_comment << " = " << (int)(Result & 255);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void OR_RM_16()		// OR R + R/M -> R/M 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint32 Result = 0;
 
-	//определяем регистр - источник
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX;
-		if (log_to_console) cout << "AX(" << (int)Src << ") ";
-		break;
-	case 1:
-		Src = CX;
-		if (log_to_console) cout << "CX(" << (int)Src << ") ";
-		break;
-	case 2:
-		Src = DX;
-		if (log_to_console) cout << "DX(" << (int)Src << ") ";
-		break;
-	case 3:
-		Src = BX;
-		if (log_to_console) cout << "BX(" << (int)Src << ") ";
-		break;
-	case 4:
-		Src = Stack_Pointer;
-		if (log_to_console) cout << "SP(" << (int)Src << ") ";
-		break;
-	case 5:
-		Src = Base_Pointer;
-		if (log_to_console) cout << "BP(" << (int)Src << ") ";
-		break;
-	case 6:
-		Src = Source_Index;
-		if (log_to_console) cout << "SI(" << (int)Src << ") ";
-		break;
-	case 7:
-		Src = Destination_Index;
-		if (log_to_console) cout << "DI(" << (int)Src << ") ";
-		break;
-	}
+	if (log_to_console) cout << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
 
-	//определяем объект назначения и результат операции
-	switch (byte2 >> 6)
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		if (log_to_console) cout << "OR M" << OPCODE_comment << " = ";
-		Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) | Src;
-		memory.write_2(New_Addr,  Result & 255);
-		memory.write_2(New_Addr + 1,  Result >> 8);
+		// mod 11 источник - регистр
+		Result = *ptr_r16[(byte2 >> 3) & 7] | *ptr_r16[byte2 & 7];
+		if (log_to_console) cout << " OR " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
+		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = 0;
-		Flag_OF = 0;
 		Flag_SF = ((Result >> 15) & 1);
-		if (Result) Flag_ZF = false;
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)Result;
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			if (log_to_console) cout << "OR AX(" << (int)AX << ") = ";
-			AX = AX | Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((AX >> 15) & 1);
-			if (AX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[AX & 255];
-			if (log_to_console) cout << (int)AX;
-			break;
-		case 1:
-			if (log_to_console) cout << "OR CX(" << (int)CX << ") = ";
-			CX = CX | Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((CX >> 15) & 1);
-			if (CX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[CX & 255];
-			if (log_to_console) cout << (int)CX;
-			break;
-		case 2:
-			if (log_to_console) cout << "OR DX(" << (int)DX << ") = ";
-			DX = DX | Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((DX >> 15) & 1);
-			if (DX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[DX & 255];
-			if (log_to_console) cout << (int)DX;
-			break;
-		case 3:
-			if (log_to_console) cout << "OR BX(" << (int)BX << ") = ";
-			BX = BX | Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((BX >> 15) & 1);
-			if (BX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[BX & 255];
-			if (log_to_console) cout << (int)BX;
-			break;
-		case 4:
-			if (log_to_console) cout << "OR SP(" << (int)Stack_Pointer << ") = ";
-			Stack_Pointer = Stack_Pointer | Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Stack_Pointer >> 15) & 1);
-			if (Stack_Pointer) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Stack_Pointer & 255];
-			if (log_to_console) cout << (int)Stack_Pointer;
-			break;
-		case 5:
-			if (log_to_console) cout << "OR BP(" << (int)Base_Pointer << ") = ";
-			Base_Pointer = Base_Pointer | Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Base_Pointer >> 15) & 1);
-			if (Base_Pointer) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Base_Pointer & 255];
-			if (log_to_console) cout << (int)Base_Pointer;
-			break;
-		case 6:
-			if (log_to_console) cout << "OR SI(" << (int)Source_Index << ") = ";
-			Source_Index = Source_Index | Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Source_Index >> 15) & 1);
-			if (Source_Index) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Source_Index & 255];
-			if (log_to_console) cout << (int)Source_Index;
-			break;
-		case 7:
-			if (log_to_console) cout << "OR DI(" << (int)Destination_Index << ") = ";
-			Destination_Index = Destination_Index | Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Destination_Index >> 15) & 1);
-			if (Destination_Index) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Destination_Index & 255];
-			if (log_to_console) cout << (int)Destination_Index;
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src | *ptr_r16[(byte2 >> 3) & 7];
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		operand_RM_offset--;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << " OR M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void OR_RM_R_8()		// OR R + R/M -> R 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint16 Result = 0;
 
-	//определяем источник
-	switch (byte2 >> 6)
+	//определяем 1-й операнд
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr);
-		if (log_to_console) cout << "M" << OPCODE_comment << " OR ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX & 255;
-			if (log_to_console) cout << "AL(" << (int)Src << ") OR ";
-			break;
-		case 1:
-			Src = CX & 255;
-			if (log_to_console) cout << "CL(" << (int)Src << ") OR ";
-			break;
-		case 2:
-			Src = DX & 255;
-			if (log_to_console) cout << "DL(" << (int)Src << ") OR ";
-			break;
-		case 3:
-			Src = BX & 255;
-			if (log_to_console) cout << "BL(" << (int)Src << ") OR ";
-			break;
-		case 4:
-			Src = AX >> 8;
-			if (log_to_console) cout << "AH(" << (int)Src << ") OR ";
-			break;
-		case 5:
-			Src = CX >> 8;
-			if (log_to_console) cout << "CH(" << (int)Src << ") OR ";
-			break;
-		case 6:
-			Src = DX >> 8;
-			if (log_to_console) cout << "DH(" << (int)Src << ") OR ";
-			break;
-		case 7:
-			Src = BX >> 8;
-			if (log_to_console) cout << "BH(" << (int)Src << ") OR ";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r8[byte2 & 7] | *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") OR " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 
-	//определяем регистр - получатель
-	switch ((byte2 >> 3) & 7)
+		Instruction_Pointer += 2;
+	}
+	else
 	{
-	case 0:
-		if (log_to_console) cout << "AL(" << (int)(AX & 255) << ") = ";
-		Result = Src | (AX & 255);
-		AX = (AX & 0xFF00) | Result;
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] | *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "M" << OPCODE_comment << " OR " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
+		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)(Result);
-		break;
-	case 1:
-		if (log_to_console) cout << "CL(" << (int)(CX & 255) << ") = ";
-		Result = Src | (CX & 255);
-		CX = (CX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)(Result);
-		break;
-	case 2:
-		if (log_to_console) cout << "DL(" << (int)(DX & 255) << ") = ";
-		Result = Src | (DX & 255);
-		DX = (DX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)(Result);
-		break;
-	case 3:
-		if (log_to_console) cout << "BL(" << (int)(BX & 255) << ") = ";
-		Result = Src | (BX & 255);
-		BX = (BX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)(Result);
-		break;
-	case 4:
-		if (log_to_console) cout << "AH(" << (int)((AX >> 8) & 255) << ") = ";
-		Result = Src | (AX >> 8);
-		AX = (AX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)(Result);
-		break;
-	case 5:
-		if (log_to_console) cout << "CH(" << (int)((CX >> 8) & 255) << ") = ";
-		Result = Src | (CX >> 8);
-		CX = (CX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)(Result);
-		break;
-	case 6:
-		if (log_to_console) cout << "DH(" << (int)((DX >> 8) & 255) << ") = ";
-		Result = Src | (DX >> 8);
-		DX = (DX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)(Result);
-		break;
-	case 7:
-		if (log_to_console) cout << "BH(" << (int)((BX >> 8) & 255) << ") = ";
-		Result = Src | (BX >> 8);
-		BX = (BX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = 0;
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << (int)(Result);
-		break;
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2 + additional_IPs;
 	}
 
-	Instruction_Pointer += 2 + additional_IPs;
 }
 void OR_RM_R_16()		// OR R + R/M -> R 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint32 Result = 0;
 
-	//определяем источник
-	switch (byte2 >> 6)
+	//определяем 1-й операнд
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		if (log_to_console) cout << OPCODE_comment << " ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX;
-			if (log_to_console) cout << "AX(" << (int)Src << ") ";
-			break;
-		case 1:
-			Src = CX;
-			if (log_to_console) cout << "CX(" << (int)Src << ") ";
-			break;
-		case 2:
-			Src = DX;
-			if (log_to_console) cout << "DX(" << (int)Src << ") ";
-			break;
-		case 3:
-			Src = BX;
-			if (log_to_console) cout << "BX(" << (int)Src << ") ";
-			break;
-		case 4:
-			Src = Stack_Pointer;
-			if (log_to_console) cout << "SP(" << (int)Src << ") ";
-			break;
-		case 5:
-			Src = Base_Pointer;
-			if (log_to_console) cout << "BP(" << (int)Src << ") ";
-			break;
-		case 6:
-			Src = Source_Index;
-			if (log_to_console) cout << "SI(" << (int)Src << ") ";
-			break;
-		case 7:
-			Src = Destination_Index;
-			if (log_to_console) cout << "DI(" << (int)Src << ") ";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r16[byte2 & 7] | *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") OR " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
 
-	//определяем регистр - получатель
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		if (log_to_console) cout << "OR AX(" << (int)AX << ") = ";
-		AX = Src | AX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((AX >> 15) & 1);
-		if (AX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[AX & 255];
-		if (log_to_console) cout << (int)AX;
-		break;
-	case 1:
-		if (log_to_console) cout << "OR CX(" << (int)CX << ") = ";
-		CX = Src | CX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((CX >> 15) & 1);
-		if (CX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[CX & 255];
-		if (log_to_console) cout << (int)CX;
-		break;
-	case 2:
-		if (log_to_console) cout << "OR DX(" << (int)DX << ") = ";
-		DX = Src | DX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((DX >> 15) & 1);
-		if (DX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[DX & 255];
-		if (log_to_console) cout << (int)DX;
-		break;
-	case 3:
-		if (log_to_console) cout << "OR BX(" << (int)BX << ") = ";
-		BX = Src | BX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((BX >> 15) & 1);
-		if (BX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[BX & 255];
-		if (log_to_console) cout << (int)BX;
-		break;
-	case 4:
-		if (log_to_console) cout << "OR SP(" << (int)Stack_Pointer << ") = ";
-		Stack_Pointer = Src | Stack_Pointer;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Stack_Pointer >> 15) & 1);
-		if (Stack_Pointer) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Stack_Pointer & 255];
-		if (log_to_console) cout << (int)Stack_Pointer;
-		break;
-	case 5:
-		if (log_to_console) cout << "OR BP(" << (int)Base_Pointer << ") = ";
-		Base_Pointer = Src | Base_Pointer;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Base_Pointer >> 15) & 1);
-		if (Base_Pointer) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Base_Pointer & 255];
-		if (log_to_console) cout << (int)Base_Pointer;
-		break;
-	case 6:
-		if (log_to_console) cout << "OR SI(" << (int)Source_Index << ") = ";
-		Source_Index = Src | Source_Index;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Source_Index >> 15) & 1);
-		if (Source_Index) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Source_Index & 255];
-		if (log_to_console) cout << (int)Source_Index;
-		break;
-	case 7:
-		if (log_to_console) cout << "OR DI(" << (int)Destination_Index << ") = ";
-		Destination_Index = Src | Destination_Index;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Destination_Index >> 15) & 1);
-		if (Destination_Index) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Destination_Index & 255];
-		if (log_to_console) cout << (int)Destination_Index;
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src | *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "M" << OPCODE_comment << " OR " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void OR_IMM_ACC_8()    //OR IMM to ACC 8bit
 {
-	uint8 Src = 0;
 	uint8 Result = 0;
 
 	//непосредственный операнд
-	Src = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
 
-	if (log_to_console) cout << "IMM(" << (int)Src << ") OR AL(" << (AX & 255) << ") ";
+	if (log_to_console) cout << "IMM(" << (int)imm << ") OR AL(" << (int)(AX & 255) << ") ";
 
 	//определяем объект назначения и результат операции
-	Result = (AX & 255) | Src;
+	*ptr_AL = *ptr_AL | imm;
 
-	AX = (AX & 0xFF00) | Result;
 	Flag_CF = 0;
 	Flag_OF = 0;
-	Flag_SF = ((Result >> 7) & 1);
-	if (Result) Flag_ZF = false;
+	Flag_SF = ((*ptr_AL >> 7) & 1);
+	if (*ptr_AL) Flag_ZF = false;
 	else Flag_ZF = true;
-	Flag_PF = parity_check[Result];
-	if (log_to_console) cout << " = " << (int)Result;
+	Flag_PF = parity_check[*ptr_AL];
+	if (log_to_console) cout << " = " << (int)*ptr_AL;
 
 	Instruction_Pointer += 2;
 }
 void OR_IMM_ACC_16()   //OR IMM to ACC 16bit
 {
-	uint16 Src = 0;
 	uint16 Result = 0;
 
 	//непосредственный операнд
-	Src = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
 
-	if (log_to_console) cout << "IMM(" << (int)Src << ") OR AX(" << (int)AX << ")";
+	if (log_to_console) cout << "IMM(" << (int)imm << ") OR AX(" << (int)AX << ")";
 
 	//определяем объект назначения и результат операции
-	Result = AX | Src;
-	AX = Result;
+	AX = AX | imm;
 	Flag_CF = 0;
 	Flag_OF = 0;
-	Flag_SF = ((Result >> 15) & 1);
-	if (Result) Flag_ZF = false;
+	Flag_SF = ((AX >> 15) & 1);
+	if (AX) Flag_ZF = false;
 	else Flag_ZF = true;
-	Flag_PF = parity_check[Result & 255];
-	if (log_to_console) cout << " = " << (int)Result;
+	Flag_PF = parity_check[AX & 255];
+	if (log_to_console) cout << " = " << (int)AX;
 
 	Instruction_Pointer += 3;
 }
@@ -14241,1713 +7322,552 @@ void OR_IMM_ACC_16()   //OR IMM to ACC 16bit
 //XOR
 void XOR_RM_8()		// XOR R + R/M -> R/M 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint16 Result = 0;
 
-	//определяем регистр - источник
-	switch ((byte2 >> 3) & 7)
+	if (log_to_console) cout << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") ";
+
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-		Src = AX & 255;
-		if (log_to_console) cout << "AL ";
-		break;
-	case 1:
-		Src = CX & 255;
-		if (log_to_console) cout << "CL ";
-		break;
-	case 2:
-		Src = DX & 255;
-		if (log_to_console) cout << "DL ";
-		break;
-	case 3:
-		Src = BX & 255;
-		if (log_to_console) cout << "BL ";
-		break;
-	case 4:
-		Src = AX >> 8;
-		if (log_to_console) cout << "AH ";
-		break;
-	case 5:
-		Src = CX >> 8;
-		if (log_to_console) cout << "CH ";
-		break;
-	case 6:
-		Src = DX >> 8;
-		if (log_to_console) cout << "DH ";
-		break;
-	case 7:
-		Src = BX >> 8;
-		if (log_to_console) cout << "BH  ";
-		break;
-	}
-		
-	//определяем объект назначения и результат операции
-	switch (byte2 >> 6)
-	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Result = memory.read_2(New_Addr) ^ Src;
-		memory.write_2(New_Addr,  Result);
+		// mod 11 источник - регистр
+		if (log_to_console) cout << " XOR " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+
+		//складываем два регистра
+		Result = *ptr_r8[(byte2 >> 3) & 7] ^ *ptr_r8[byte2 & 7];
+		if (log_to_console) cout << (int)(Result & 255);
+		*ptr_r8[byte2 & 7] = Result;
 		Flag_CF = 0;
-		Flag_OF = 0;
 		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "XOR M" << OPCODE_comment << "=" << (int)Result;
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Result = (AX & 255) ^ Src;
-			AX = (AX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "XOR AL = " << (int)Result;
-			break;
-		case 1:
-			Result = (CX & 255) ^ Src;
-			CX = (CX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "XOR CL = " << (int)Result;
-			break;
-		case 2:
-			Result = (DX & 255) ^ Src;
-			DX = (DX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "XOR DL = " << (int)Result;
-			break;
-		case 3:
-			Result = (BX & 255) ^ Src;
-			BX = (BX & 0xFF00) | Result;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "XOR BL = " << (int)Result;
-			break;
-		case 4:
-			Result = ((AX >> 8) & 255) ^ Src;
-			AX = (AX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "XOR AH = " << (int)Result;
-			break;
-		case 5:
-			Result = ((CX >> 8) & 255) ^ Src;
-			CX = (CX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "XOR CH = " << (int)Result;
-			break;
-		case 6:
-			Result = ((DX >> 8) & 255) ^ Src;
-			DX = (DX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "XOR DH = " << (int)Result;
-			break;
-		case 7:
-			Result = ((BX >> 8) & 255) ^ Src;
-			BX = (BX & 0x00FF) | (Result << 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "XOR BH = " << (int)Result;
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] ^ *ptr_r8[(byte2 >> 3) & 7];
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		memory_2[New_Addr_32] = Result;
+		if (log_to_console) cout << " XOR M" << OPCODE_comment << " = " << (int)(Result & 255);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void XOR_RM_16()		// XOR R + R/M -> R/M 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint32 Result = 0;
 
-	//определяем регистр - источник
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Src = AX;
-		if (log_to_console) cout << "XOR AX("<<(int)Src<<") ^ ";
-		break;
-	case 1:
-		Src = CX;
-		if (log_to_console) cout << "XOR CX(" << (int)Src << ") ^ ";
-		break;
-	case 2:
-		Src = DX;
-		if (log_to_console) cout << "XOR DX(" << (int)Src << ") ^ ";
-		break;
-	case 3:
-		Src = BX;
-		if (log_to_console) cout << "XOR BX(" << (int)Src << ") ^ ";
-		break;
-	case 4:
-		Src = Stack_Pointer;
-		if (log_to_console) cout << "XOR SP(" << (int)Src << ") ^ ";
-		break;
-	case 5:
-		Src = Base_Pointer;
-		if (log_to_console) cout << "XOR BP(" << (int)Src << ") ^ ";
-		break;
-	case 6:
-		Src = Source_Index;
-		if (log_to_console) cout << "XOR SI(" << (int)Src << ") ^ ";
-		break;
-	case 7:
-		Src = Destination_Index;
-		if (log_to_console) cout << "XOR DI(" << (int)Src << ") ^ ";
-		break;
-	}
+	if (log_to_console) cout << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
 
-	//определяем объект назначения и результат операции
-	switch (byte2 >> 6)
+	//определяем объект назначения и результат операции ADD
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) ^ Src;
-		memory.write_2(New_Addr,  Result & 255);
-		memory.write_2(New_Addr + 1,  Result >> 8);
+		// mod 11 источник - регистр
+		Result = *ptr_r16[(byte2 >> 3) & 7] ^ *ptr_r16[byte2 & 7];
+		if (log_to_console) cout << " XOR " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
+		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = 0;
-		Flag_OF = 0;
 		Flag_SF = ((Result >> 15) & 1);
-		if (Result) Flag_ZF = false;
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << " M" << OPCODE_comment << "=" << (int)Result;
-		break;
-	case 3:
-		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			AX = AX ^ Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((AX >> 15) & 1);
-			if (AX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[AX & 255];
-			if (log_to_console) cout << " AX = " << (int)AX;
-			break;
-		case 1:
-			CX = CX ^ Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((CX >> 15) & 1);
-			if (CX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[CX & 255];
-			if (log_to_console) cout << " CX = " << (int)CX;
-			break;
-		case 2:
-			DX = DX ^ Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((DX >> 15) & 1);
-			if (DX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[DX & 255];
-			if (log_to_console) cout << " DX = " << (int)DX;
-			break;
-		case 3:
-			BX = BX ^ Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((BX >> 15) & 1);
-			if (BX) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[BX & 255];
-			if (log_to_console) cout << " BX = " << (int)BX;
-			break;
-		case 4:
-			Stack_Pointer = Stack_Pointer ^ Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Stack_Pointer >> 15) & 1);
-			if (Stack_Pointer) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Stack_Pointer & 255];
-			if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-			break;
-		case 5:
-			Base_Pointer = Base_Pointer ^ Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Base_Pointer >> 15) & 1);
-			if (Base_Pointer) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Base_Pointer & 255];
-			if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-			break;
-		case 6:
-			Source_Index = Source_Index ^ Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Source_Index >> 15) & 1);
-			if (Source_Index) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Source_Index & 255];
-			if (log_to_console) cout << " SI = " << (int)Source_Index;
-			break;
-		case 7:
-			Destination_Index = Destination_Index ^ Src;
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Destination_Index >> 15) & 1);
-			if (Destination_Index) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Destination_Index & 255];
-			if (log_to_console) cout << " DI = " << (int)Destination_Index;
-			break;
-		}
-		break;
+
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src ^ *ptr_r16[(byte2 >> 3) & 7];
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		operand_RM_offset--;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		if (log_to_console) cout << " XOR M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 void XOR_RM_R_8()		// XOR R + R/M -> R 8bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint8 Src = 0;
-	uint8 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint16 Result = 0;
 
-	//определяем источник
-	switch (byte2 >> 6)
+	//определяем 1-й операнд
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr);
-		if (log_to_console) cout << "M" << OPCODE_comment << " XOR ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX & 255;
-			if (log_to_console) cout << "AL XOR ";
-			break;
-		case 1:
-			Src = CX & 255;
-			if (log_to_console) cout << "CL XOR ";
-			break;
-		case 2:
-			Src = DX & 255;
-			if (log_to_console) cout << "DL XOR ";
-			break;
-		case 3:
-			Src = BX & 255;
-			if (log_to_console) cout << "BL XOR ";
-			break;
-		case 4:
-			Src = AX >> 8;
-			if (log_to_console) cout << "AH XOR ";
-			break;
-		case 5:
-			Src = CX >> 8;
-			if (log_to_console) cout << "CH XOR ";
-			break;
-		case 6:
-			Src = DX >> 8;
-			if (log_to_console) cout << "DH XOR ";
-			break;
-		case 7:
-			Src = BX >> 8;
-			if (log_to_console) cout << "BH XOR ";
-			break;
-		}
-		break;
+		Result = *ptr_r8[byte2 & 7] ^ *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") XOR " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		Result = memory_2[New_Addr_32] ^ *ptr_r8[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "M" << OPCODE_comment << " XOR " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 7) & 1);
+		Flag_OF = 0;
+		if (Result & 255) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
+
+		Instruction_Pointer += 2 + additional_IPs;
 	}
 
-	//определяем регистр - получатель
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		Result = Src ^ (AX & 255);
-		AX = (AX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "AL = " << (int)Result;
-		break;
-	case 1:
-		Result = Src ^ (CX & 255);
-		CX = (CX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "CL = " << (int)Result;
-		break;
-	case 2:
-		Result = Src ^ (DX & 255);
-		DX = (DX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "DL = " << (int)Result;
-		break;
-	case 3:
-		Result = Src ^ (BX & 255);
-		BX = (BX & 0xFF00) | Result;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "BL = " << (int)Result;
-		break;
-	case 4:
-		Result = Src ^ (AX >> 8);
-		AX = (AX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "AH = " << (int)Result;
-		break;
-	case 5:
-		Result = Src ^ (CX >> 8);
-		CX = (CX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "CH = " << (int)Result;
-		break;
-	case 6:
-		Result = Src ^ (DX >> 8);
-		DX = (DX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "DH = " << (int)Result;
-		break;
-	case 7:
-		Result = Src ^ (BX >> 8);
-		BX = (BX & 0x00FF) | (Result << 8);
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Result >> 7) & 1);
-		if (Result) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Result & 255];
-		if (log_to_console) cout << "BH = " << (int)Result;
-		break;
-	}
-	Instruction_Pointer += 2 + additional_IPs;
 }
 void XOR_RM_R_16()		// XOR R + R/M -> R 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	uint16 Src = 0;
-	uint16 Result = 0;
-	additional_IPs = 0;
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint32 Result = 0;
 
-	//определяем источник
-	switch (byte2 >> 6)
+	//определяем 1-й операнд
+	if ((byte2 >> 6) == 3)
 	{
-	case 0:
-	case 1:
-	case 2:
-		New_Addr = mod_RM_2(byte2);
-		Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		if (log_to_console) cout << "XOR M" << OPCODE_comment << " ^ ";
-		break;
-	case 3:
 		// mod 11 источник - регистр
-		switch (byte2 & 7)
-		{
-		case 0:
-			Src = AX;
-			if (log_to_console) cout << "AX("<<(int)Src<<") ^ ";
-			break;
-		case 1:
-			Src = CX;
-			if (log_to_console) cout << "CX(" << (int)Src << ") ^ ";
-			break;
-		case 2:
-			Src = DX;
-			if (log_to_console) cout << "DX(" << (int)Src << ") ^ ";
-			break;
-		case 3:
-			Src = BX;
-			if (log_to_console) cout << "BX(" << (int)Src << ") ^ ";
-			break;
-		case 4:
-			Src = Stack_Pointer;
-			if (log_to_console) cout << "SP(" << (int)Src << ") ^ ";
-			break;
-		case 5:
-			Src = Base_Pointer;
-			if (log_to_console) cout << "BP(" << (int)Src << ") ^ ";
-			break;
-		case 6:
-			Src = Source_Index;
-			if (log_to_console) cout << "SI(" << (int)Src << ") ^ ";
-			break;
-		case 7:
-			Src = Destination_Index;
-			if (log_to_console) cout << "DI(" << (int)Src << ") ^ ";
-			break;
-		}
-		break;
-	}
+		Result = *ptr_r16[byte2 & 7] ^ *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") XOR " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
 
-	//определяем регистр - получатель
-	switch ((byte2 >> 3) & 7)
-	{
-	case 0:
-		AX = Src ^ AX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((AX >> 15) & 1);
-		if (AX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[AX & 255];
-		if (log_to_console) cout << "AX = " << (int)AX;
-		break;
-	case 1:
-		CX = Src ^ CX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((CX >> 15) & 1);
-		if (CX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[CX & 255];
-		if (log_to_console) cout << "CX = " << (int)CX;
-		break;
-	case 2:
-		DX = Src ^ DX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((DX >> 15) & 1);
-		if (DX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[DX & 255];
-		if (log_to_console) cout << "DX = " << (int)DX;
-		break;
-	case 3:
-		BX = Src ^ BX;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((BX >> 15) & 1);
-		if (BX) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[BX & 255];
-		if (log_to_console) cout << "BX = " << (int)BX;
-		break;
-	case 4:
-		Stack_Pointer = Src ^ Stack_Pointer;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Stack_Pointer >> 15) & 1);
-		if (Stack_Pointer) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Stack_Pointer & 255];
-		if (log_to_console) cout << "SP = " << (int)Stack_Pointer;
-		break;
-	case 5:
-		Base_Pointer = Src ^ Base_Pointer;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Base_Pointer >> 15) & 1);
-		if (Base_Pointer) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Base_Pointer & 255];
-		if (log_to_console) cout << "BP = " << (int)Base_Pointer;
-		break;
-	case 6:
-		Source_Index = Src ^ Source_Index;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Source_Index >> 15) & 1);
-		if (Source_Index) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Source_Index & 255];
-		if (log_to_console) cout << "SI = " << (int)Source_Index;
-		break;
-	case 7:
-		Destination_Index = Src ^ Destination_Index;
-		Flag_CF = 0;
-		Flag_OF = 0;
-		Flag_SF = ((Destination_Index >> 15) & 1);
-		if (Destination_Index) Flag_ZF = false;
-		else Flag_ZF = true;
-		Flag_PF = parity_check[Destination_Index & 255];
-		if (log_to_console) cout << "DI = " << (int)Destination_Index;
-		break;
+		Instruction_Pointer += 2;
 	}
-	Instruction_Pointer += 2 + additional_IPs;
+	else
+	{
+		mod_RM_3(byte2);
+		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		Result = *ptr_Src ^ *ptr_r16[(byte2 >> 3) & 7];
+		if (log_to_console) cout << "M" << OPCODE_comment << " XOR " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
+		Flag_CF = 0;
+		Flag_SF = ((Result >> 15) & 1);
+		Flag_OF = 0;
+		if (Result & 0xFFFF) Flag_ZF = false;
+		else Flag_ZF = true;
+		Flag_PF = parity_check[Result & 255];
+		*ptr_r16[(byte2 >> 3) & 7] = Result & 0xFFFF;
+
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }
 
 //XOR/OR/AND/ADD/ADC/SBB/SUB IMM to Register/Memory
 void XOR_OR_IMM_RM_8()		
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint8 OP = (byte2 >> 3) & 7;
-	uint8 Src = 0;
+	uint8 imm = 0;
 	uint8 Result = 0;
 	uint16 Result_16 = 0;
-	additional_IPs = 0;
-	bool OF_Carry = false;
 	
 	switch (OP)
 	{
 	case 0:   //ADD IMM -> R/M 8 bit
 
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
+			// mod 11 источник - регистр
+			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			if (log_to_console) cout << "ADD IMM[" << (int)imm << "] + " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (imm & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (imm & 0x7F)) >> 7;
+			Result_16 = *ptr_r8[byte2 & 7] + imm;
+			Flag_CF = (Result_16 >> 8) & 1;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			*ptr_r8[byte2 & 7] = Result_16 & 255;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << (int)(*ptr_r8[byte2 & 7]);
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "ADD IMM[" << (int)Src << "] + ";
-			Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = ((memory.read_2(New_Addr) & 0x7F) + (Src & 0x7F)) >> 7;
-			Result_16 = memory.read_2(New_Addr) + Src;
-			memory.write_2(New_Addr,  Result_16 & 255);
+			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "ADD IMM[" << (int)imm << "] + " << "M" << OPCODE_comment << " = ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) + (imm & 15)) >> 4) & 1;
+			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (imm & 0x7F)) >> 7;
+			Result_16 = memory_2[New_Addr_32] + imm;
+			memory_2[New_Addr_32] = Result_16 & 255;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 255);
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "ADD IMM[" << (int)Src << "] + ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((AX & 0x7F) + (Src & 0x7F)) >> 7;
-				Result_16 = (AX & 255) + Src;
-				AX = (AX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "AL = " << (int)(Result_16 & 255);
-				break;
-			case 1:
-				Flag_AF = (((CX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((CX & 0x7F) + (Src & 0x7F)) >> 7;
-				Result_16 = (CX & 255) + Src;
-				CX = (CX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "CL = " << (int)(Result_16 & 255);
-				break;
-			case 2:
-				Flag_AF = (((DX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((DX & 0x7F) + (Src & 0x7F)) >> 7;
-				Result_16 = (DX & 255) + Src;
-				DX = (DX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "DL = " << (int)(Result_16 & 255);
-				break;
-			case 3:
-				Flag_AF = (((BX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((BX & 0x7F) + (Src & 0x7F)) >> 7;
-				Result_16 = (BX & 255) + Src;
-				BX = (BX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "BL = " << (int)(Result_16 & 255);
-				break;
-			case 4:
-				Flag_AF = ((((AX >> 8) & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = (((AX >> 8) & 0x7F) + (Src & 0x7F)) >> 7;
-				Result_16 = (AX >> 8) + Src;
-				AX = (AX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "AH = " << (int)(Result_16 & 255);
-				break;
-			case 5:
-				Flag_AF = ((((CX >> 8) & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = (((CX >> 8) & 0x7F) + (Src & 0x7F)) >> 7;
-				Result_16 = (CX >> 8) + Src;
-				CX = (CX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "CH = " << (int)(Result_16 & 255);
-				break;
-			case 6:
-				Flag_AF = ((((DX >> 8) & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = (((DX >> 8) & 0x7F) + (Src & 0x7F)) >> 7;
-				Result_16 = (DX >> 8) + Src;
-				DX = (DX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "DH = " << (int)(Result_16 & 255);
-				break;
-			case 7:
-				Flag_AF = ((((BX >> 8) & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = (((BX >> 8) & 0x7F) + (Src & 0x7F)) >> 7;
-				Result_16 = (BX >> 8) + Src;
-				BX = (BX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "BH = " << (int)(Result_16 & 255);
-				break;
-			}
-			break;
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
 
 	case 1:   //OR
 
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "IMM(" << (int)Src << ") OR ";
-			Result = memory.read_2(New_Addr) | Src;
-			memory.write_2(New_Addr,  Result);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result];
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
 			// mod 11 источник - регистр
+			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			if (log_to_console) cout << "IMM[" << (int)imm << "] OR " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+			Result_16 = *ptr_r8[byte2 & 7] | imm;
+			Flag_CF = 0;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = 0;
+			*ptr_r8[byte2 & 7] = Result_16 & 255;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << (int)(*ptr_r8[byte2 & 7]);
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "IMM(" << (int)Src << ") OR ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result = (AX & 255) | Src;
-				AX = (AX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "AL = " << (int)Result;
-				break;
-			case 1:
-				Result = (CX & 255) | Src;
-				CX = (CX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "CL = " << (int)Result;
-				break;
-			case 2:
-				Result = (DX & 255) | Src;
-				DX = (DX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "DL = " << (int)Result;
-				break;
-			case 3:
-				Result = (BX & 255) | Src;
-				BX = (BX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "BL = " << (int)Result;
-				break;
-			case 4:
-				Result = ((AX >> 8) & 255) | Src;
-				AX = (AX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "AH = " << (int)Result;
-				break;
-			case 5:
-				Result = ((CX >> 8) & 255) | Src;
-				CX = (CX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "CH = " << (int)Result;
-				break;
-			case 6:
-				Result = ((DX >> 8) & 255) | Src;
-				DX = (DX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "DH = " << (int)Result;
-				break;
-			case 7:
-				Result = ((BX >> 8) & 255) | Src;
-				BX = (BX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "BH = " << (int)Result;
-				break;
-			}
-			break;
+			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "IMM[" << (int)imm << "] OR " << "M" << OPCODE_comment << " = ";
+			Result_16 = memory_2[New_Addr_32] | imm;
+			memory_2[New_Addr_32] = Result_16 & 255;
+			Flag_CF = 0;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = 0;
+			if (Result_16 & 255) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_16 & 255];
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
 
 	case 2:   //ADC IMM -> R/M 8 bit
 
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
+			// mod 11 источник - регистр
+			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			if (log_to_console) cout << "ADC IMM[" << (int)imm << "] + " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") + CF (" << (int)Flag_CF << ") = ";
+			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
+			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
+			Result_16 = *ptr_r8[byte2 & 7] + imm + Flag_CF;
+			Flag_CF = (Result_16 >> 8) & 1;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			*ptr_r8[byte2 & 7] = Result_16 & 255;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << (int)(*ptr_r8[byte2 & 7]);
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "ADC IMM(" << (int)Src << ") + ";
-			Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((memory.read_2(New_Addr) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-			Result_16 = memory.read_2(New_Addr) + Src + Flag_CF;
-			memory.write_2(New_Addr,  Result_16 & 255);
+			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "ADC IMM[" << (int)imm << "] + " << "M" << OPCODE_comment << "+ CF (" << (int)Flag_CF << ") = ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
+			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
+			Result_16 = memory_2[New_Addr_32] + imm + Flag_CF;
+			memory_2[New_Addr_32] = Result_16 & 255;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 255);
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "ADC IMM(" << (int)Src << ") + ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((AX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-				Result_16 = (AX & 255) + Src + Flag_CF;
-				AX = (AX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "AL = " << (int)(Result_16 & 255);
-				break;
-			case 1:
-				Flag_AF = (((CX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((CX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-				Result_16 = (CX & 255) + Src + Flag_CF;
-				CX = (CX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "CL = " << (int)(Result_16 & 255);
-				break;
-			case 2:
-				Flag_AF = (((DX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((DX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-				Result_16 = (DX & 255) + Src + Flag_CF;
-				DX = (DX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "DL = " << (int)(Result_16 & 255);
-				break;
-			case 3:
-				Flag_AF = (((BX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((BX & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-				Result_16 = (BX & 255) + Src + Flag_CF;
-				BX = (BX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "BL = " << (int)(Result_16 & 255);
-				break;
-			case 4:
-				Flag_AF = ((((AX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = (((AX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-				Result_16 = (AX >> 8) + Src + Flag_CF;
-				AX = (AX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "AH = " << (int)(Result_16 & 255);
-				break;
-			case 5:
-				Flag_AF = ((((CX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = (((CX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-				Result_16 = (CX >> 8) + Src + Flag_CF;
-				CX = (CX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "CH = " << (int)(Result_16 & 255);
-				break;
-			case 6:
-				Flag_AF = ((((DX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = (((DX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-				Result_16 = (DX >> 8) + Src + Flag_CF;
-				DX = (DX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "DH = " << (int)(Result_16 & 255);
-				break;
-			case 7:
-				Flag_AF = ((((BX >> 8) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = (((BX >> 8) & 0x7F) + (Src & 0x7F) + Flag_CF) >> 7;
-				Result_16 = (BX >> 8) + Src + Flag_CF;
-				BX = (BX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "BH = " << (int)(Result_16 & 255);
-				break;
-			}
-			break;
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
 
 	case 3:   //SBB IMM -> R/M 8 bit
 
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "SBB IMM[" << (int)Src << "] ";
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = ((memory.read_2(New_Addr) & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-			Result_16 = memory.read_2(New_Addr) - Src - Flag_CF;
-			memory.write_2(New_Addr,  Result_16 & 255);
+			// mod 11 источник - регистр
+			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			if (log_to_console) cout << "SBB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] - CF(" << (int)Flag_CF << ") = ";
+			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
+			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
+			Result_16 = *ptr_r8[byte2 & 7] - imm - Flag_CF;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
+			if (!*ptr_r8[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			*ptr_r8[byte2 & 7] = Result_16 & 255;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << (int)(*ptr_r8[byte2 & 7]);
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			//непосредственный операнд
+			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "SBB M" << OPCODE_comment << " IMM[" << (int)imm << "] - CF (" << (int)Flag_CF << ") = ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
+			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
+			Result_16 = memory_2[New_Addr_32] - imm - Flag_CF;
+			Flag_CF = (Result_16 >> 8) & 1;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (!memory_2[New_Addr_32]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
-			if (log_to_console) cout << "from M" << OPCODE_comment << " = " << (int)(Result & 255);
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "SBB IMM[" << (int)Src << "] ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((AX & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-				Result_16 = (AX & 255) - Src - Flag_CF;
-				AX = (AX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from AL = " << (int)(Result_16 & 255);
-				break;
-			case 1:
-				Flag_AF = (((CX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((CX & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-				Result_16 = (CX & 255) - Src - Flag_CF;
-				CX = (CX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from CL = " << (int)(Result_16 & 255);
-				break;
-			case 2:
-				Flag_AF = (((DX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((DX & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-				Result_16 = (DX & 255) - Src - Flag_CF;
-				DX = (DX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from DL = " << (int)(Result_16 & 255);
-				break;
-			case 3:
-				Flag_AF = (((BX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((BX & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-				Result_16 = (BX & 255) - Src - Flag_CF;
-				BX = (BX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from BL = " << (int)(Result_16 & 255);
-				break;
-			case 4:
-				Flag_AF = ((((AX >> 8) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = (((AX >> 8) & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-				Result_16 = (AX >> 8) - Src - Flag_CF;
-				AX = (AX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from AH = " << (int)(Result_16 & 255);
-				break;
-			case 5:
-				Flag_AF = ((((CX >> 8) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = (((CX >> 8) & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-				Result_16 = (CX >> 8) - Src - Flag_CF;
-				CX = (CX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from CH = " << (int)(Result_16 & 255);
-				break;
-			case 6:
-				Flag_AF = ((((DX >> 8) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = (((DX >> 8) & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-				Result_16 = (DX >> 8) - Src - Flag_CF;
-				DX = (DX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from DH = " << (int)(Result_16 & 255);
-				break;
-			case 7:
-				Flag_AF = ((((BX >> 8) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = (((BX >> 8) & 0x7F) - (Src & 0x7F) - Flag_CF) >> 7;
-				Result_16 = (BX >> 8) - Src - Flag_CF;
-				BX = (BX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from BH = " << (int)(Result_16 & 255);
-				break;
-			}
-			break;
+			memory_2[New_Addr_32] = Result_16 & 255;
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
 
 	case 4:   //AND
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "IMM(" << (int)Src << ") AND ";
-			Result = memory.read_2(New_Addr) & Src;
-			memory.write_2(New_Addr,  Result);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
 			// mod 11 источник - регистр
+			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			if (log_to_console) cout << "IMM[" << (int)imm << "] AND " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+			Result_16 = *ptr_r8[byte2 & 7] & imm;
+			Flag_CF = 0;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = 0;
+			*ptr_r8[byte2 & 7] = Result_16 & 255;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << (int)(*ptr_r8[byte2 & 7]);
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "IMM(" << (int)Src << ") AND ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result = (AX & 255) & Src;
-				AX = (AX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "AL = " << (int)Result;
-				break;
-			case 1:
-				Result = (CX & 255) & Src;
-				CX = (CX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "CL = " << (int)Result;
-				break;
-			case 2:
-				Result = (DX & 255) & Src;
-				DX = (DX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "DL = " << (int)Result;
-				break;
-			case 3:
-				Result = (BX & 255) & Src;
-				BX = (BX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "BL = " << (int)Result;
-				break;
-			case 4:
-				Result = ((AX >> 8) & 255) & Src;
-				AX = (AX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "AH = " << (int)Result;
-				break;
-			case 5:
-				Result = ((CX >> 8) & 255) & Src;
-				CX = (CX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "CH = " << (int)Result;
-				break;
-			case 6:
-				Result = ((DX >> 8) & 255) & Src;
-				DX = (DX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "DH = " << (int)Result;
-				break;
-			case 7:
-				Result = ((BX >> 8) & 255) & Src;
-				BX = (BX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "BH = " << (int)Result;
-				break;
-			}
-			break;
+			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "IMM[" << (int)imm << "] AND " << "M" << OPCODE_comment << " = ";
+			Result_16 = memory_2[New_Addr_32] & imm;
+			memory_2[New_Addr_32] = Result_16 & 255;
+			Flag_CF = 0;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = 0;
+			if (Result_16 & 255) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_16 & 255];
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
 
 	case 5:   //SUB IMM -> R/M 8 bit
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "SUB IMM(" << (int)Src << ") ";
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15)) >> 4) & 1;
-			OF_Carry = ((memory.read_2(New_Addr) & 0x7F) - (Src & 0x7F)) >> 7;
-			Result_16 = memory.read_2(New_Addr) - Src;
-			memory.write_2(New_Addr,  Result_16 & 255);
+			// mod 11 источник - регистр
+			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			if (log_to_console) cout << "SUB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] = ";
+			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F)) >> 7;
+			Result_16 = *ptr_r8[byte2 & 7] - imm;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
+			if (!*ptr_r8[byte2 & 7]) Flag_OF = 0;
+			*ptr_r8[byte2 & 7] = Result_16 & 255;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << (int)(*ptr_r8[byte2 & 7]);
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			//непосредственный операнд
+			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "SUB M" << OPCODE_comment << " IMM[" << (int)imm << "] = ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (imm & 0x7F)) >> 7;
+			Result_16 = memory_2[New_Addr_32] - imm;
+			Flag_CF = (Result_16 >> 8) & 1;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (!memory_2[New_Addr_32]) Flag_OF = 0;
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
-			if (log_to_console) cout << "from M" << OPCODE_comment << " = " << (int)(Result & 255);
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "SUB IMM(" << (int)Src << ") ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((AX & 0x7F) - (Src & 0x7F)) >> 7;
-				Result_16 = (AX & 255) - Src;
-				AX = (AX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from AL = " << (int)(Result_16 & 255);
-				break;
-			case 1:
-				Flag_AF = (((CX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((CX & 0x7F) - (Src & 0x7F)) >> 7;
-				Result_16 = (CX & 255) - Src;
-				CX = (CX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from CL = " << (int)(Result_16 & 255);
-				break;
-			case 2:
-				Flag_AF = (((DX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((DX & 0x7F) - (Src & 0x7F)) >> 7;
-				Result_16 = (DX & 255) - Src;
-				DX = (DX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from DL = " << (int)(Result_16 & 255);
-				break;
-			case 3:
-				Flag_AF = (((BX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((BX & 0x7F) - (Src & 0x7F)) >> 7;
-				Result_16 = (BX & 255) - Src;
-				BX = (BX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from BL = " << (int)(Result_16 & 255);
-				break;
-			case 4:
-				Flag_AF = ((((AX >> 8) & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((AX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-				Result_16 = (AX >> 8) - Src;
-				AX = (AX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from AH = " << (int)(Result_16 & 255);
-				break;
-			case 5:
-				Flag_AF = ((((CX >> 8) & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((CX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-				Result_16 = (CX >> 8) - Src;
-				CX = (CX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from CH = " << (int)(Result_16 & 255);
-				break;
-			case 6:
-				Flag_AF = ((((DX >> 8) & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((DX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-				Result_16 = (DX >> 8) - Src;
-				DX = (DX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from DH = " << (int)(Result_16 & 255);
-				break;
-			case 7:
-				Flag_AF = ((((BX >> 8) & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = (((BX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-				Result_16 = (BX >> 8) - Src;
-				BX = (BX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = ((Result_16 >> 7) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				if (log_to_console) cout << "from BH = " << (int)(Result_16 & 255);
-				break;
-			}
-			break;
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			memory_2[New_Addr_32] = Result_16 & 255;
+			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
 
 	case 6: //XOR
 
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "XOR IMM[" << (int)Src << "] ^ ";
-			Result = memory.read_2(New_Addr) ^ Src;
-			memory.write_2(New_Addr,  Result);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 7) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
 			// mod 11 источник - регистр
+			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			if (log_to_console) cout << "IMM[" << (int)imm << "] XOR " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
+			Result_16 = *ptr_r8[byte2 & 7] ^ imm;
+			Flag_CF = 0;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = 0;
+			*ptr_r8[byte2 & 7] = Result_16 & 255;
+			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
+			if (log_to_console) cout << (int)(*ptr_r8[byte2 & 7]);
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "XOR IMM(" << (int)Src << ") ^ ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result = (AX & 255) ^ Src;
-				AX = (AX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "AL = " << (int)Result;
-				break;
-			case 1:
-				Result = (CX & 255) ^ Src;
-				CX = (CX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "CL = " << (int)Result;
-				break;
-			case 2:
-				Result = (DX & 255) ^ Src;
-				DX = (DX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "DL = " << (int)Result;
-				break;
-			case 3:
-				Result = (BX & 255) ^ Src;
-				BX = (BX & 0xFF00) | Result;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "BL = " << (int)Result;
-				break;
-			case 4:
-				Result = ((AX >> 8) & 255) ^ Src;
-				AX = (AX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "AH = " << (int)Result;
-				break;
-			case 5:
-				Result = ((CX >> 8) & 255) ^ Src;
-				CX = (CX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "CH = " << (int)Result;
-				break;
-			case 6:
-				Result = ((DX >> 8) & 255) ^ Src;
-				DX = (DX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "DH = " << (int)Result;
-				break;
-			case 7:
-				Result = ((BX >> 8) & 255) ^ Src;
-				BX = (BX & 0x00FF) | (Result << 8);
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Result >> 7) & 1);
-				if (Result) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result & 255];
-				if (log_to_console) cout << "BH = " << (int)Result;
-				break;
-			}
-			break;
+			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "IMM[" << (int)imm << "] XOR " << "M" << OPCODE_comment << " = ";
+			Result_16 = memory_2[New_Addr_32] ^ imm;
+			memory_2[New_Addr_32] = Result_16 & 255;
+			Flag_CF = 0;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = 0;
+			if (Result_16 & 255) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_16 & 255];
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
 
 	case 7:   //CMP IMM -> R/M 8 bit
 
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд - вычитаемое
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "CMP IMM(" << (int)(Src) << ") ";
-			Result_16 = memory.read_2(New_Addr) - Src;
+			// mod 11 источник - регистр
+			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			if (log_to_console) cout << "CMP " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] = ";
+			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F)) >> 7;
+			Result_16 = *ptr_r8[byte2 & 7] - imm;
 			Flag_CF = (Result_16 >> 8) & 1;
-			Flag_SF = (Result_16 >> 7) & 1;
-			OF_Carry = ((memory.read_2(New_Addr) & 0x7F) - (Src & 0x7F)) >> 7;
+			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
-			Flag_PF = parity_check[Result_16 & 255];
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15)) >> 4) & 1;
-			if (log_to_console) cout << "with M" << OPCODE_comment << "(" << (int)memory.read_2(New_Addr) << ") ";
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд - вычитаемое
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "CMP IMM(" << (int)(Src) << ") ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result_16 = (AX & 255) - Src;
-				//AX = (AX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = (Result_16 >> 7) & 1;
-				OF_Carry = ((AX & 0x7F) - (Src & 0x7F)) >> 7;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				Flag_AF = (((AX & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with AL(" << (int)(AX & 255) << ") ";
-				break;
-			case 1:
-				Result_16 = (CX & 255) - Src;
-				//CX = (CX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = (Result_16 >> 7) & 1;
-				OF_Carry = ((CX & 0x7F) - (Src & 0x7F)) >> 7;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				Flag_AF = (((CX & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with CL(" << (int)(CX & 255) << ") ";
-				break;
-			case 2:
-				Result_16 = (DX & 255) - Src;
-				//DX = (DX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = (Result_16 >> 7) & 1;
-				OF_Carry = ((DX & 0x7F) - (Src & 0x7F)) >> 7;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				Flag_AF = (((DX & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with DL(" << (int)(DX & 255) << ") ";
-				break;
-			case 3:
-				Result_16 = (BX & 255) - Src;
-				//BX = (BX & 0xFF00) | (Result_16 & 255);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = (Result_16 >> 7) & 1;
-				OF_Carry = ((BX & 0x7F) - (Src & 0x7F)) >> 7;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				Flag_AF = (((BX & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with BL(" << (int)(BX & 255) << ") ";
-				break;
-			case 4:
-				Result_16 = (AX >> 8) - Src;
-				//AX = (AX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = (Result_16 >> 7) & 1;
-				OF_Carry = (((AX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				Flag_AF = ((((AX >> 8) & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with AH(" << (int)((AX>>8) & 255) << ") ";
-				break;
-			case 5:
-				Result_16 = (CX >> 8) - Src;
-				//CX = (CX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = (Result_16 >> 7) & 1;
-				OF_Carry = (((CX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				Flag_AF = ((((CX >> 8) & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with CH(" << (int)((CX >> 8) & 255) << ") ";
-				break;
-			case 6:
-				Result_16 = (DX >> 8) - Src;
-				//DX = (DX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = (Result_16 >> 7) & 1;
-				OF_Carry = (((DX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				Flag_AF = ((((DX >> 8) & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with DH(" << (int)((DX >> 8) & 255) << ") ";
-				break;
-			case 7:
-				Result_16 = (BX >> 8) - Src;
-				//BX = (BX & 0x00FF) | (Result_16 << 8);
-				Flag_CF = (Result_16 >> 8) & 1;
-				Flag_SF = (Result_16 >> 7) & 1;
-				OF_Carry = (((BX >> 8) & 0x7F) - (Src & 0x7F)) >> 7;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_16 & 255) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_16 & 255];
-				Flag_AF = ((((BX >> 8) & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with BH(" << (int)((BX >> 8) & 255) << ") ";
-				break;
-			}
-			break;
+			Flag_PF = parity_check[Result_16 & 255];
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			Instruction_Pointer += 3;
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			//непосредственный операнд
+			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "CMP M" << OPCODE_comment << "("<< (int)memory_2[New_Addr_32] << ") IMM[" << (int)imm << "] = ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (imm & 0x7F)) >> 7;
+			Result_16 = memory_2[New_Addr_32] - imm;
+			Flag_CF = (Result_16 >> 8) & 1;
+			Flag_SF = ((Result_16 >> 7) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_16 & 255) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_16 & 255];
+			if (log_to_console) cout << (int)(Result_16 & 255);
+			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
 	}
-	Instruction_Pointer += 3 + additional_IPs;
+	
 }
 void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint8 OP = (byte2 >> 3) & 7;
-	uint16 Src = 0;
 	uint16 Result = 0;
-	uint32 Result_32 = 0;
 	additional_IPs = 0;
-	bool OF_Carry = false;
+	uint32 Result_32 = 0;
 
 	switch (OP)
 	{
 	case 0:   //ADD IMM -> R/M 16 bit
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "IMM(" << (int)Src << ") ADD ";
-			Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) + Src;
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
+			// mod 11 источник - регистр
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "ADD IMM(" << (int)*ptr_Src << ") + " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = *ptr_r16[byte2 & 7] + *ptr_Src;
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << (int)*ptr_r16[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "ADD IMM(" << (int)*ptr_Src << ") + ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 + *ptr_Src;
+			memory_2[New_Addr_32] = Result_32 & 255;
+			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -15955,1012 +7875,291 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "IMM(" << (int)Src << ") ADD ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((AX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Result_32 = AX + Src;
-				AX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				Flag_AF = (((CX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((CX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Result_32 = CX + Src;
-				CX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				Flag_AF = (((DX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((DX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Result_32 = DX + Src;
-				DX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				Flag_AF = (((BX & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((BX & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Result_32 = BX + Src;
-				BX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				Flag_AF = (((Stack_Pointer & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Stack_Pointer & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Result_32 = Stack_Pointer + Src;
-				Stack_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Flag_AF = (((Base_Pointer & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Base_Pointer & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Result_32 = Base_Pointer + Src;
-				Base_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Flag_AF = (((Source_Index & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Source_Index & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Result_32 = Source_Index + Src;
-				Source_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Flag_AF = (((Destination_Index & 15) + (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Destination_Index & 0x7FFF) + (Src & 0x7FFF)) >> 15;
-				Result_32 = Destination_Index + Src;
-				Destination_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
 		}
 		break;
 
 	case 1:   //OR
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "IMM(" << (int)Src << ") OR ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) | Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "IMM(" << (int)Src << ") OR ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = AX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((AX >> 15) & 1);
-				if (AX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[AX & 255];
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				CX = CX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((CX >> 15) & 1);
-				if (CX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[CX & 255];
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				DX = DX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((DX >> 15) & 1);
-				if (DX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[DX & 255];
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				BX = BX | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((BX >> 15) & 1);
-				if (BX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[BX & 255];
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				Stack_Pointer = Stack_Pointer | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Stack_Pointer >> 15) & 1);
-				if (Stack_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Stack_Pointer & 255];
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Base_Pointer = Base_Pointer | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Base_Pointer >> 15) & 1);
-				if (Base_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Base_Pointer & 255];
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Source_Index = Source_Index | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Source_Index >> 15) & 1);
-				if (Source_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Source_Index & 255];
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Destination_Index = Destination_Index | Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Destination_Index >> 15) & 1);
-				if (Destination_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Destination_Index & 255];
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
-		}
-		break;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") OR " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
+			Result_32 = *ptr_r16[byte2 & 7] | *ptr_Src;
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << (int)*ptr_r16[byte2 & 7];
 
-	case 2:   //ADC IMM -> R/M 16 bit
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		}
+		else
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "ADC IMM(" << (int)Src << ") + ";
-			Flag_AF = (((memory.read_2(New_Addr) & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) + Src + Flag_CF;
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
-			Flag_CF = ((Result_32 >> 16) & 1);
-			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") OR ";
+			Result_32 = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) | *ptr_Src;
+			memory_2[New_Addr_32] = Result_32 & 255;
+			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "ADC IMM(" << (int)Src << ") + ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = ((( AX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((AX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Result_32 = AX + Src + Flag_CF;
-				AX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				Flag_AF = (((CX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((CX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Result_32 = CX + Src + Flag_CF;
-				CX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				Flag_AF = (((DX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((DX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Result_32 = DX + Src + Flag_CF;
-				DX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				Flag_AF = (((BX & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((BX & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Result_32 = BX + Src + Flag_CF;
-				BX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				Flag_AF = (((Stack_Pointer & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((Stack_Pointer & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Result_32 = Stack_Pointer + Src + Flag_CF;
-				Stack_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Flag_AF = (((Base_Pointer & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((Base_Pointer & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Result_32 = Base_Pointer + Src + Flag_CF;
-				Base_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Flag_AF = (((Source_Index & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((Source_Index & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Result_32 = Source_Index + Src + Flag_CF;
-				Source_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Flag_AF = (((Destination_Index & 15) + (Src & 15) + Flag_CF) >> 4) & 1;
-				OF_Carry = ((Destination_Index & 0x7FFF) + (Src & 0x7FFF) + Flag_CF) >> 15;
-				Result_32 = Destination_Index + Src + Flag_CF;
-				Destination_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
 		}
 		break;
 
-	case 3:   //SBB IMM -> R/M 16 bit
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+	case 2:   //ADC IMM -> R/M 16 bit
+		
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "SBB IMM[" << (int)Src << "] ";
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src - Flag_CF;
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
+			// mod 11 источник - регистр
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "ADC IMM(" << (int)*ptr_Src << ") + " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = ";
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_Src & 15) + Flag_CF) >> 4) & 1;
+			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
+			Result_32 = *ptr_r16[byte2 & 7] + *ptr_Src + Flag_CF;
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			if (log_to_console) cout << "from M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF) - Flag_CF;
-			break;
-		case 3:
+			if (log_to_console) cout << (int)*ptr_r16[byte2 & 7];
+
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "ADC IMM(" << (int)*ptr_Src << ") + ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_Src & 15) + Flag_CF) >> 4) & 1;
+			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
+			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 + *ptr_Src + Flag_CF;
+			memory_2[New_Addr_32] = Result_32 & 255;
+			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << " M" << OPCODE_comment << " + CF(" << (int)Flag_CF << ") = " << (int)(Result_32 & 0xFFFF);
+		}
+		break;
+
+	case 3:   //SBB IMM -> R/M 16 bit
+
+		if ((byte2 >> 6) == 3)
+		{
 			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "SBB IMM[" << (int)Src << "] ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((AX & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Result_32 = AX - Src - Flag_CF;
-				AX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from AX = " << (int)AX;
-				break;
-			case 1:
-				Flag_AF = (((CX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((CX & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Result_32 = CX - Src - Flag_CF;
-				CX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from CX = " << (int)CX;
-				break;
-			case 2:
-				Flag_AF = (((DX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((DX & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Result_32 = DX - Src - Flag_CF;
-				DX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from DX = " << (int)DX;
-				break;
-			case 3:
-				Flag_AF = (((BX & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((BX & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Result_32 = BX - Src - Flag_CF;
-				BX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from BX = " << (int)BX;
-				break;
-			case 4:
-				Flag_AF = (((Stack_Pointer & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((Stack_Pointer & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Result_32 = Stack_Pointer - Src - Flag_CF;
-				Stack_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Flag_AF = (((Base_Pointer & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((Base_Pointer & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Result_32 = Base_Pointer - Src - Flag_CF;
-				Base_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Flag_AF = (((Source_Index & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((Source_Index & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Result_32 = Source_Index - Src - Flag_CF;
-				Source_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Flag_AF = (((Destination_Index & 15) - (Src & 15) - Flag_CF) >> 4) & 1;
-				OF_Carry = ((Destination_Index & 0x7FFF) - (Src & 0x7FFF) - Flag_CF) >> 15;
-				Result_32 = Destination_Index - Src - Flag_CF;
-				Destination_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "SBB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") - CF(" << (int)Flag_CF << ") = ";
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15) - Flag_CF) >> 4) & 1;
+			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
+			Result_32 = *ptr_r16[byte2 & 7] - *ptr_Src - Flag_CF;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (!*ptr_r16[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			if (log_to_console) cout << (int)*ptr_r16[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "SBB M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") - CF(" << (int)Flag_CF << ") = ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_Src & 15) - Flag_CF) >> 4) & 1;
+			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
+			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 - *ptr_Src - Flag_CF;
+			memory_2[New_Addr_32] = Result_32 & 255;
+			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (!*ptr_Src) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
 		}
 		break;
 
 	case 4:   //AND
 
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "IMM[" << (int)Src << "] AND ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
 			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "IMM[" << (int)Src << "] AND ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = AX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((AX >> 15) & 1);
-				if (AX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[AX & 255];
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				CX = CX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((CX >> 15) & 1);
-				if (CX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[CX & 255];
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				DX = DX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((DX >> 15) & 1);
-				if (DX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[DX & 255];
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				BX = BX & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((BX >> 15) & 1);
-				if (BX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[BX & 255];
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				Stack_Pointer = Stack_Pointer & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Stack_Pointer >> 15) & 1);
-				if (Stack_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Stack_Pointer & 255];
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Base_Pointer = Base_Pointer & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Base_Pointer >> 15) & 1);
-				if (Base_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Base_Pointer & 255];
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Source_Index = Source_Index & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Source_Index >> 15) & 1);
-				if (Source_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Source_Index & 255];
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Destination_Index = Destination_Index & Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Destination_Index >> 15) & 1);
-				if (Destination_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Destination_Index & 255];
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") AND " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
+			Result_32 = *ptr_r16[byte2 & 7] & *ptr_Src;
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << (int)*ptr_r16[byte2 & 7];
+
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") AND ";
+			Result_32 = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & *ptr_Src;
+			memory_2[New_Addr_32] = Result_32 & 255;
+			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
 		}
 		break;
 
 	case 5:   //SUB IMM -> R/M 16 bit
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "SUB IMM[" << (int)Src << "] ";
-			Flag_AF = (((memory.read_2(New_Addr) & 15) - (Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src;
-			memory.write_2(New_Addr,  Result_32 & 255);
-			memory.write_2(New_Addr + 1,  (Result_32 >> 8) & 255);
+			// mod 11 источник - регистр
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "SUB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") = ";
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = *ptr_r16[byte2 & 7] - *ptr_Src;
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			if (log_to_console) cout << "from M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "SUB IMM[" << (int)Src << "] ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((AX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Result_32 = AX - Src;
-				AX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from AX = " << (int)AX;
-				break;
-			case 1:
-				Flag_AF = (((CX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((CX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Result_32 = CX - Src;
-				CX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from CX = " << (int)CX;
-				break;
-			case 2:
-				Flag_AF = (((DX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((DX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Result_32 = DX - Src;
-				DX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from DX = " << (int)DX;
-				break;
-			case 3:
-				Flag_AF = (((BX & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((BX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Result_32 = BX - Src;
-				BX = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from BX = " << (int)BX;
-				break;
-			case 4:
-				Flag_AF = (((Stack_Pointer & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Stack_Pointer & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Result_32 = Stack_Pointer - Src;
-				Stack_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Flag_AF = (((Base_Pointer & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Base_Pointer & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Result_32 = Base_Pointer - Src;
-				Base_Pointer = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Flag_AF = (((Source_Index & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Source_Index & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Result_32 = Source_Index - Src;
-				Source_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Flag_AF = (((Destination_Index & 15) - (Src & 15)) >> 4) & 1;
-				OF_Carry = ((Destination_Index & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Result_32 = Destination_Index - Src;
-				Destination_Index = Result_32 & 0xFFFF;
-				Flag_CF = ((Result_32 >> 16) & 1);
-				Flag_SF = ((Result_32 >> 15) & 1);
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				if (log_to_console) cout << "from DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
+			if (log_to_console) cout << (int)*ptr_r16[byte2 & 7];
 		}
-		break;
-
-	case 6:  //XOR
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
+		else
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "XOR IMM(" << (int)Src << ") ";
-			Result = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) ^ Src;
-			memory.write_2(New_Addr,  Result & 255);
-			memory.write_2(New_Addr + 1,  Result >> 8);
-			Flag_CF = 0;
-			Flag_OF = 0;
-			Flag_SF = ((Result >> 15) & 1);
-			if (Result) Flag_ZF = false;
-			else Flag_ZF = true;
-			Flag_PF = parity_check[Result & 255];
-			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
-			break;
-		case 3:
-			// mod 11 источник - регистр
-			//непосредственный операнд
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "XOR IMM(" << (int)Src << ") ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				AX = AX ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((AX >> 15) & 1);
-				if (AX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[AX & 255];
-				if (log_to_console) cout << " AX = " << (int)AX;
-				break;
-			case 1:
-				CX = CX ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((CX >> 15) & 1);
-				if (CX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[CX & 255];
-				if (log_to_console) cout << " CX = " << (int)CX;
-				break;
-			case 2:
-				DX = DX ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((DX >> 15) & 1);
-				if (DX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[DX & 255];
-				if (log_to_console) cout << " DX = " << (int)DX;
-				break;
-			case 3:
-				BX = BX ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((BX >> 15) & 1);
-				if (BX) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[BX & 255];
-				if (log_to_console) cout << " BX = " << (int)BX;
-				break;
-			case 4:
-				Stack_Pointer = Stack_Pointer ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Stack_Pointer >> 15) & 1);
-				if (Stack_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Stack_Pointer & 255];
-				if (log_to_console) cout << " SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Base_Pointer = Base_Pointer ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Base_Pointer >> 15) & 1);
-				if (Base_Pointer) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Base_Pointer & 255];
-				if (log_to_console) cout << " BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Source_Index = Source_Index ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Source_Index >> 15) & 1);
-				if (Source_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Source_Index & 255];
-				if (log_to_console) cout << " SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Destination_Index = Destination_Index ^ Src;
-				Flag_CF = 0;
-				Flag_OF = 0;
-				Flag_SF = ((Destination_Index >> 15) & 1);
-				if (Destination_Index) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Destination_Index & 255];
-				if (log_to_console) cout << " DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
-		}
-		break;
-
-	case 7:   //CMP IMM -> R/M 16 bit
-		//определяем объект назначения и результат операции
-		switch (byte2 >> 6)
-		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "CMP IMM(" << (int)Src << ") ";
-			Result_32 = (memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) - Src;
-			Flag_CF = (Result_32 >> 16) & 1;
-			Flag_SF = (Result_32 >> 15) & 1;
-			OF_Carry = (((memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256) & 0x7FFF) - (Src & 0x7FFF)) >> 15;
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") = ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 - *ptr_Src;
+			memory_2[New_Addr_32] = Result_32 & 255;
+			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			Flag_AF = ((((memory.read_2(New_Addr)) & 15) - (Src & 15)) >> 4) & 1;
-			if (log_to_console) cout << "with M" << OPCODE_comment << "";
-			break;
-		case 3:
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
+		}
+		break;
+
+	case 6:  //XOR
+
+		if ((byte2 >> 6) == 3)
+		{
 			// mod 11 источник - регистр
-			//непосредственный операнд - вычитаемое
-			Src = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256;
-			if (log_to_console) cout << "CMP IMM(" << (int)Src << ") ";
-			switch (byte2 & 7)
-			{
-			case 0:
-				Result_32 = AX - Src;
-				Flag_CF = (Result_32 >> 16) & 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				OF_Carry = ((AX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Flag_AF = (((AX & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with AX(" << (int)AX << ")";
-				break;
-			case 1:
-				Result_32 = CX - Src;
-				Flag_CF = (Result_32 >> 16) & 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				OF_Carry = ((CX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Flag_AF = (((CX & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with CX = " << (int)CX;
-				break;
-			case 2:
-				Result_32 = DX - Src;
-				Flag_CF = (Result_32 >> 16) & 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				OF_Carry = ((DX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Flag_AF = (((DX & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with DX = " << (int)DX;
-				break;
-			case 3:
-				Result_32 = BX - Src;
-				Flag_CF = (Result_32 >> 16) & 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				OF_Carry = ((BX & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Flag_AF = (((BX & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with BX = " << (int)BX;
-				break;
-			case 4:
-				Result_32 = Stack_Pointer - Src;
-				Flag_CF = (Result_32 >> 16) & 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				OF_Carry = ((Stack_Pointer & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Flag_AF = (((Stack_Pointer & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with SP = " << (int)Stack_Pointer;
-				break;
-			case 5:
-				Result_32 = Base_Pointer - Src;
-				Flag_CF = (Result_32 >> 16) & 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				OF_Carry = ((Base_Pointer & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Flag_AF = (((Base_Pointer & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with BP = " << (int)Base_Pointer;
-				break;
-			case 6:
-				Result_32 = Source_Index - Src;
-				Flag_CF = (Result_32 >> 16) & 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				OF_Carry = ((Source_Index & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Flag_AF = (((Source_Index & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with SI = " << (int)Source_Index;
-				break;
-			case 7:
-				Result_32 = Destination_Index - Src;
-				Flag_CF = (Result_32 >> 16) & 1;
-				Flag_SF = (Result_32 >> 15) & 1;
-				OF_Carry = ((Destination_Index & 0x7FFF) - (Src & 0x7FFF)) >> 15;
-				Flag_OF = Flag_CF ^ OF_Carry;
-				if (Result_32 & 0xFFFF) Flag_ZF = false;
-				else Flag_ZF = true;
-				Flag_PF = parity_check[Result_32 & 255];
-				Flag_AF = (((Destination_Index & 15) - (Src & 15)) >> 4) & 1;
-				if (log_to_console) cout << "with DI = " << (int)Destination_Index;
-				break;
-			}
-			break;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") XOR " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
+			Result_32 = *ptr_r16[byte2 & 7] ^ *ptr_Src;
+			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << (int)*ptr_r16[byte2 & 7];
+
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") XOR ";
+			Result_32 = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) ^ *ptr_Src;
+			memory_2[New_Addr_32] = Result_32 & 255;
+			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_CF = 0;
+			Flag_SF = (Result_32 >> 15) & 1;
+			Flag_OF = 0;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
+		}
+		break;
+
+	case 7:   //CMP IMM -> R/M 16 bit
+
+		if ((byte2 >> 6) == 3)
+		{
+			// mod 11 источник - регистр
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "CMP " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") = ";
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = *ptr_r16[byte2 & 7] - *ptr_Src;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << (int)*ptr_r16[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			if (log_to_console) cout << "CMP M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") = ";
+			Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 - *ptr_Src;
+			Flag_CF = ((Result_32 >> 16) & 1);
+			Flag_SF = ((Result_32 >> 15) & 1);
+			Flag_OF = Flag_CF ^ OF_Carry;
+			if (Result_32 & 0xFFFF) Flag_ZF = false;
+			else Flag_ZF = true;
+			Flag_PF = parity_check[Result_32 & 255];
+			if (log_to_console) cout << (int)(Result_32 & 0xFFFF);
 		}
 		break;
 	}
@@ -16969,46 +8168,43 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 
 void XOR_IMM_ACC_8()   //XOR IMM to ACC 8bit
 {
-	uint8 Src = 0;
 	uint8 Result = 0;
 
 	//непосредственный операнд
-	Src = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
 
-	if (log_to_console) cout << "XOR IMM(" << (int)Src << ") ^ ";
+	if (log_to_console) cout << "XOR IMM(" << (int)imm << ") ^ ";
 
 	//определяем объект назначения и результат операции
-	Result = (AX & 255) ^ Src;
-	if (log_to_console) cout << " AL(" << (int)(AX & 255) << ") = " << (int)Result;
-	AX = (AX & 0xFF00) | Result;
+	if (log_to_console) cout << " AL(" << (int)(*ptr_AL) << ") = ";
+	*ptr_AL = *ptr_AL ^ imm;
+	if (log_to_console) cout << (int)*ptr_AL;
 	Flag_CF = 0;
 	Flag_OF = 0;
-	Flag_SF = ((Result >> 7) & 1);
-	if (Result) Flag_ZF = false;
+	Flag_SF = ((*ptr_AL >> 7) & 1);
+	if (*ptr_AL) Flag_ZF = false;
 	else Flag_ZF = true;
-	Flag_PF = parity_check[Result];
+	Flag_PF = parity_check[*ptr_AL];
 	Instruction_Pointer += 2;
 }
 void XOR_IMM_ACC_16()  //XOR IMM to ACC 16bit
 {
-	uint16 Src = 0;
 	uint16 Result = 0;
 
 	//непосредственный операнд
-	Src = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
 
-	if (log_to_console) cout << "XOR IMM(" << (int)Src << ") ^ ";
+	if (log_to_console) cout << "XOR IMM(" << (int)imm << ") ^ AX(" << (int)AX << ") = ";
 
 	//определяем объект назначения и результат операции
-	Result = AX ^ Src;
-	if (log_to_console) cout << " AX(" << (int)AX << ") = " << (int)Result;
-	AX = Result;
+	AX = AX ^ imm;
+	if (log_to_console) cout << (int)AX;
 	Flag_CF = 0;
 	Flag_OF = 0;
-	Flag_SF = ((Result >> 15) & 1);
-	if (Result) Flag_ZF = false;
+	Flag_SF = ((AX >> 15) & 1);
+	if (AX) Flag_ZF = false;
 	else Flag_ZF = true;
-	Flag_PF = parity_check[Result & 255];
+	Flag_PF = parity_check[AX & 255];
 	Instruction_Pointer += 3;
 }
 
@@ -17019,16 +8215,39 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 	uint8 OP = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result_16 = 0;
 	uint32 Result_32 = 0;
-	bool OF_Carry = false;
+	
 	if (log_to_console) cout << "REPNE[F2] ";
 	switch (OP)
 	{
 	case 0b10100100:  //MOVS 8
 
-		if (log_to_console) cout << "MOVES_B (" << (int)CX << " bytes) from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "MOVES_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -17045,13 +8264,36 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 
 	case 0b10100101:  //MOVS 16
 
-		if (log_to_console) cout << "MOVES_W (" << (int)CX << " words) from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "MOVES_W (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			Destination_Index++;
 			Source_Index++;
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 
 			if (Flag_DF)
 			{
@@ -17069,30 +8311,51 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 
 	case 0b10100110:  //CMPS 8
 
-		if (log_to_console) cout << "CMPS_B until == 0 (" << (int)CX << " bytes) from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]  ";
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "CMPS_B until == 0 (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]  ";
 		if (log_to_console)
 		{
 			cout << "[";
-			for (int i = 0; i < CX; i++) cout << memory.read_2(Source_Index + *DS * 16);
+			for (int i = 0; i < CX; i++) cout << memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			cout << "][";
-			for (int i = 0; i < CX; i++) cout << memory.read_2(Destination_Index + *ES * 16);
+			for (int i = 0; i < CX; i++) cout << memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 			cout << "]" << endl;;
 		}
 		
 		do
 		{
 			if (!CX) break;
-			Result_16 = memory.read_2(Source_Index + *DS * 16) - memory.read_2(Destination_Index + *ES * 16);
-			OF_Carry = ((memory.read_2(Source_Index + *DS * 16) & 0x7F) - (memory.read_2(Destination_Index + *ES * 16) & 0x7F)) >> 7;
-			//if (log_to_console || 1) cout << " (" << memory.read_2(Source_Index + *DS * 16) << "-" << memory.read_2(Destination_Index + *ES * 16) << ") ";
+			Result_16 = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] - memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			OF_Carry = ((memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] & 0x7F) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 0x7F)) >> 7;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
-			//cout << (int)Flag_ZF << endl;
 			Flag_PF = parity_check[Result_16 & 255];
-			Flag_AF = (((memory.read_2(Source_Index + *DS * 16) & 0x0F) - (memory.read_2(Destination_Index + *ES * 16) & 0x0F)) >> 4) & 1;
+			Flag_AF = (((memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] & 0x0F) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 0x0F)) >> 4) & 1;
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -17110,16 +8373,39 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 
 	case 0b10100111:  //CMPS 16
 
-		if (log_to_console) cout << "CMPS_W (" << (int)CX << " word) from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]" << endl;
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "CMPS_W (" << (int)CX << " word) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]" << endl;
 		do
 		{
 			if (!CX) break;
-			Src = memory.read_2(Source_Index + *DS * 16);
-			Dst = memory.read_2(Destination_Index + *ES * 16);
+			Src = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+			Dst = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 			Destination_Index++;
 			Source_Index++;
-			Src += memory.read_2(Source_Index + *DS * 16) * 256;
-			Dst += memory.read_2(Destination_Index + *ES * 16) * 256;
+			Src += memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] * 256;
+			Dst += memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] * 256;
 
 			Result_32 = Src - Dst;
 			if (log_to_console) cout << (int)Src << " - " << (int)Dst << " = " << (int)Result_32;
@@ -17149,19 +8435,21 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		break;
 
 	case 0b10101110:  //SCAS 8
+		
 		if (log_to_console) cout << "SCAS_B (" << (int)CX << " bytes) from [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+		if (!CX) break;
 		do
 		{
-			if (!CX) break;
-			uint16 Result = (AX & 255) - memory.read_2(Destination_Index + *ES * 16);
-			OF_Carry = ((AX & 0x7F) - (memory.read_2(Destination_Index + *ES * 16) & 0x7F)) >> 7;
+			
+			uint16 Result = *ptr_AL - memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			OF_Carry = ((*ptr_AL & 0x7F) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 0x7F)) >> 7;
 			Flag_CF = (Result >> 8) & 1;
 			Flag_SF = ((Result >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((AX & 15) - (memory.read_2(Destination_Index + *ES * 16) & 15)) >> 4) & 1;
+			Flag_AF = (((*ptr_AL & 15) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 15)) >> 4) & 1;
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -17205,10 +8493,34 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		break;
 
 	case 0b10101100:  //LODS 8
-		if (log_to_console) cout << "LODS_B (" << (int)CX << " bytes) from [" << (int)*DS << "]:[" << (int)Source_Index << "]";
+		
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "LODS_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
 		while (CX)
 		{
-			AX = (AX & 0xFF00) | memory.read_2(Source_Index + *DS * 16);
+			*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			if (Flag_DF)
 			{
 				Source_Index--;
@@ -17222,12 +8534,36 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		break;
 
 	case 0b10101101:  //LODS 16
-		if (log_to_console) cout << "LODS_B (" << (int)CX << " words) from [" << (int)*DS << "]:[" << (int)Source_Index << "]";
+		
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "LODS_B (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
 		while (CX)
 		{
-			AX = memory.read_2(Source_Index + *DS * 16);
+			*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			Source_Index++;
-			AX += memory.read_2(Source_Index + *DS * 16) * 256;
+			*ptr_AH = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			if (Flag_DF)
 			{
 				Source_Index -= 3;
@@ -17245,7 +8581,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "STOS_B (" << (int)CX << " bytes) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, AX & 255);
+			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -17263,9 +8599,9 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "STOS_W (" << (int)CX << " words) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, AX & 255);
+			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
 			Destination_Index++;
-			memory.write_2(Destination_Index + *ES * 16, AX >> 8);
+			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AH;
 			if (Flag_DF)
 			{
 				Destination_Index -= 3;
@@ -17299,16 +8635,38 @@ void REP()			//REP = Repea while CX > 0			[F3]
 	uint8 OP = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Result_16 = 0;
 	uint32 Result_32 = 0;
-	bool OF_Carry = false;
+	
 	if (log_to_console) cout << "REP[F3] ";
 	switch (OP)
 	{
 	case 0b10100100:  //MOVS 8
-		
-		if (log_to_console) cout << "MOVES_B (" << (int)CX << " bytes) from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]"; 
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "MOVES_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -17325,13 +8683,36 @@ void REP()			//REP = Repea while CX > 0			[F3]
 
 	case 0b10100101:  //MOVS 16
 
-		if (log_to_console) cout << "MOVES_W (" << (int)CX << " words) from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "MOVES_W (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
 			Destination_Index ++;
 			Source_Index ++;
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
 			if (Flag_DF)
 			{
 				Destination_Index -= 3;
@@ -17348,11 +8729,34 @@ void REP()			//REP = Repea while CX > 0			[F3]
 
 	case 0b10100110:  //CMPS 8
 		
-		if (log_to_console) cout << "CMPS_B while == 0 (" << (int)CX << " bytes) from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]  ";
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "CMPS_B while == 0 (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]  ";
 		if (log_to_console)
 		{
 			cout << "[";
-			for (int i = 0; i < CX; i = i + (1 + Flag_DF * -2)) cout << memory.read_2(Source_Index + i + *DS * 16);
+			for (int i = 0; i < CX; i = i + (1 + Flag_DF * -2)) cout << memory.read_2(Source_Index + i + operand_RM_seg * 16);
 			cout << "][";
 			for (int i = 0; i < CX; i = i + (1 + Flag_DF * -2)) cout << memory.read_2(Destination_Index + i + *ES * 16);
 			cout << "]" << endl;
@@ -17361,8 +8765,8 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		do
 		{
 			if (!CX) break;
-			Result_16 = memory.read_2(Source_Index + *DS * 16) - memory.read_2(Destination_Index + *ES * 16);
-			OF_Carry = ((memory.read_2(Source_Index + *DS * 16) & 0x7F) - (memory.read_2(Destination_Index + *ES * 16) & 0x7F)) >> 7;
+			Result_16 = memory.read_2(Source_Index + operand_RM_seg * 16) - memory.read_2(Destination_Index + *ES * 16);
+			OF_Carry = ((memory.read_2(Source_Index + operand_RM_seg * 16) & 0x7F) - (memory.read_2(Destination_Index + *ES * 16) & 0x7F)) >> 7;
 			//if (log_to_console || 1) cout << " (" << memory.read_2(Source_Index + *DS * 16) << "-" << memory.read_2(Destination_Index + *ES * 16) << ") ";
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
@@ -17371,7 +8775,7 @@ void REP()			//REP = Repea while CX > 0			[F3]
 			else Flag_ZF = true;
 			//cout << (int)Flag_ZF << endl;
 			Flag_PF = parity_check[Result_16 & 255];
-			Flag_AF = (((memory.read_2(Source_Index + *DS * 16) & 0x0F) - (memory.read_2(Destination_Index + *ES * 16) & 0x0F)) >> 4) & 1;
+			Flag_AF = (((memory.read_2(Source_Index + operand_RM_seg * 16) & 0x0F) - (memory.read_2(Destination_Index + *ES * 16) & 0x0F)) >> 4) & 1;
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -17388,15 +8792,38 @@ void REP()			//REP = Repea while CX > 0			[F3]
 
 	case 0b10100111:  //CMPS 16
 
-		if (log_to_console) cout << "CMPS_W (" << (int)CX << " word) from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "CMPS_W (" << (int)CX << " word) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		do
 		{
 			if (!CX) break;
-			*ptr_Src_L = memory_2[(Source_Index + *DS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			*ptr_Dst_L = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 			Destination_Index++;
 			Source_Index++;
-			*ptr_Src_H = memory_2[(Source_Index + *DS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			*ptr_Dst_H = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 			Result_32 = Src - Dst;
 			if (log_to_console) cout << (int)Src << " - " << (int)Dst << " = " << (int)Result_32;
@@ -17484,10 +8911,33 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		break;
 
 	case 0b10101100:  //LODS 8
-		if (log_to_console) cout << "LODS_B (" << (int)CX << " bytes) from [" << (int)*DS << "]:[" << (int)Source_Index << "]";
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "LODS_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
 		while (CX)
 		{
-			AX = (AX & 0xFF00) | memory.read_2(Source_Index + *DS * 16);
+			*ptr_AL = memory.read_2(Source_Index + operand_RM_seg * 16);
 			if (Flag_DF)
 			{
 				Source_Index--;
@@ -17501,12 +8951,35 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		break;
 
 	case 0b10101101:  //LODS 16
-		if (log_to_console) cout << "LODS_B (" << (int)CX << " words) from [" << (int)*DS << "]:[" << (int)Source_Index << "]";
+		switch (Flag_segment_override)
+		{
+		case 0:
+			//ничего не меняем
+			operand_RM_seg = *DS;
+			break;
+		case 1:
+			//меняем на ES
+			operand_RM_seg = *ES;
+			break;
+		case 2:
+			//меняем на CS
+			operand_RM_seg = *CS;
+			break;
+		case 3:
+			//меняем на SS
+			operand_RM_seg = *SS;
+			break;
+		case 4:
+			//ничего не меняем (уже DS)
+			operand_RM_seg = *DS;
+			break;
+		}
+		if (log_to_console) cout << "LODS_B (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
 		while (CX)
 		{
-			*ptr_AL = memory.read_2(Source_Index + *DS * 16);
+			*ptr_AL = memory.read_2(Source_Index + operand_RM_seg * 16);
 			Source_Index++;
-			*ptr_AH = memory.read_2(Source_Index + *DS * 16);
+			*ptr_AH = memory.read_2(Source_Index + operand_RM_seg * 16);
 			if (Flag_DF)
 			{
 				Source_Index -= 3;
@@ -17524,7 +8997,7 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		if (log_to_console) cout << "STOS_B (" << (int)CX << " bytes) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, AX & 255);
+			memory.write_2(Destination_Index + *ES * 16, *ptr_AL);
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -17542,9 +9015,9 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		if (log_to_console) cout << "STOS_W (" << (int)CX << " words) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, AX & 255);
+			memory.write_2(Destination_Index + *ES * 16, *ptr_AL);
 			Destination_Index++;
-			memory.write_2(Destination_Index + *ES * 16, AX >> 8);
+			memory.write_2(Destination_Index + *ES * 16, *ptr_AH);
 			if (Flag_DF)
 			{
 				Destination_Index -= 3;
@@ -17575,8 +9048,32 @@ void REP()			//REP = Repea while CX > 0			[F3]
 }
 void MOVES_8()    //MOVS = Move String 8bit
 {
-	if (log_to_console) cout << "MOVES_B("<< (int)memory.read_2(Source_Index + *DS * 16) << ") from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-	memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	
+	if (log_to_console) cout << "MOVES_B("<< (int)memory.read_2(Source_Index + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+	memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 	if (Flag_DF)
 	{
 		Destination_Index--;
@@ -17591,11 +9088,34 @@ void MOVES_8()    //MOVS = Move String 8bit
 }
 void MOVES_16()   //MOVS = Move String 16bit
 {
-	if (log_to_console) cout << "MOVES_W ("<< (int)memory.read_2(Source_Index + *DS * 16) << (int)memory.read_2(Source_Index + 1 + *DS * 16) << ") from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-	memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	if (log_to_console) cout << "MOVES_W ("<< (int)memory.read_2(Source_Index + operand_RM_seg * 16) << (int)memory.read_2(Source_Index + 1 + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+	memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
 	Destination_Index++;
 	Source_Index++;
-	memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + *DS * 16));
+	memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
 	if (Flag_DF)
 	{
 		Destination_Index -= 3;
@@ -17610,8 +9130,31 @@ void MOVES_16()   //MOVS = Move String 16bit
 }
 void CMPS_8()     //CMPS = Compare String
 {
-	if (log_to_console) cout << "CMPS_8 SOLO (" << memory.read_2(Source_Index + *DS * 16) << ") from [" << (int)*DS << "]:[" << Source_Index << "] to [" << (int)*ES << "]:[" << Destination_Index << "]";
-	uint8 Src = memory.read_2(Source_Index + *DS * 16);
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	if (log_to_console) cout << "CMPS_8 SOLO (" << memory.read_2(Source_Index + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << Source_Index << "] to [" << (int)*ES << "]:[" << Destination_Index << "]";
+	uint8 Src = memory.read_2(Source_Index + operand_RM_seg * 16);
 	uint8 Dst = memory.read_2(Destination_Index + *ES * 16);
 	uint16 Result = Src - Dst;
 	bool OF_Carry = ((Src & 0x7F) - (Dst & 0x7F)) >> 7;
@@ -17636,10 +9179,33 @@ void CMPS_8()     //CMPS = Compare String
 }
 void CMPS_16()    //CMPS = Compare String
 {
-	if (log_to_console) cout << "CMPS_16 SOLO (" << (int)(memory.read_2(Source_Index + *DS * 16) + memory.read_2(Source_Index + *DS * 16)*256) << ") from [" << (int)*DS << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-	*ptr_Src_L = memory_2[(Source_Index + *DS * 16) & 0xFFFFF];
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	if (log_to_console) cout << "CMPS_16 SOLO (" << (int)(memory.read_2(Source_Index + operand_RM_seg * 16) + memory.read_2(Source_Index + operand_RM_seg * 16)*256) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+	*ptr_Src_L = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 	Source_Index++;
-	*ptr_Src_H = memory_2[(Source_Index + *DS * 16) & 0xFFFFF];
+	*ptr_Src_H = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 	*ptr_Dst_L = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 	Destination_Index++;
 	*ptr_Dst_H = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
@@ -17716,8 +9282,32 @@ void SCAS_16()     //SCAS = Scan String
 }
 void LODS_8()     //LODS = Load String
 {
-	if (log_to_console) cout << "move string from [" << (int)*DS << "]:[" << Source_Index << "] to AL";
-	AX = (AX & 0xFF00)|memory.read_2(Source_Index + *DS * 16);
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	if (log_to_console) cout << "LODS_8 SOLO from [" << (int)operand_RM_seg << "]:[" << Source_Index << "] to AL";
+	*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+	if (log_to_console) cout << "(" << (int)*ptr_AL << ")";
 	if (Flag_DF)
 	{
 		Source_Index--;
@@ -17730,10 +9320,34 @@ void LODS_8()     //LODS = Load String
 }
 void LODS_16()    //LODS = Load String
 {
-	if (log_to_console) cout << "move string_w from [" << (int)*DS << "]:[" << Source_Index << "] to AX";
-	*ptr_AL = memory_2[(Source_Index + *DS * 16) & 0xFFFFF];
+	switch (Flag_segment_override)
+	{
+	case 0:
+		//ничего не меняем
+		operand_RM_seg = *DS;
+		break;
+	case 1:
+		//меняем на ES
+		operand_RM_seg = *ES;
+		break;
+	case 2:
+		//меняем на CS
+		operand_RM_seg = *CS;
+		break;
+	case 3:
+		//меняем на SS
+		operand_RM_seg = *SS;
+		break;
+	case 4:
+		//ничего не меняем (уже DS)
+		operand_RM_seg = *DS;
+		break;
+	}
+	if (log_to_console) cout << "LODS_16 SOLO from [" << (int)operand_RM_seg << "]:[" << Source_Index << "] to AX";
+	*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 	Source_Index++;
-	*ptr_AH = memory_2[(Source_Index + *DS * 16) & 0xFFFFF];
+	*ptr_AH = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+	if (log_to_console) cout << "("  << (int)AX << ")";
 	if (Flag_DF)
 	{
 		Source_Index-=3;
@@ -17746,8 +9360,8 @@ void LODS_16()    //LODS = Load String
 }
 void STOS_8()     //STOS = Store String
 {
-	if (log_to_console && memory.read_2(Instruction_Pointer + *CS * 16) != 0xF2 && memory.read_2(Instruction_Pointer + *CS * 16) != 0xF3) cout << "move string from AL to [" << (int)*ES << "]:[" << Destination_Index << "]";
-	memory.write_2(Destination_Index + *ES * 16, AX & 255);
+	if (log_to_console) cout << "STOS_8 SOLO string from AL(" << (int)*ptr_AL  << ") to [" << (int)*ES << "]:[" << Destination_Index << "]";
+	memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
 	if (Flag_DF)
 	{
 		Destination_Index--;
@@ -17760,10 +9374,10 @@ void STOS_8()     //STOS = Store String
 }
 void STOS_16()    //STOS = Store String
 {
-	if (log_to_console && memory.read_2(Instruction_Pointer + *CS * 16) != 0xF2 && memory.read_2(Instruction_Pointer + *CS * 16) != 0xF3) cout << "move string_w from AX to [" << (int)*ES << "]:[" << Destination_Index << "]";
-	memory.write_2(Destination_Index + *ES * 16, AX & 255);
+	if (log_to_console) cout << "STOS_16 SOLO string_w from AX (" << (int)AX << ") to [" << (int)*ES << "]:[" << Destination_Index << "]";
+	memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
 	Destination_Index++;
-	memory.write_2(Destination_Index + *ES * 16, AX >> 8);
+	memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AH;
 	if (Flag_DF)
 	{
 		Destination_Index -= 3;
@@ -17780,10 +9394,10 @@ void STOS_16()    //STOS = Store String
 // Call + Jump
 void Call_Near()				//Direct Call within Segment
 {
-	SetConsoleTextAttribute(hConsole, 13);
+	if (log_to_console)SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console) cout << "Direct Call within Segment. Ret to " << (int)*CS << ":" << Instruction_Pointer + 3;
 	//else cout << "Direct Call within Segment. Ret to " << (int)*CS << ":" << Instruction_Pointer + 3 << endl;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console)SetConsoleTextAttribute(hConsole, 7);
 	Stack_Pointer--;
 	memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 3) >> 8);
 	Stack_Pointer--;
@@ -17794,14 +9408,13 @@ void Call_Near()				//Direct Call within Segment
 // INC/DEC/CALL/JUMP/PUSH
 void Call_Jump_Push()				//Indirect (4 operations)
 {
-	uint8 byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
 	uint8 OP = (byte2 >> 3) & 7;
 	uint16 disp = 0;		//смещение
-	uint16 Src = 0;			//источник данных
 	additional_IPs = 0;
-	uint8 tmp;
 	uint16 old_IP = 0;
 	uint16 new_IP = 0;
+	uint16 new_CS = 0;
 	uint32 stack_addr = 0;
 
 
@@ -17809,281 +9422,101 @@ void Call_Jump_Push()				//Indirect (4 operations)
 	{
 	case 0:  //INC R/M 16bit
 	
-		//находим цель инкремента
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			Flag_AF = (((Src & 0x0F) + 1) >> 4) & 1;
-			Flag_OF = (((Src & 0x7FFF) + 1) >> 15) & 1;
-			Src++;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  Src >> 8);
-			if (Src) Flag_ZF = 0;
-			else Flag_ZF = 1;
-			Flag_SF = (Src >> 15) & 1;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "INC M" << OPCODE_comment << " = " << (int)Src;
-			break;
-		case 3:
 			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((AX & 0x7FFF) + 1) >> 15) & 1;
-				AX++;
-				Src = AX;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "INC AX = " << (int)Src;
-				break;
-			case 1:
-				Flag_AF = (((CX & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((CX & 0x7FFF) + 1) >> 15) & 1;
-				CX++;
-				Src = CX;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "INC CX = " << (int)Src;
-				break;
-			case 2:
-				Flag_AF = (((DX & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((DX & 0x7FFF) + 1) >> 15) & 1;
-				DX++;
-				Src = DX;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "INC DX = " << (int)Src;
-				break;
-			case 3:
-				Flag_AF = (((BX & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((BX & 0x7FFF) + 1) >> 15) & 1;
-				BX++;
-				Src = BX;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "INC BX = " << (int)Src;
-				break;
-			case 4:
-				Flag_AF = (((Stack_Pointer & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((Stack_Pointer & 0x7FFF) + 1) >> 15) & 1;
-				Stack_Pointer++;
-				Src = Stack_Pointer;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "INC SP = " << (int)Src;
-				break;
-			case 5:
-				Flag_AF = (((Base_Pointer & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((Base_Pointer & 0x7FFF) + 1) >> 15) & 1;
-				Base_Pointer++;
-				Src = Base_Pointer;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "INC BP = " << (int)Src;
-				break;
-			case 6:
-				Flag_AF = (((Source_Index & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((Source_Index & 0x7FFF) + 1) >> 15) & 1;
-				Source_Index++;
-				Src = Source_Index;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "INC SI = " << (int)Src;
-				break;
-			case 7:
-				Flag_AF = (((Destination_Index & 0x0F) + 1) >> 4) & 1;
-				Flag_OF = (((Destination_Index & 0x7FFF) + 1) >> 15) & 1;
-				Destination_Index++;
-				Src = Destination_Index;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "INC DI = " << (int)Src;
-				break;
-			}
+			
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 0x0F) + 1) >> 4) & 1;
+			Flag_OF = (((*ptr_r16[byte2 & 7] & 0x7FFF) + 1) >> 15) & 1;
+			++(*ptr_r16[byte2 & 7]);
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = 0;
+			else Flag_ZF = 1;
+			Flag_SF = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+			
+			if (log_to_console) cout << "INC " << reg16_name[byte2 & 7]  << " = " << (int)*ptr_r16[byte2 & 7];
+			
+			Instruction_Pointer += 2;
 		}
-		Instruction_Pointer += 2 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Flag_AF = (((*ptr_Src & 0x0F) + 1) >> 4) & 1;
+			Flag_OF = (((*ptr_Src & 0x7FFF) + 1) >> 15) & 1;
+			++(*ptr_Src);
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_H;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+			if (*ptr_Src) Flag_ZF = 0;
+			else Flag_ZF = 1;
+			Flag_SF = (*ptr_Src >> 15) & 1;
+			Flag_PF = parity_check[*ptr_Src & 255];
+			if (log_to_console) cout << "INC M" << OPCODE_comment << " = " << (int)*ptr_Src;
+
+			Instruction_Pointer += 2 + additional_IPs;
+		}
+		
 		break;
 
 	case 1:  //DEC R/M 16bit
 
-		//находим цель инкремента
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			Flag_AF = (((Src & 0x0F) - 1) >> 4) & 1;
-			Flag_OF = (((Src & 0x7FFF) - 1) >> 15) & 1;
-			Src--;
-			memory.write_2(New_Addr,  Src & 255);
-			memory.write_2(New_Addr + 1,  Src >> 8);
-			if (Src) Flag_ZF = 0;
-			else Flag_ZF = 1;
-			Flag_SF = (Src >> 15) & 1;
-			Flag_PF = parity_check[Src & 255];
-			if (log_to_console) cout << "DEC M" << OPCODE_comment << " = " << (int)Src;
-			break;
-		case 3:
 			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				Flag_AF = (((AX & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((AX & 0x7FFF) - 1) >> 15) & 1;
-				AX--;
-				Src = AX;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "DEC AX = " << (int)Src;
-				break;
-			case 1:
-				Flag_AF = (((CX & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((CX & 0x7FFF) - 1) >> 15) & 1;
-				CX--;
-				Src = CX;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "DEC CX = " << (int)Src;
-				break;
-			case 2:
-				Flag_AF = (((DX & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((DX & 0x7FFF) - 1) >> 15) & 1;
-				DX--;
-				Src = DX;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "DEC DX = " << (int)Src;
-				break;
-			case 3:
-				Flag_AF = (((BX & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((BX & 0x7FFF) - 1) >> 15) & 1;
-				BX--;
-				Src = BX;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "DEC BX = " << (int)Src;
-				break;
-			case 4:
-				Flag_AF = (((Stack_Pointer & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((Stack_Pointer & 0x7FFF) - 1) >> 15) & 1;
-				Stack_Pointer--;
-				Src = Stack_Pointer;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "DEC SP = " << (int)Src;
-				break;
-			case 5:
-				Flag_AF = (((Base_Pointer & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((Base_Pointer & 0x7FFF) - 1) >> 15) & 1;
-				Base_Pointer--;
-				Src = Base_Pointer;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "DEC BP = " << (int)Src;
-				break;
-			case 6:
-				Flag_AF = (((Source_Index & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((Source_Index & 0x7FFF) - 1) >> 15) & 1;
-				Source_Index--;
-				Src = Source_Index;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "DEC SI = " << (int)Src;
-				break;
-			case 7:
-				Flag_AF = (((Destination_Index & 0x0F) - 1) >> 4) & 1;
-				Flag_OF = (((Destination_Index & 0x7FFF) - 1) >> 15) & 1;
-				Destination_Index--;
-				Src = Destination_Index;
-				if (Src) Flag_ZF = 0;
-				else Flag_ZF = 1;
-				Flag_SF = (Src >> 15) & 1;
-				Flag_PF = parity_check[Src & 255];
-				if (log_to_console) cout << "DEC DI = " << (int)Src;
-				break;
-			}
+
+			Flag_AF = (((*ptr_r16[byte2 & 7] & 0x0F) - 1) >> 4) & 1;
+			Flag_OF = (((*ptr_r16[byte2 & 7] & 0x7FFF) - 1) >> 15) & 1;
+			--(*ptr_r16[byte2 & 7]);
+			if (*ptr_r16[byte2 & 7]) Flag_ZF = 0;
+			else Flag_ZF = 1;
+			Flag_SF = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
+
+			if (log_to_console) cout << "DEC " << reg16_name[byte2 & 7] << " = " << (int)*ptr_r16[byte2 & 7];
+
+			Instruction_Pointer += 2;
 		}
-		Instruction_Pointer += 2 + additional_IPs;
+		else
+		{
+			mod_RM_3(byte2);
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			Flag_AF = (((*ptr_Src & 0x0F) - 1) >> 4) & 1;
+			Flag_OF = (((*ptr_Src & 0x7FFF) - 1) >> 15) & 1;
+			--(*ptr_Src);
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_H;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+			if (*ptr_Src) Flag_ZF = 0;
+			else Flag_ZF = 1;
+			Flag_SF = (*ptr_Src >> 15) & 1;
+			Flag_PF = parity_check[*ptr_Src & 255];
+			if (log_to_console) cout << "DEC M" << OPCODE_comment << " = " << (int)*ptr_Src;
+
+			Instruction_Pointer += 2 + additional_IPs;
+		}
+
 		break;
 
 	case 2:  //Indirect Call within Segment
 
 		//рассчитываем адрес где находится адрес перехода
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			new_IP = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			break;
-		case 3:
 			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				new_IP = AX;
-				break;
-			case 1:
-				new_IP = CX;
-				break;
-			case 2:
-				new_IP = DX;
-				break;
-			case 3:
-				new_IP = BX;
-				break;
-			case 4:
-				new_IP = Stack_Pointer;
-				break;
-			case 5:
-				new_IP = Base_Pointer;
-				break;
-			case 6:
-				new_IP = Source_Index;
-				break;
-			case 7:
-				new_IP = Destination_Index;
-				break;
-			}
+			new_IP = *ptr_r16[byte2 & 7];
 		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			new_IP = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
+		}
+
 		old_IP = Instruction_Pointer;
 		stack_addr = SS_data * 16 + Stack_Pointer - 1;
 		Stack_Pointer--;
@@ -18092,212 +9525,105 @@ void Call_Jump_Push()				//Indirect (4 operations)
 		memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
 		
 		Instruction_Pointer = new_IP;
-		SetConsoleTextAttribute(hConsole, 13);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 		if (log_to_console) cout << "Near Indirect Call to " << (int)*CS << ":" << (int)Instruction_Pointer << " (ret to " << (int)*CS << ":" << (int)(old_IP + 2 + additional_IPs) << ")";
 		//else cout << "Near Indirect Call to " << (int)*CS << ":" << (int)Instruction_Pointer << " (ret to " << (int)*CS << ":" << (int)(old_IP + 2 + additional_IPs) << ")";
-		SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 		break;
 
 	case 3:  //Indirect Intersegment Call
 			//рассчитываем адрес, где хранится адрес перехода (IP + CS)
-		switch (byte2 >> 6)
-		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			break;
-		case 3:
-			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				New_Addr = AX;
-				break;
-			case 1:
-				New_Addr = CX;
-				break;
-			case 2:
-				New_Addr = DX;
-				break;
-			case 3:
-				New_Addr = BX;
-				break;
-			case 4:
-				New_Addr = Stack_Pointer;
-				break;
-			case 5:
-				New_Addr = Base_Pointer;
-				break;
-			case 6:
-				New_Addr = Source_Index;
-				break;
-			case 7:
-				New_Addr = Destination_Index;
-				break;
-			}
-		}
-		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, CS_data >> 8);
-		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, CS_data & 255);
-		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs)  >> 8);
-		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
 		
-		Instruction_Pointer = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		*CS = memory.read_2(New_Addr + 2) + memory.read_2(New_Addr + 3) * 256;
-		SetConsoleTextAttribute(hConsole, 13);
+		if ((byte2 >> 6) == 3)
+		{
+			operand_RM_seg = DS_data * 16;
+			operand_RM_offset = *ptr_r16[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+		}
+		
+		if (log_to_console) New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		
+		new_IP = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		new_IP = new_IP + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		operand_RM_offset++;
+		new_CS = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		new_CS = new_CS + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+
+		Stack_Pointer--;
+		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = CS_data >> 8;
+		Stack_Pointer--;
+		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = CS_data & 255;
+		Stack_Pointer--;
+		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] =  (Instruction_Pointer + 2 + additional_IPs) >> 8;
+		Stack_Pointer--;
+		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] =  (Instruction_Pointer + 2 + additional_IPs) & 255;
+		
+		Instruction_Pointer = new_IP;
+		*CS = new_CS;
+
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 		if (log_to_console) cout << "Indirect Intersegment Call to " << (int)*CS << ":" << (int)Instruction_Pointer;
-		if (log_to_console) cout << " DEBUG addr = " << (int)New_Addr;
-		//else cout << "Indirect Intersegment Call to " << (int)*CS << ":" << (int)Instruction_Pointer << endl;
-		SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) cout << " DEBUG addr = " << (int)New_Addr_32;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 		break;
 
 	case 4:  //Indirect Jump within Segment  (mod 100 rm)
 			//рассчитываем новый адрес в текущем сегменте
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Instruction_Pointer = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-			break;
-		case 3:
-			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				Instruction_Pointer = AX;
-				break;
-			case 1:
-				Instruction_Pointer = CX;
-				break;
-			case 2:
-				Instruction_Pointer = DX;
-				break;
-			case 3:
-				Instruction_Pointer = BX;
-				break;
-			case 4:
-				Instruction_Pointer = Stack_Pointer;
-				break;
-			case 5:
-				Instruction_Pointer = Base_Pointer;
-				break;
-			case 6:
-				Instruction_Pointer = Source_Index;
-				break;
-			case 7:
-				Instruction_Pointer = Destination_Index;
-				break;
-			}
+			Instruction_Pointer = *ptr_r16[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Instruction_Pointer = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
 		}
 		
-		SetConsoleTextAttribute(hConsole, 13);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 		if (log_to_console) cout << "Indirect Jump within Segment to " << (int)*CS << ":" << (int)Instruction_Pointer;
-		//if (log_to_console) cout << " DEBUG ADDR = " << (int)New_Addr;
-		SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 		break;
 
 	case 5:  //Indirect Intersegment Jump
 			//рассчитываем адрес, где хранится адрес перехода (IP + CS)
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			break;
-		case 3:
-			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				New_Addr = AX;
-				break;
-			case 1:
-				New_Addr = CX;
-				break;
-			case 2:
-				New_Addr = DX;
-				break;
-			case 3:
-				New_Addr = BX;
-				break;
-			case 4:
-				New_Addr = Stack_Pointer;
-				break;
-			case 5:
-				New_Addr = Base_Pointer;
-				break;
-			case 6:
-				New_Addr = Source_Index;
-				break;
-			case 7:
-				New_Addr = Destination_Index;
-				break;
-			}
+			New_Addr_32 = *ptr_r16[byte2 & 7];
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 		}
 
-		Instruction_Pointer = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
-		*CS = memory.read_2(New_Addr + 2) + memory.read_2(New_Addr + 3) * 256;
-		SetConsoleTextAttribute(hConsole, 13);
+		Instruction_Pointer = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
+		*CS = memory_2[New_Addr_32 + 2] + memory_2[New_Addr_32 + 3] * 256;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 		if (log_to_console) cout << "Indirect Intersegment Jump to " << (int)*CS << ":" << (int)Instruction_Pointer;
-		SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 		break;
 
 	case 6:  //PUSH Register/Memory 16bit
 	case 7:  //ALIAS
 			 //определяем источник данных
-		switch (byte2 >> 6)
+		if ((byte2 >> 6) == 3)
 		{
-		case 0:
-		case 1:
-		case 2:
-			New_Addr = mod_RM_2(byte2);
-			Src = memory.read_2(New_Addr) + memory.read_2(New_Addr + 1) * 256;
+			Src = *ptr_r16[byte2 & 7];
+			if ((byte2 & 7) == 4) Src -= 2; //если кладем SP, он должен быть уже уменьшен
+			if (log_to_console) cout << "PUSH " << reg16_name[byte2 & 7] << "(" << (int)Src << ")";
+		}
+		else
+		{
+			mod_RM_3(byte2);
+			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			Src = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
 			if (log_to_console) cout << "PUSH M" << OPCODE_comment;
-			break;
-		case 3:
-			// mod 11 - адрес в регистре
-			switch (byte2 & 7)
-			{
-			case 0:
-				Src = AX;
-				if (log_to_console) cout << "PUSH AX("<<(int)Src<<")";
-				break;
-			case 1:
-				Src = CX;
-				if (log_to_console) cout << "PUSH CX(" << (int)Src << ")";
-				break;
-			case 2:
-				Src = DX;
-				if (log_to_console) cout << "PUSH DX(" << (int)Src << ")";
-				break;
-			case 3:
-				Src = BX;
-				if (log_to_console) cout << "PUSH BX(" << (int)Src << ")";
-				break;
-			case 4:
-				Src = Stack_Pointer - 2;
-				if (log_to_console) cout << "PUSH SP(" << (int)Src << ")";
-				break;
-			case 5:
-				Src = Base_Pointer;
-				if (log_to_console) cout << "PUSH BP(" << (int)Src << ")";
-				break;
-			case 6:
-				Src = Source_Index;
-				if (log_to_console) cout << "PUSH SI(" << (int)Src << ")";
-				break;
-			case 7:
-				Src = Destination_Index;
-				if (log_to_console) cout << "PUSH DI(" << (int)Src << ")";
-				break;
-			}
 		}
 		//пушим число
 		Stack_Pointer--;
@@ -18328,33 +9654,33 @@ void Call_dir_interseg()		//Direct Intersegment Call
 	new_CS += memory.read_2(Instruction_Pointer + *CS * 16) * 256;
 	Instruction_Pointer = new_IP;
 	*CS = new_CS;
-	SetConsoleTextAttribute(hConsole, 13);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console) cout << "Direct Intersegment Call to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	//else cout << "Direct Intersegment Call to " << (int)*CS << ":" << (int)Instruction_Pointer << endl;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void Jump_Near_8()				//Direct jump within Segment-Short
 {
 	Instruction_Pointer += DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
-	SetConsoleTextAttribute(hConsole, 15);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
 	if (log_to_console) cout << "Direct jump(8) within Segment-Short to " << (int)*CS << ":" << (int)Instruction_Pointer;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void Jump_Near_16()				//Direct jump within Segment-Short
 {
 	Instruction_Pointer += DispCalc16(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256) + 3;
-	SetConsoleTextAttribute(hConsole, 15);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
 	if (log_to_console) cout << "Direct jump(16) within Segment-Short to " << (int)*CS << ":" << (int)Instruction_Pointer;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void Jump_Far()					//Direct Intersegment Jump
 {
 	uint16 new_IP = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
 	*CS = memory.read_2(Instruction_Pointer + 3 + *CS * 16) + memory.read_2(Instruction_Pointer + 4 + *CS * 16) * 256;
 	Instruction_Pointer = new_IP;
-	SetConsoleTextAttribute(hConsole, 15);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
 	if (log_to_console) cout << "Direct Intersegment Jump to " << (int)*CS << ":" << (int)Instruction_Pointer;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 
 // Conditional Jumps
@@ -18363,16 +9689,16 @@ void JE_JZ()			// JE/JZ = Jump on Equal/Zero
 	if (Flag_ZF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
-		SetConsoleTextAttribute(hConsole, 15);
+		//if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
 		if (log_to_console) cout << "Jump on Equal / Zero (JE/JZ) to " << (int)*CS << ":" << (int)Instruction_Pointer;
-		SetConsoleTextAttribute(hConsole, 7);
+		//if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
-		SetConsoleTextAttribute(hConsole, 15);
+		//if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
 		if (log_to_console) cout << "NOT Jump on Equal / Zero (JE/JZ)";
-		SetConsoleTextAttribute(hConsole, 7);
+		//if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JL_JNGE()			// JL/JNGE = Jump on Less/Not Greater, or Equal
@@ -18380,16 +9706,16 @@ void JL_JNGE()			// JL/JNGE = Jump on Less/Not Greater, or Equal
 	if (Flag_SF ^ Flag_OF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
-		SetConsoleTextAttribute(hConsole, 15);
+		//if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
 		if (log_to_console) cout << "Jump on Less/Not Greater, or Equal (JL/JNGE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
-		SetConsoleTextAttribute(hConsole, 7);
+		//if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
-		SetConsoleTextAttribute(hConsole, 15);
+		//if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
 		if (log_to_console) cout << "NOT Jump on Less/Not Greater, or Equal (JL/JNGE)";
-		SetConsoleTextAttribute(hConsole, 7);
+		//if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JLE_JNG()			// JLE/JNG = Jump on Less, or Equal/Not Greater
@@ -18637,10 +9963,10 @@ void RET_Segment()					//Return Within Segment
 	uint32 stack_addr = SS_data * 16 + Stack_Pointer;
 	Instruction_Pointer = memory.read_2(stack_addr) + memory.read_2(stack_addr + 1) * 256;
 	Stack_Pointer += 2;
-	SetConsoleTextAttribute(hConsole, 13);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console) cout << "Near RET to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	//else cout << "Near RET to " << (int)*CS << ":" << (int)Instruction_Pointer << endl;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void RET_Segment_IMM_SP()			//Return Within Segment Adding Immediate to SP
 {
@@ -18648,10 +9974,10 @@ void RET_Segment_IMM_SP()			//Return Within Segment Adding Immediate to SP
 	uint32 stack_addr = SS_data * 16 + Stack_Pointer;
 	Instruction_Pointer = memory.read_2(stack_addr) + memory.read_2(stack_addr + 1) * 256;
 	Stack_Pointer += 2 + pop_bytes;
-	SetConsoleTextAttribute(hConsole, 13);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console) cout << "Near RET to " << (int)*CS << ":" << (int)Instruction_Pointer << " + " << pop_bytes << " bytes popped";
 	//else  cout << "Near RET to " << (int)*CS << ":" << (int)Instruction_Pointer << " + " << pop_bytes << " bytes popped" << endl;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void RET_Inter_Segment()			//Return Intersegment
 {
@@ -18660,10 +9986,10 @@ void RET_Inter_Segment()			//Return Intersegment
 	Stack_Pointer += 2;
 	*CS = memory.read_2(Stack_Pointer + SS_data * 16) + memory.read_2(Stack_Pointer + 1 + SS_data * 16) * 256;
 	Stack_Pointer += 2;
-	SetConsoleTextAttribute(hConsole, 13);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console) cout << "Far RET to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	//else cout << "Far RET to " << (int)*CS << ":" << (int)Instruction_Pointer << endl;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void RET_Inter_Segment_IMM_SP()		//Return Intersegment Adding Immediate to SP
 {
@@ -18678,10 +10004,10 @@ void RET_Inter_Segment_IMM_SP()		//Return Intersegment Adding Immediate to SP
 	Stack_Pointer++;
 	*CS += memory.read_2(Stack_Pointer + SS_data * 16) * 256;
 	Stack_Pointer += 1 + pop_bytes;
-	SetConsoleTextAttribute(hConsole, 13);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console || last_INT == 0x21) cout << "Far RET to " << (int)*CS << ":" << (int)Instruction_Pointer << " + " << pop_bytes << " bytes popped " << " AX(" << (int)AX << ") CF=" << (int)Flag_CF;
 	if (!log_to_console && last_INT == 0x21) cout << endl;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 
 //========Conditional Transfer-===============
@@ -18695,14 +10021,9 @@ void INT_N()			//INT = Interrupt
 
 	uint8 int_type = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
 
-	if (!Flag_IF && !test_mode)
-	{
-		if (log_to_console) cout << "INT("<<(int)int_type<<") disabled!";
-		Instruction_Pointer += 2;
-		return;
-	}
-	
 	last_INT = int_type;
+
+	//if (int_type == 0) cout << "int0!";
 
 	//определяем новый IP и CS
 	uint16 new_IP = memory.read_2(int_type * 4) + memory.read_2(int_type * 4 + 1) * 256;
@@ -18732,48 +10053,60 @@ void INT_N()			//INT = Interrupt
 	*CS = new_CS;
 	uint16 old = Instruction_Pointer;
 	Instruction_Pointer = new_IP;
-	SetConsoleTextAttribute(hConsole, 10);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	//if (int_type != 0x10) cout << "INT " << (int)int_type << " (AX=" << (int)AX << ") -> " << (int)new_CS << ":" << (int)Instruction_Pointer << " call from " << old << endl;
 	if (log_to_console) cout << "INT " << (int)int_type << " (AX=" << (int)AX << ") -> " << (int)new_CS << ":" << (int)Instruction_Pointer << " call from " << old;
-	if (int_type == 0x13)
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+	if ((int_type == 0x13) && !test_mode)
 	{
-		
+		//step_mode = 1;
+		if (*ptr_DL > 4) HDD_monitor.log("INT13(HDD) drv=" + int_to_hex(DX & 255, 2) + " AX = " + int_to_hex(AX, 4));
 		//добавляем инфу по вызову
-		if (log_to_console_FDD && (AX >> 8) == 2) FDD_monitor.log("INT13 drv=" + int_to_hex(DX & 255,2) + " head=" + int_to_hex(DX >> 8, 2) + " track=" + int_to_hex(CX >> 8, 2) + " sector_beg=" + int_to_hex(CX & 255, 2) + " sector_num=" + int_to_hex(AX & 255,2)
-			+ " buff = [" + int_to_hex(*ES,4) + ":" + int_to_hex(BX,4) + "]");
-		if (log_to_console && (AX >> 8) == 0) cout << "RESET ";
-		if (log_to_console && (AX >> 8) == 1) cout << "STATUS ";
-		if (log_to_console && (AX >> 8) == 2) cout << "READ ";
-		if (log_to_console && (AX >> 8) == 3) cout << "WRITE ";
-		if (log_to_console && (AX >> 8) == 4) cout << "VERIFY ";
-		if (log_to_console && (AX >> 8) == 5) cout << "FORMAT ";
-		if (log_to_console) cout << "  drv=" << (int)(DX & 255) << " head=" << (int)(DX >> 8) << " track=" << (int)(CX >> 8) << " sector_beg=" << (int)(CX & 255) << " sector_num=" << (int)(AX & 255)
-			<< " buff = [" << (int)*ES << ":" << (int)BX << "]";
+
+#ifdef DEBUG
+		if (log_to_console_FDD && (AX >> 8) == 2 && (*ptr_DL < 4)) FDD_monitor.log("INT13(READ) drv=" + int_to_hex(DX & 255, 2) + " head=" + int_to_hex(DX >> 8, 2) + " track=" + int_to_hex(CX >> 8, 2) + " sector_beg=" + int_to_hex(CX & 255, 2) + " sector_num=" + int_to_hex(AX & 255, 2) + " buff = [" + int_to_hex(*ES, 4) + ":" + int_to_hex(BX, 4) + "]");
+		if (log_to_console_HDD && (AX >> 8) == 2 && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD READ) drv=" + int_to_hex(DX & 255, 2) + " head=" + int_to_hex(DX >> 8, 2) + " track=" + int_to_hex(CX >> 8, 2) + " sector_beg=" + int_to_hex(CX & 255, 2) + " sector_num=" + int_to_hex(AX & 255, 2) + " buff = [" + int_to_hex(*ES, 4) + ":" + int_to_hex(BX, 4) + "]");
+		if (log_to_console_HDD && (AX >> 8) == 0xA && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD READLONG) drv=" + int_to_hex(DX & 255,2) + " head=" + int_to_hex(DX >> 8, 2) + " track=" + int_to_hex(CX >> 8, 2) + " sector_beg=" + int_to_hex(CX & 255, 2) + " sector_num=" + int_to_hex(AX & 255,2) + " buff = [" + int_to_hex(*ES,4) + ":" + int_to_hex(BX,4) + "]");
+		if (log_to_console_FDD && (AX >> 8) == 3 && (*ptr_DL < 4)) FDD_monitor.log("INT13(WRITE) drv=" + int_to_hex(DX & 255, 2) + " head=" + int_to_hex(DX >> 8, 2) + " track=" + int_to_hex(CX >> 8, 2) + " sector_beg=" + int_to_hex(CX & 255, 2) + " sector_num=" + int_to_hex(AX & 255, 2) + " buff = [" + int_to_hex(*ES, 4) + ":" + int_to_hex(BX, 4) + "]");
+		if (log_to_console_HDD && (AX >> 8) == 3 && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD WRITE) drv=" + int_to_hex(DX & 255, 2) + " head=" + int_to_hex(DX >> 8, 2) + " track=" + int_to_hex(CX >> 8, 2) + " sector_beg=" + int_to_hex(CX & 255, 2) + " sector_num=" + int_to_hex(AX & 255, 2) + " buff = [" + int_to_hex(*ES, 4) + ":" + int_to_hex(BX, 4) + "]");
+		if (log_to_console_HDD && (AX >> 8) == 0xB && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD WRITE LONG) drv=" + int_to_hex(DX & 255, 2) + " head=" + int_to_hex(DX >> 8, 2) + " track=" + int_to_hex(CX >> 8, 2) + " sector_beg=" + int_to_hex(CX & 255, 2) + " sector_num=" + int_to_hex(AX & 255, 2) + " buff = [" + int_to_hex(*ES, 4) + ":" + int_to_hex(BX, 4) + "]");
+		if (log_to_console_HDD && (AX >> 8) == 0x10 && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD TEST DISK READY) drv=" + int_to_hex(DX & 255, 2));
+		if (log_to_console_HDD && (AX >> 8) == 0x11 && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD RECALIBRATE) drv=" + int_to_hex(DX & 255, 2));
+		if (log_to_console_HDD && (AX >> 8) == 0x12 && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD CTRL RAM DIAG) drv=" + int_to_hex(DX & 255, 2));
+		if (log_to_console_HDD && (AX >> 8) == 0x13 && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD CTRL DRIVE DIAG) drv=" + int_to_hex(DX & 255, 2));
+		if (log_to_console_HDD && (AX >> 8) == 0x14 && (*ptr_DL > 4)) HDD_monitor.log("INT13(HDD CTRL INTNL DIAG) drv=" + int_to_hex(DX & 255, 2));
+#endif
+
 	}
-	else
+	//прерывания DOS
+	if ((int_type == 0x21) && !test_mode && *ptr_AH != 0x2c)
 	{
-		if (int_type == 0x21)
+		if (log_to_console_DOS) cout << "INT 21H from [" << (int)*CS << ":" << (int)Instruction_Pointer << "]" << " (AX=" << (int)AX << ") ";
+		if (*ptr_AH == 0x40)
 		{
-			cout << "INT 21H from [" << (int)*CS << ":" << (int)Instruction_Pointer << "]" << " (AX=" << (int)AX << ") ";
-			if (*ptr_AH == 0x40) SetConsoleTextAttribute(hConsole, 14);
-			cout << get_int21_data();
-			if (!log_to_console) cout << endl;
-
+			if (log_to_console_DOS) SetConsoleTextAttribute(hConsole, 14); //выделение функции 40
+			//if (*ptr_AL == 0) log_to_console = 1;
 		}
-		
-		//if (int_type == 0x10) cout << "INT " << (int)int_type << " from [" << (int)*CS << ":" << (int)Instruction_Pointer << "]" << " (AX=" << (int)AX << ")" << endl;
-
+		if (log_to_console_DOS) cout << get_int21_data() << endl;
+		if (log_to_console_DOS) SetConsoleTextAttribute(hConsole, 7);
+		//if (*ptr_AH == 0x25) step_mode = 1;
+		//if (!log_to_console) cout << endl;
 	}
-	SetConsoleTextAttribute(hConsole, 7);
+		
+	if (int_type == 0x10 && !test_mode && log_to_console_DOS)
+	{
+		if (*ptr_AH == 0 || *ptr_AH == 0xb) cout << "INT 10H from [" << (int)*CS << ":" << (int)Instruction_Pointer << "]" << " (AX=" << (int)AX << ") -> ";
+		if (*ptr_AH == 0 || *ptr_AH == 0xb) cout << get_int10_data() << endl;
+	}
+		
+	if (int_type == 0x19)
+	{
+		HDD_monitor.log("INT19 - boot");
+		//step_mode = 1;
+	}
 }
 void INT_3()			//INT = Interrupt Type 3
 {
-	if (!Flag_IF && !test_mode)
-	{
-		if (log_to_console) cout << "INT disabled - return ";
-		Instruction_Pointer += 1;
-		return;
-	}
 	uint8 int_type = 3;
 	//определяем новый IP и CS
 	uint16 new_IP = memory.read_2(int_type * 4) + memory.read_2(int_type * 4 + 1) * 256;
@@ -18807,13 +10140,6 @@ void INT_3()			//INT = Interrupt Type 3
 }
 void INT_O()			//INTO = Interrupt on Overflow
 {
-	if (!Flag_IF && !test_mode)
-	{
-		if (log_to_console) cout << "INT disabled - return ";
-		Instruction_Pointer += 1;
-		return;
-	}
-	
 	if (Flag_OF)
 	{
 		//определяем новый IP и CS
@@ -18853,22 +10179,21 @@ void INT_O()			//INTO = Interrupt on Overflow
 void I_RET()			//Interrupt Return
 {
 	//POP IP
-	Instruction_Pointer = memory.read_2(SS_data * 16 + Stack_Pointer);
+	Instruction_Pointer = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
 	Stack_Pointer ++;
-	Instruction_Pointer += memory.read_2(SS_data * 16 + Stack_Pointer) * 256;
+	Instruction_Pointer += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
 	Stack_Pointer ++;
 
 	//POP CS
-	*CS = memory.read_2(SS_data * 16 + Stack_Pointer);
+	*CS = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
 	Stack_Pointer++;
-	*CS += memory.read_2(SS_data * 16 + Stack_Pointer) * 256;
+	*CS += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
 	Stack_Pointer++;
-	
 	
 	//POP Flags
-	int Flags = memory.read_2(SS_data * 16 + Stack_Pointer);
+	uint16 Flags = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
 	Stack_Pointer++;
-	Flags += memory.read_2(SS_data * 16 + Stack_Pointer) * 256;
+	Flags += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
 	Stack_Pointer++;
 	
 	Flag_OF = (Flags >> 11) & 1;
@@ -18881,10 +10206,9 @@ void I_RET()			//Interrupt Return
 	Flag_PF = (Flags >> 2) & 1;
 	Flag_CF = (Flags) & 1;
 
-	SetConsoleTextAttribute(hConsole, 10);
-	if (log_to_console || last_INT == 0x21) cout << "I_RET to " << *CS << ":" << Instruction_Pointer << " AX(" << (int)AX << ") CF=" << (int)Flag_CF;
-	if (!log_to_console && last_INT == 0x21) cout << endl;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
+	if (log_to_console) cout << "I_RET to " << *CS << ":" << Instruction_Pointer << " AX(" << (int)AX << ") CF=" << (int)Flag_CF;
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 
 //==========Processor Control=================
@@ -18928,68 +10252,1314 @@ void STI()					//Set Interrupt
 {
 	Flag_IF = true;
 	if (log_to_console) cout << "Set Interrupt Flag (INT enable)";
+	int_ctrl.set_timeout(1); //ставим задержку неактивности иначе возможны ошибки
 	Instruction_Pointer++;
 }
 void HLT()					//Halt
 {
-	cont_exec = false;
-	if (log_to_console) cout << "Halt!";
+	halt_cpu = true;
 	Instruction_Pointer++;
+	if (log_to_console) cout << "Halt! IP=" << (int)Instruction_Pointer;
 }
 void Wait()					//Wait
 {
-	if (log_to_console) cout << "Wait 8087 execute command (NOP)";
+	cout << "Wait 8087 execute command (NOP)";
+	if (!log_to_console) cout << endl;
 	Instruction_Pointer++;
+	step_mode = 1;
 }
 void Lock()					//Bus lock prefix
 {
 	if (log_to_console) cout << "Lock command";
+	//bus_lock = 2;  //флаг блокировки шины
+	//log_to_console = 1;
+	//step_mode = 1;
 	Instruction_Pointer++;
 }
 void Esc_8087()				//Call 8087
 {
 	//Декодируем инструкцию 8087
 	uint8 f_opcode = ((memory.read_2(Instruction_Pointer + *CS * 16) & 7) << 3) | ((memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] >> 3) & 7);
-	uint8 rm_code = ((memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] >> 3) & 0b11000) | (memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] & 7);
-	uint8 add_IP = 0;
-
-	switch (f_opcode)
-	{
-	case 0b011100:  //FINIT
-		if (log_to_console) cout << "FPU: INIT";
-		Instruction_Pointer += 2;
-		break;
-
-	case 0b101111:  //FSTSW (Store Status Word)
-		if (log_to_console) cout << "FPU: FSTSW";
-		if (rm_code == 0b00110) add_IP = 1;
-		Instruction_Pointer += 3 + add_IP;
-		break;
-	
-	case 0b011101:  //FLD (Load TEMP to ST0)
-		if (log_to_console) cout << "FPU: FSTSW";
-		if (rm_code == 0b00110) add_IP = 1;
-		Instruction_Pointer += 3 + add_IP;
-		break;
-
-	case 0b101110:  //FSAVE (Save State)
-		if (log_to_console) cout << "FPU: FSAVE";
-		if (rm_code == 0b00110) add_IP = 1;
-		Instruction_Pointer += 3 + add_IP;
-		break;
-
-	default:
-		if (log_to_console) cout << "FPU: unknown command";
-	}
-
+	op_code_table_8087[f_opcode]();
 }
 
 // ================ UNDOC ==============
 
 void CALC()
 {
-	if (Flag_CF) AX = AX | 0xFF;
-	else AX = AX & 0xFF00;
+	if (Flag_CF) *ptr_AL = 0xFF;
+	else *ptr_AL = 0;
 	if (log_to_console) cout << "CALC AL = " << (int)(AX & 255);
 	Instruction_Pointer++;
+}
+
+//=================== 8087 ========================
+
+void Esc_8087_001_000_Load()
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		//LOAD STi to ST0
+		if(log_to_console_8087) cout << "8087 (LOAD STi to ST0)" << endl;
+		Instruction_Pointer += 2;
+
+		//FFREE = Free ST(i)  ???
+	}
+	else
+	{
+	
+		//Load 32bit real to ST0
+		if (log_to_console_8087) cout << "8087 (Load 32bit real to ST0)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_011_000_Load()
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//Load 32bit integer to ST0
+		if (log_to_console_8087) cout << "8087 (Load 32bit integer to ST0)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_101_000_Load()
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//Load 64bit real to ST0
+		if (log_to_console_8087) cout << "8087 (64bit real to ST0)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_111_000_Load()
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		
+		// Load 64bit integer to ST0
+		if (log_to_console_8087) cout << "8087 (64bit integer to ST0)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_111_101_Load()  //LOAD long INT to ST0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		if (log_to_console_8087) cout << "8087 (LOAD long INT to ST0)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+void Esc_8087_011_101_Load()	//LOAD temp real to ST0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		if (log_to_console_8087) cout << "8087 (LOAD temp real to ST0)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+void Esc_8087_111_100_Load()	//LOAD BCD to ST0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		if (log_to_console_8087) cout << "8087 (LOAD BCD to ST0)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_001_010_Store()	//STORE ST0 to int/real
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		//FNOP = No Operation
+		if (log_to_console_8087) cout << "FNOP" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//STORE 32bit real
+		if (log_to_console_8087) cout << "8087 (STORE ST0 to int/real)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_011_010_Store()	//STORE ST0 to int/real
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		
+		//STORE 32bit integer
+		if (log_to_console_8087) cout << "8087 (STORE ST0 to int/real)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+void Esc_8087_101_010_Store()	//STORE ST0 to int/real
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		//LOAD ST0 to STi
+		if (log_to_console_8087) cout << "8087 (LOAD ST0 to STi)" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//Store 64bit real ST0 to memory
+		if (log_to_console_8087) cout << "8087 (Store 64bit real ST0 to memory)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+void Esc_8087_111_010_Store()	//STORE ST0 to int/real
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//STORE 64bit integer to MEM
+		if (log_to_console_8087) cout << "8087 (STORE 64bit integer to MEM)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_001_011_StorePop() //FSTP = Store and Pop
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//STOREPOP 32bit real
+		if (log_to_console_8087) cout << "8087 (STOREPOP 32bit real)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+void Esc_8087_011_011_StorePop() //FSTP = Store and Pop
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//STOREPOP 32bit integer
+		if (log_to_console_8087) cout << "8087 (STOREPOP 32bit integer)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+void Esc_8087_101_011_StorePop() //FSTP = Store and Pop + ST0 to STi 
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		//StorePop ST0 to STi
+		if (log_to_console_8087) cout << "8087 (StorePop ST0 to STi)" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//StorePop 64bit real
+		if (log_to_console_8087) cout << "8087 (StorePop 64bit real)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+
+}
+void Esc_8087_111_011_StorePop() //FSTP = Store and Pop
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//StorePop 64bit integer
+		if (log_to_console_8087) cout << "8087 (StorePop 64bit integer)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_111_111_StorePop() //StorePop ST0 Long Int to MEM
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//StorePop long integer to MEM
+		if (log_to_console_8087) cout << "8087 (StorePop long integer)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+void Esc_8087_011_111_StorePop() //StorePop ST0 to TMP real mem
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//StorePop ST0 to temp real MEM
+		if (log_to_console_8087) cout << "8087 (StorePop to temp real)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+void Esc_8087_111_110_StorePop() //StorePop ST0 to BCD mem
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//StorePop ST0 to BCD
+		if (log_to_console_8087) cout << "8087 (StorePop ST0 to BCD)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+	}
+}
+
+void Esc_8087_001_001_FXCH()	//EXchange ST0 - STi
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 (EXchange ST0 - STi)" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2 + additional_IPs;;
+	}
+}
+
+void Esc_8087_000_010_FCOM()		//FCOM = Compare + STi to ST0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		//StorePop ST0 to STi
+		if (log_to_console_8087) cout << "8087 (StorePop ST0 to STi)" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//StorePop 64bit real
+		if (log_to_console_8087) cout << "8087 (StorePop 64bit real)" << endl;
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+
+	}
+}
+void Esc_8087_010_010_FCOM()		//FCOM = Compare
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FCOM = Compare" << endl;
+	}
+}
+void Esc_8087_100_010_FCOM()		//FCOM = Compare
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FCOM = Compare" << endl;
+	}
+}
+void Esc_8087_110_010_FCOM()		//FCOM = Compare
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		if (log_to_console_8087) cout << "8087 illegal" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FCOM = Compare" << endl;
+	}
+}
+void Esc_8087_000_011_FCOM()		//FcomPop + STi to ST0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 STi to ST0" << endl;
+	}
+	else
+	{
+		//FCOMP
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FCOMP" << endl;
+	}
+}
+void Esc_8087_010_011_FCOM()		//FcomPop
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//FCOMP
+		byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FCOMP" << endl;
+	}
+}
+void Esc_8087_100_011_FCOM()		//FcomPop
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//FCOMP
+		byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FCOMP" << endl;
+	}
+}
+void Esc_8087_110_011_FCOM()		//FcomPop + FCOMPP
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		//FCOMPP
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FCOMPP" << endl;
+	}
+	else
+	{
+		//FCOMP
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FCOMP" << endl;
+
+	}
+}
+
+void Esc_8087_001_100_TEST()		//FTST/FXAM/FABS/FCHS
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		if ((byte2 & 0b11000111) == 0b11000000)
+		{
+			//FCHS = Change Sign of ST(O)
+			if (log_to_console_8087) cout << "8087 FCHS = Change Sign of ST(O)" << endl;
+			Instruction_Pointer += 2;
+			return;
+		}
+
+		if ((byte2 & 0b11000111) == 0b11000001)
+		{
+			//FADS = Absolute Value of ST(O)
+			if (log_to_console_8087) cout << "8087 FADS = Absolute Value of ST(O)" << endl;
+			Instruction_Pointer += 2;
+			return;
+		}
+
+		if ((byte2 & 0b11000111) == 0b11000100)
+		{
+			//FTST = Test ST(O)
+			if (log_to_console_8087) cout << "8087 FTST = Test ST(O)" << endl;
+			Instruction_Pointer += 2;
+			return;
+		}
+
+		if ((byte2 & 0b11000111) == 0b11000101)
+		{
+			//FXAM = Examine ST(O)
+			if (log_to_console_8087) cout << "8087 FXAM = Examine ST(O)" << endl;
+			Instruction_Pointer += 2;
+			return;
+		}
+
+		//отсутствующие инструкции
+		if (log_to_console_8087) cout << "8087 Illegal instruction" << endl;
+		Instruction_Pointer += 2;
+
+	}
+	else
+	{
+		//mod r/m
+		//FLDENV = Load Environment
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FLDENV = Load Environment" << endl;
+	}
+
+}
+
+void Esc_8087_000_000_FADD()		//FADD
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 00
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FADD" << endl;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FADD" << endl;
+	}
+}
+void Esc_8087_010_000_FADD()		//FADD
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 01
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FADD" << endl;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FADD" << endl;
+	}
+}
+void Esc_8087_100_000_FADD()		//FADD
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 10
+		//STi to ST0
+		if (log_to_console_8087) cout << "8087 FADD" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FADD" << endl;
+	}
+}
+void Esc_8087_110_000_FADD()		//FADD
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 11
+		//STi to ST0
+		if (log_to_console_8087) cout << "8087 FADD" << endl;
+		Instruction_Pointer += 2;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FADD" << endl;
+	}
+}
+
+void Esc_8087_000_100_FSUB()		//FSUB R = 0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 00
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FSUB R = 0" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSUB R = 0" << endl;
+	}
+}
+void Esc_8087_000_101_FSUB()		//FSUB R = 1
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 00
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FSUB R = 1" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSUB R = 1" << endl;
+	}
+}
+void Esc_8087_010_100_FSUB()		//FSUB R = 0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 01
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FSUB R = 0" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSUB R = 0" << endl;
+	}
+}
+void Esc_8087_010_101_FSUB()		//FSUB R = 1
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 01
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FSUB R = 1" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSUB R = 1" << endl;
+	}
+}
+void Esc_8087_100_100_FSUB()		//FSUB R = 0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 10
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FSUB R = 0" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSUB R = 0" << endl;
+	}
+}
+void Esc_8087_100_101_FSUB()		//FSUB R = 1
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 10
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FSUB R = 1" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSUB R = 1" << endl;
+	}
+}
+void Esc_8087_110_100_FSUB()		//FSUB R = 0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 11
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FSUB R = 0" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSUB R = 0" << endl;
+	}
+}
+void Esc_8087_110_101_FSUB()		//FSUB R = 1
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 11
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FSUB R = 1" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSUB R = 1" << endl;
+	}
+}
+
+void Esc_8087_000_001_FMUL()		//FMUL
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 00
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FMUL" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FMUL" << endl;
+	}
+}
+void Esc_8087_010_001_FMUL()		//FMUL
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 01
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FMUL" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FMUL" << endl;
+	}
+}
+void Esc_8087_100_001_FMUL()		//FMUL
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 10
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FMUL" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FMUL" << endl;
+	}
+}
+void Esc_8087_110_001_FMUL()		//FMUL
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 11
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FMUL" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FMUL" << endl;
+	}
+}
+
+void Esc_8087_000_110_FDIV()		//FDIV R = 0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 00
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FDIV R = 0" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FDIV R = 0" << endl;
+	}
+}
+void Esc_8087_000_111_FDIV()		//FDIV R = 1
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 00
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FDIV R = 1" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FDIV R = 1" << endl;
+	}
+}
+void Esc_8087_010_110_FDIV()		//FDIV R = 0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 01
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FDIV R = 0" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FDIV R = 0" << endl;
+	}
+}
+void Esc_8087_010_111_FDIV()		//FDIV R = 1
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 01
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FDIV R = 1" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FDIV R = 1" << endl;
+	}
+}
+void Esc_8087_100_110_FDIV()		//FDIV R = 0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 10
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FDIV R = 0" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FDIV R = 0" << endl;
+	}
+}
+void Esc_8087_100_111_FDIV()		//FDIV R = 1
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 10
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FDIV R = 1" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FDIV R = 1" << endl;
+	}
+}
+void Esc_8087_110_110_FDIV()		//FDIV R = 0
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 11
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FDIV R = 0" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FDIV R = 0" << endl;
+	}
+}
+void Esc_8087_110_111_FDIV()		//FDIV R = 1
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		//dP = 11
+		//STi to ST0
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "8087 FDIV R = 1" << endl;
+	}
+	else
+	{
+		//mod R/M
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FDIV R = 1" << endl;
+	}
+}
+
+void Esc_8087_001_111_FSQRT()		//FSQRT/FSCALE/FPREM/FRNDINIT/FYL2XP1/FSTCW
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		switch(byte2 & 7)
+		{ 
+		case 0: //FPREM	ST0/ST1	
+
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FPREM = Partial Remainder of ST(O) -;- ST(1)" << endl;
+			break;
+
+		case 1: //FYL2XP1
+
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FYL2XP1 = ST(1) X Log 2 [ST(O) + 1]" << endl;
+			break;
+
+		case 2: //FSQRT	of ST0	
+	
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FSQRT = Square Root of ST(O)" << endl;
+			break;
+
+		case 4: //FRNDINIT ST0 to INT
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FRNDINT = Round ST(O) to Integer" << endl;
+			break;
+
+		case 5: //FSCALE ST0 by ST1
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FSCALE = Scale ST(O) by ST(1)" << endl;
+			break;
+		
+		default:
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 illegal op" << endl;
+			break;
+
+		}
+	}
+	else
+	{
+		//mod r/m
+		//FSTCW
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSTCW" << endl;
+	}
+}
+
+void Esc_8087_001_110_FXTRACT()	//FXTRACT/FPTAN/F2XM1/FPATAN/FYL2X
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		switch (byte2 & 0b11000111)
+		{
+		case 0b11000000:
+
+			//F2XM1
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 F2XM1 = 2 s T(O) -1" << endl;
+			break;
+
+		case 0b11000001:
+
+			//FYL2X
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FYL2X = ST(1) X Log 2 [ST(O)]" << endl;
+			break;
+
+		case 0b11000010:
+
+			//FPTAN = Partial Tangent of ST(O)
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FPTAN = Partial Tangent of ST(O)" << endl;
+			break;
+
+		case 0b11000011:
+
+			//FPATAN = Partial Arctangent of ST(O) / ST(1)
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FPATAN = Partial Arctangent of ST(O) / ST(1)" << endl;
+			break;
+
+		case 0b11000100:
+
+			//FXTRACT = Extract Components of ST(O)
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FXTRACT = Extract Components of ST(O)" << endl;
+			break;
+
+		case 0b11000101:
+
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 illegal_OP 001_110" << endl;
+			break;
+
+		case 0b11000110:
+
+			//FDECSTP = Decrement Stack Pointer
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FDECSTP = Decrement Stack Pointer" << endl;
+			break;
+
+		case 0b11000111:
+
+			//FINCSTP = Increment Stack Pointer
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FINCSTP = Increment Stack Pointer" << endl;
+			break;
+		}
+	}
+	else
+	{
+		//mod r/m
+		//FSTENV = Store Environment
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSTENV = Store Environment" << endl;
+	}
+}
+
+void Esc_8087_001_101_FLDZ()		//FLDZ/FLD1/FLOPI/FLOL2T/FLOCW
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+
+	if ((byte2 >> 6) == 3)
+	{
+		switch (byte2 & 0b11000111)
+		{
+
+		case 0b11000000:
+			//FLD1
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FLD1 = Load + 1.0 into ST(O)" << endl;
+			break;
+
+		case 0b11000001:
+			//FLOL2T
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FLOL2T" << endl;
+			break;
+
+		case 0b11000011:
+			//FLOPI
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FLOPI" << endl;
+			break;
+
+		case 0b11000100:
+			//FLOLG2
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FLOLG2 = Load Log lO 2 into ST(O)" << endl;
+			break;
+
+		case 0b11000101:
+			//FLDLN2
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FLDLN2 = Load Loge 2 into ST(O)" << endl;
+			break;
+
+		case 0b11000110:
+			//FLDZ
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FLDZ = Load + 0.0 into ST(O)" << endl;
+			break;
+
+		default:
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 illegal op" << endl;
+			break;
+
+		}
+	}
+	else
+	{
+		//mod r/m
+		//FLOCW
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FLOCW" << endl;
+	}
+}
+
+void Esc_8087_011_100_FINIT()		//FINIT/FENI/FDISI
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		switch (byte2 & 0b11000111)
+		{
+
+		case 0b11000000:
+			//FENI = Enable Interrupts
+			//Flag_IF = 1;
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FENI = Enable Interrupts" << endl;
+			break;
+
+		case 0b11000001:
+			//FDISI = Disable Interrupts
+			//Flag_IF = 0;
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FDISI = Disable Interrupts" << endl;
+			break;
+
+		case 0b11000010:
+			//FCLEX = Clear Exceptions
+			Flag_IF = 0;
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FCLEX = Clear Exceptions" << endl;
+			break;
+
+		case 0b11000011:
+			//FINIT = Initialize NDP
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 FINIT = Initialize NDP" << endl;
+			break;
+		default:
+			Instruction_Pointer += 2;
+			if (log_to_console_8087) cout << "8087 illegal op 011_100" << endl;
+			break;
+
+		
+		}
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 illegal op" << endl;
+	}
+}
+
+void Esc_8087_101_111_FSTSW()		//FSTSW
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "ollegal op" << endl;
+	}
+	else
+	{
+		//FSTSW = Store Status Word
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSTSW = Store Status Word" << endl;
+	}
+}
+
+void Esc_8087_101_110_FSAVE()		//FSAVE
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "ollegal op" << endl;
+	}
+	else
+	{
+		//FSAVE = Save State
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FSAVE = Save State" << endl;
+	}
+}
+
+void Esc_8087_101_100_FRSTOR()	//FRSTOR
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "ollegal op" << endl;
+	}
+	else
+	{
+		//FRSTOR = Restore State
+		mod_RM_3(byte2);
+		Instruction_Pointer += 2 + additional_IPs;
+		if (log_to_console_8087) cout << "8087 FRSTOR = Restore State" << endl;
+	}
+}
+
+void op_code_8087_unknown()
+{
+	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	if ((byte2 >> 6) == 3)
+	{
+		Instruction_Pointer += 2;
+		if (log_to_console_8087) cout << "Unknown 8087 operation IP = " << Instruction_Pointer << " OPCODE = " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16) << " + " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16) << endl;
+	}
+	else
+	{
+		mod_RM_3(byte2);
+		if (log_to_console_8087) cout << "Unknown 8087 operation IP = " << Instruction_Pointer << " OPCODE = " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16) << " + " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16) << endl;
+		Instruction_Pointer += 2 + additional_IPs;
+	}
 }

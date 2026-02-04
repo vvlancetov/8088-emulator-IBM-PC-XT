@@ -5,6 +5,8 @@
 #include <vector>
 #include "json.hpp"
 
+#define DEBUG
+
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 typedef unsigned __int32 uint32;
@@ -40,79 +42,40 @@ public:
 	uint16 input_from_port_16(uint16 address);				//ввод из 16-бит порта
 };
 
-class MyAudioStream : public sf::SoundStream
-{
-	bool onGetData(Chunk& data) override;
-	void onSeek(sf::Time timeOffset) override;
-
-public:
-	MyAudioStream() 
-	{
-		initialize(2, 8000, { sf::SoundChannel::FrontLeft, sf::SoundChannel::FrontRight });
-		setLooping(0);
-	}
-
-	std::int16_t* s_buffer;			//ссылка буфер для звука
-	bool buffer_ready;				//
-	int sample_size;				//
-};
-
-class SoundMaker //класс звуковой карты
-{
-private:
-
-	int sample_size = 120;				//длина звукового сэмпла
-	int16_t sound_sample[120];			//массив для сэмпла
-	MyAudioStream audio_stream;
-
-
-public:
-
-	SoundMaker()  // конструктор класса
-	{
-		audio_stream.buffer_ready = false;
-		audio_stream.sample_size = sample_size;
-		audio_stream.s_buffer = sound_sample;
-		//audio_stream.setLooping(true);
-	};
-
-	bool beeping = false;		//издает ли звук пищалка
-	bool freq_changed = true;  // частота таймера изменилась
-	uint16 timer_freq = 0;		//частота звука, запрограммированная на таймере
-	void sync();				//синхронизация
-	void beep_on();     //сигнал ВКЛ
-	void beep_off();    //сигнал ВЫКЛ
-	void change_tone(); //меняем тон в процессе игры
-};
-
 //контроллер прерываний
 class IC8259
 {
 private:
-//	bool enabled = false;
+	
 	uint8 next_ICW = 1;  //ожидаемое слово инициализации
 	bool wait_ICW4 = false;
-	uint16 INT_vector_addr = 0;
-	bool cascade = false;
-
+	uint16 INT_vector_addr_86 = 0; //адрес таблицы векторов режим 8086/88
+	uint16 INT_vector_addr_80 = 0; //адрес таблицы векторов режим 8080/85
 	uint8 next_reg_to_read = 1; // 1 - IR, 2 - IS, 3 - IM
 	uint8 last_INT; //текущее прерывание в работе
-	uint8 sleep_timer = 0; //таймер задержки
+	
 
 public:
+	bool cascade_mode = false;
+	bool nested_mode = true;
+	bool ADDR_INTERVAL_4 = true;
+	bool AUTO_EOI = false;
+	bool mode_8086 = true;
 	bool enabled = false;
+	uint8 sleep_timer = 0; //таймер задержки
+
 	uint8 IR_REG = 0; //Interrupt Request Register
 	uint8 IS_REG = 0; //In-Service Register
 	uint8 IM_REG = 0; //Interrupt Mask Register
 
-
-
 	void write_port(uint16 port, uint8 data);
 	uint8 read_port(uint16 port);
 	bool NMI_enabled = false;
-	void request_IRQ(uint8 irq); //запрос прерывания от устройства
+	uint8 request_IRQ(uint8 irq); //запрос прерывания от устройства
 	uint8 get_last_int(); //номер последнего прерывания
+	uint16 get_last_int_addr(); //адрес вектора прерывания
 	uint8 next_int();  //прерывание для исполнения
+	void set_timeout(uint8); //установить таймер задержки
 	std::string get_ch_data(int ch); // данные канала
 };
 
@@ -163,6 +126,6 @@ public:
 	uint8 read_port(uint16 port);
 	void sync();		//синхронизация
 	void ram_refresh(); //обновление памяти
-	bool request_hw_dma(int channel); //запрос DMA от устройства
+	uint8 request_hw_dma(int channel); //запрос DMA от устройства
 };
 

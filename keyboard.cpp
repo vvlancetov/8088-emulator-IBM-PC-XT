@@ -1,5 +1,6 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
+#include <SFML/Window.hpp>
 #include <conio.h>
 #include <iostream>
 #include <vector>
@@ -14,10 +15,20 @@ using namespace std;
 extern IC8259 int_ctrl;
 
 //клавиатура
-void KBD::sync(uint32 elapsed_us)
+void KBD::poll_keys(uint32 elapsed_us)
 {
+	//технические клавиши F5-F10 для управления эмулятором
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
+	
+
 	//синхронизируем нажатия клавишь
-	if (!enabled) return; //если отключена - возврат
+	if (!data_line_enabled) return; //если отключена - возврат
+	if (!CLK_high) return; //
 
 	bool special = false;
 	uint8 code = 0;
@@ -105,7 +116,7 @@ void KBD::sync(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::F4)] = 0;
 		}
 	}
-
+	
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5))
 	{
 		//убираем повторение
@@ -141,6 +152,116 @@ void KBD::sync(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::F6)] = 0;
 		}
 	}
+	
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::F7)])
+		{
+			out_buffer.push_back(0x41);
+			pressed_keys[(uint8)(KBD_key::F7)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::F7)])
+		{
+			out_buffer.push_back(0x41 + 0x80);
+			pressed_keys[(int)(KBD_key::F7)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::F8)])
+		{
+			out_buffer.push_back(0x42);
+			pressed_keys[(uint8)(KBD_key::F8)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::F8)])
+		{
+			out_buffer.push_back(0x42 + 0x80);
+			pressed_keys[(int)(KBD_key::F8)] = 0;
+		}
+	}
+	
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::F9)])
+		{
+			out_buffer.push_back(0x43);
+			pressed_keys[(uint8)(KBD_key::F9)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::F9)])
+		{
+			out_buffer.push_back(0x43 + 0x80);
+			pressed_keys[(int)(KBD_key::F9)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::F10)])
+		{
+			out_buffer.push_back(0x44);
+			pressed_keys[(uint8)(KBD_key::F10)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::F10)])
+		{
+			out_buffer.push_back(0x44 + 0x80);
+			pressed_keys[(int)(KBD_key::F10)] = 0;
+		}
+	}
+
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F11))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::F11)])
+		{
+			out_buffer.push_back(0x57);
+			pressed_keys[(uint8)(KBD_key::F11)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::F11)])
+		{
+			out_buffer.push_back(0x57 + 0x80);
+			pressed_keys[(int)(KBD_key::F11)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F12))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::F12)])
+		{
+			out_buffer.push_back(0x58);
+			pressed_keys[(uint8)(KBD_key::F12)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::F12)])
+		{
+			out_buffer.push_back(0x58 + 0x80);
+			pressed_keys[(int)(KBD_key::F12)] = 0;
+		}
+	}
+
 
 	// ==================== num 1 - 0 ==============
 
@@ -489,7 +610,6 @@ void KBD::sync(uint32 elapsed_us)
 		}
 	}
 
-
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::P))
 	{
 		//убираем повторение
@@ -507,7 +627,6 @@ void KBD::sync(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::P)] = 0;
 		}
 	}
-
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A))
 	{
@@ -682,7 +801,6 @@ void KBD::sync(uint32 elapsed_us)
 		}
 	}
 
-
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::X))
 	{
 		//убираем повторение
@@ -841,10 +959,10 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	else
 	{
-		if (pressed_keys[(int)(KBD_key::Grave)])
+		if (pressed_keys[(uint8)(KBD_key::Grave)])
 		{
-			out_buffer.push_back(0x89);
-			pressed_keys[(int)(KBD_key::Grave)] = 0;
+			out_buffer.push_back(0xA9);
+			pressed_keys[(uint8)(KBD_key::Grave)] = 0;
 		}
 	}
 
@@ -859,10 +977,10 @@ void KBD::sync(uint32 elapsed_us)
 	}
 	else
 	{
-		if (pressed_keys[(int)(KBD_key::Hyphen)])
+		if (pressed_keys[(uint8)(KBD_key::Hyphen)])
 		{
 			out_buffer.push_back(0x8C);
-			pressed_keys[(int)(KBD_key::Hyphen)] = 0;
+			pressed_keys[(uint8)(KBD_key::Hyphen)] = 0;
 		}
 	}
 
@@ -879,8 +997,8 @@ void KBD::sync(uint32 elapsed_us)
 	{
 		if (pressed_keys[(int)(KBD_key::Equal)])
 		{
-			out_buffer.push_back(0x82);
-			pressed_keys[(int)(KBD_key::Equal)] = 0;
+			out_buffer.push_back(0x8D);
+			pressed_keys[(uint8)(KBD_key::Equal)] = 0;
 		}
 	}
 
@@ -973,6 +1091,7 @@ void KBD::sync(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::RShift)] = 0;
 		}
 	}
+
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
 	{
 		//убираем повторение
@@ -988,6 +1107,26 @@ void KBD::sync(uint32 elapsed_us)
 		{
 			out_buffer.push_back(0x9D);
 			pressed_keys[(int)(KBD_key::LControl)] = 0;
+		}
+	}
+	
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::RControl)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x1D);
+			pressed_keys[(uint8)(KBD_key::RControl)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::RControl)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x9D);
+			pressed_keys[(int)(KBD_key::RControl)] = 0;
 		}
 	}
 
@@ -1006,6 +1145,26 @@ void KBD::sync(uint32 elapsed_us)
 		{
 			out_buffer.push_back(0xB8);
 			pressed_keys[(int)(KBD_key::LAlt)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RAlt))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::RAlt)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x38);
+			pressed_keys[(uint8)(KBD_key::RAlt)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::RAlt)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xB8);
+			pressed_keys[(int)(KBD_key::RAlt)] = 0;
 		}
 	}
 
@@ -1048,21 +1207,20 @@ void KBD::sync(uint32 elapsed_us)
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RBracket))
 	{
 		//убираем повторение
-		if (!pressed_keys[(uint8)(KBD_key::LBracket)])
+		if (!pressed_keys[(uint8)(KBD_key::RBracket)])
 		{
 			out_buffer.push_back(0x1B);
-			pressed_keys[(uint8)(KBD_key::LBracket)] = 1;
+			pressed_keys[(uint8)(KBD_key::RBracket)] = 1;
 		}
 	}
 	else
 	{
-		if (pressed_keys[(int)(KBD_key::LBracket)])
+		if (pressed_keys[(uint8)(KBD_key::RBracket)])
 		{
 			out_buffer.push_back(0x9B);
-			pressed_keys[(int)(KBD_key::LBracket)] = 0;
+			pressed_keys[(uint8)(KBD_key::RBracket)] = 0;
 		}
 	}
-
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Semicolon))
 	{
@@ -1099,7 +1257,6 @@ void KBD::sync(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::Apostrophe)] = 0;
 		}
 	}
-
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Comma))
 	{
@@ -1155,6 +1312,520 @@ void KBD::sync(uint32 elapsed_us)
 		}
 	}
 
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Delete))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Delete)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x53);
+			pressed_keys[(uint8)(KBD_key::Delete)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::Delete)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xD3);
+			pressed_keys[(int)(KBD_key::Delete)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Insert))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Insert)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x52);
+			pressed_keys[(uint8)(KBD_key::Insert)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::Insert)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xD2);
+			pressed_keys[(int)(KBD_key::Insert)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Home))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Home)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x47);
+			pressed_keys[(uint8)(KBD_key::Home)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::Home)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xC7);
+			pressed_keys[(int)(KBD_key::Home)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::End))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::End)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x4F);
+			pressed_keys[(uint8)(KBD_key::End)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::End)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xCF);
+			pressed_keys[(int)(KBD_key::End)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::PageUp))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::PageUp)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x49);
+			pressed_keys[(uint8)(KBD_key::PageUp)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::PageUp)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xC9);
+			pressed_keys[(int)(KBD_key::PageUp)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::PageDown))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::PageDown)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x51);
+			pressed_keys[(uint8)(KBD_key::PageDown)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::PageDown)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xD1);
+			pressed_keys[(int)(KBD_key::PageDown)] = 0;
+		}
+	}
+	
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::PrintScreen))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::PrintScreen)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x2A);
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x37);
+			pressed_keys[(uint8)(KBD_key::PrintScreen)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(int)(KBD_key::PrintScreen)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xB7);
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xAA);
+			pressed_keys[(int)(KBD_key::PrintScreen)] = 0;
+		}
+	}
+	
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::CapsLock))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::CapsLock)])
+		{
+			out_buffer.push_back(0x3A);
+			pressed_keys[(uint8)(KBD_key::CapsLock)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::CapsLock)])
+		{
+			out_buffer.push_back(0xBA);
+			pressed_keys[(uint8)(KBD_key::CapsLock)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumLock))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::NumLock)])
+		{
+			out_buffer.push_back(0x45);
+			pressed_keys[(uint8)(KBD_key::NumLock)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::NumLock)])
+		{
+			out_buffer.push_back(0xC5);
+			pressed_keys[(uint8)(KBD_key::NumLock)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::ScrollLock))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::ScrLock)])
+		{
+			out_buffer.push_back(0x46);
+			pressed_keys[(uint8)(KBD_key::ScrLock)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::ScrLock)])
+		{
+			out_buffer.push_back(0xC6);
+			pressed_keys[(uint8)(KBD_key::ScrLock)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Pause))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Pause)])
+		{
+			out_buffer.push_back(0xE1);
+			out_buffer.push_back(0x1D);
+			out_buffer.push_back(0x45);
+			out_buffer.push_back(0xE1);
+			out_buffer.push_back(0x9D);
+			out_buffer.push_back(0xC5);
+			pressed_keys[(uint8)(KBD_key::Pause)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Pause)])
+		{
+			pressed_keys[(uint8)(KBD_key::Pause)] = 0;
+		}
+	}
+
+	//=================== NumPad =========================
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadDivide))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::NumpadDivide)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0x35);
+			pressed_keys[(uint8)(KBD_key::NumpadDivide)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::NumpadDivide)])
+		{
+			out_buffer.push_back(0xE0);
+			out_buffer.push_back(0xB5);
+			pressed_keys[(uint8)(KBD_key::NumpadDivide)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMultiply))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::NumpadMultiply)])
+		{
+			out_buffer.push_back(0x37);
+			pressed_keys[(uint8)(KBD_key::NumpadMultiply)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::NumpadMultiply)])
+		{
+			out_buffer.push_back(0xB7);
+			pressed_keys[(uint8)(KBD_key::NumpadMultiply)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMinus))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::NumpadMinus)])
+		{
+			out_buffer.push_back(0x4A);
+			pressed_keys[(uint8)(KBD_key::NumpadMinus)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::NumpadMinus)])
+		{
+			out_buffer.push_back(0xCA);
+			pressed_keys[(uint8)(KBD_key::NumpadMinus)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::NumpadPlus)])
+		{
+			out_buffer.push_back(0x4E);
+			pressed_keys[(uint8)(KBD_key::NumpadPlus)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::NumpadPlus)])
+		{
+			out_buffer.push_back(0xCE);
+			pressed_keys[(uint8)(KBD_key::NumpadPlus)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadEnter))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::NumpadEnter)])
+		{
+			//out_buffer.push_back(0xE0);
+			//out_buffer.push_back(0x1C);
+			pressed_keys[(uint8)(KBD_key::NumpadEnter)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::NumpadEnter)])
+		{
+			//out_buffer.push_back(0xE0);
+			//out_buffer.push_back(0x9C);
+			pressed_keys[(uint8)(KBD_key::NumpadEnter)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad0))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad0)])
+		{
+			out_buffer.push_back(0x52);
+			pressed_keys[(uint8)(KBD_key::Numpad0)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad0)])
+		{
+			out_buffer.push_back(0xD2);
+			pressed_keys[(uint8)(KBD_key::Numpad0)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadDecimal))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::NumpadDecimal)])
+		{
+			out_buffer.push_back(0x53);
+			pressed_keys[(uint8)(KBD_key::NumpadDecimal)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::NumpadDecimal)])
+		{
+			out_buffer.push_back(0xD3);
+			pressed_keys[(uint8)(KBD_key::NumpadDecimal)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad1))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad1)])
+		{
+			out_buffer.push_back(0x4F);
+			pressed_keys[(uint8)(KBD_key::Numpad1)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad1)])
+		{
+			out_buffer.push_back(0xCF);
+			pressed_keys[(uint8)(KBD_key::Numpad1)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad2))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad2)])
+		{
+			out_buffer.push_back(0x50);
+			pressed_keys[(uint8)(KBD_key::Numpad2)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad2)])
+		{
+			out_buffer.push_back(0xD0);
+			pressed_keys[(uint8)(KBD_key::Numpad2)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad3))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad3)])
+		{
+			out_buffer.push_back(0x51);
+			pressed_keys[(uint8)(KBD_key::Numpad3)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad3)])
+		{
+			out_buffer.push_back(0xD1);
+			pressed_keys[(uint8)(KBD_key::Numpad3)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad4))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad4)])
+		{
+			out_buffer.push_back(0x4B);
+			pressed_keys[(uint8)(KBD_key::Numpad4)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad4)])
+		{
+			out_buffer.push_back(0xCB);
+			pressed_keys[(uint8)(KBD_key::Numpad4)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad5))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad5)])
+		{
+			out_buffer.push_back(0x4C);
+			pressed_keys[(uint8)(KBD_key::Numpad5)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad5)])
+		{
+			out_buffer.push_back(0xCC);
+			pressed_keys[(uint8)(KBD_key::Numpad5)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad6))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad6)])
+		{
+			out_buffer.push_back(0x4D);
+			pressed_keys[(uint8)(KBD_key::Numpad6)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad6)])
+		{
+			out_buffer.push_back(0xCD);
+			pressed_keys[(uint8)(KBD_key::Numpad6)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad7))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad7)])
+		{
+			out_buffer.push_back(0x47);
+			pressed_keys[(uint8)(KBD_key::Numpad7)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad7)])
+		{
+			out_buffer.push_back(0xC7);
+			pressed_keys[(uint8)(KBD_key::Numpad7)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad8))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad8)])
+		{
+			out_buffer.push_back(0x48);
+			pressed_keys[(uint8)(KBD_key::Numpad8)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad8)])
+		{
+			out_buffer.push_back(0xC8);
+			pressed_keys[(uint8)(KBD_key::Numpad8)] = 0;
+		}
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad9))
+	{
+		//убираем повторение
+		if (!pressed_keys[(uint8)(KBD_key::Numpad9)])
+		{
+			out_buffer.push_back(0x49);
+			pressed_keys[(uint8)(KBD_key::Numpad9)] = 1;
+		}
+	}
+	else
+	{
+		if (pressed_keys[(uint8)(KBD_key::Numpad9)])
+		{
+			out_buffer.push_back(0xC9);
+			pressed_keys[(uint8)(KBD_key::Numpad9)] = 0;
+		}
+	}
+
 	//=================== ARROWS =========================
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up))
@@ -1169,10 +1840,10 @@ void KBD::sync(uint32 elapsed_us)
 		else
 		{
 			pressed_time_us[(uint8)(KBD_key::Up)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::Up)] > 500000)
+			if (pressed_time_us[(uint8)(KBD_key::Up)] > 50000)
 			{
-				out_buffer.push_back(0xE0);
-				out_buffer.push_back(0xC8);
+				//out_buffer.push_back(0xE0);
+				//out_buffer.push_back(0xC8);
 				out_buffer.push_back(0xE0);
 				out_buffer.push_back(0x48);
 				pressed_time_us[(uint8)(KBD_key::Up)] = 0;
@@ -1201,10 +1872,10 @@ void KBD::sync(uint32 elapsed_us)
 		else
 		{
 			pressed_time_us[(uint8)(KBD_key::Down)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::Down)] > 500000)
+			if (pressed_time_us[(uint8)(KBD_key::Down)] > 50000)
 			{
-				out_buffer.push_back(0xE0);
-				out_buffer.push_back(0xD0);
+				//out_buffer.push_back(0xE0);
+				//out_buffer.push_back(0xD0);
 				out_buffer.push_back(0xE0);
 				out_buffer.push_back(0x50);
 				pressed_time_us[(uint8)(KBD_key::Down)] = 0;
@@ -1233,10 +1904,10 @@ void KBD::sync(uint32 elapsed_us)
 		else
 		{
 			pressed_time_us[(uint8)(KBD_key::Left)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::Left)] > 500000)
+			if (pressed_time_us[(uint8)(KBD_key::Left)] > 50000)
 			{
-				out_buffer.push_back(0xE0);
-				out_buffer.push_back(0xCB);
+				//out_buffer.push_back(0xE0);
+				//out_buffer.push_back(0xCB);
 				out_buffer.push_back(0xE0);
 				out_buffer.push_back(0x4B);
 				pressed_time_us[(uint8)(KBD_key::Left)] = 0;
@@ -1265,10 +1936,10 @@ void KBD::sync(uint32 elapsed_us)
 		else
 		{
 			pressed_time_us[(uint8)(KBD_key::Right)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::Right)] > 500000)
+			if (pressed_time_us[(uint8)(KBD_key::Right)] > 50000)
 			{
-				out_buffer.push_back(0xE0);
-				out_buffer.push_back(0xCD);
+				//out_buffer.push_back(0xE0);
+				//out_buffer.push_back(0xCD);
 				out_buffer.push_back(0xE0);
 				out_buffer.push_back(0x4D);
 				pressed_time_us[(uint8)(KBD_key::Right)] = 0;
@@ -1288,11 +1959,11 @@ void KBD::sync(uint32 elapsed_us)
 
 	if (code) out_buffer.push_back(code); //отправляем в буффер
 
-	if (out_buffer.size() > 0 && CLK_high)
-	{
-		//cout << "KB: hardware buf = " << (int)out_buffer.size() << " send irq_1" << endl;
-		int_ctrl.request_IRQ(1);
-	}
+}
+
+uint8 KBD::get_buf_size()
+{
+	return out_buffer.size();
 }
 uint8 KBD::read_scan_code()
 {
@@ -1306,10 +1977,37 @@ uint8 KBD::read_scan_code()
 }
 void KBD::set_CLK_high()
 {
-	if (!CLK_high && enabled) out_buffer.push_back(0xAA);
+	if (!CLK_high)
+	{
+		//soft reset
+		//cout << "KB_SOFT_RES" << endl;
+		out_buffer.clear();
+		out_buffer.push_back(0xAA);
+		sleep_timer = 10; //небольшая задержка устройства
+	}
 	CLK_high = true;
 }
 void KBD::set_CLK_low()
 {
 	CLK_high = false;
+}
+
+void KBD::sync()  //синхронизация клавиатуры
+{
+	//проверка таймера задержки
+
+	if (sleep_timer)  //уменьшаем таймер
+	{
+		sleep_timer--;
+		return;
+	}
+
+	//проверка буфера клавиатуры
+	if (get_buf_size() && data_line_enabled)
+	{
+		if (!(int_ctrl.IS_REG & 0b00000010)) {
+			int_ctrl.request_IRQ(1);
+			sleep_timer = 10; //добавим небольшую задержку
+		}
+	}
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include "custom_classes.h"
 
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
@@ -6,7 +7,9 @@ typedef unsigned __int32 uint32;
 
 //декларирование функций обработчиков операций
 void opcode_table_init();
+void opcode_8087_table_init();
 void op_code_unknown();			// Unknown operation
+void op_code_8087_unknown();
 void op_code_NOP();				// No operation
 void segment_override_prefix(); //set override flag
 inline uint16 mod_RM_Old(uint8 byte2);			//расчет адреса операнда
@@ -81,8 +84,8 @@ void ADD_IMM_to_ACC_16();	// ADD IMM -> ACC 16bit
 
 //ADC
 
-void ADC_RM_to_RM_8();		// ADC R/M -> R/M 8bit
-void ADC_RM_to_RM_16();		// ADC R/M -> R/M 16bit
+void ADC_R_to_RM_8();		// ADC R/M -> R/M 8bit
+void ADC_R_to_RM_16();		// ADC R/M -> R/M 16bit
 void ADC_RM_to_R_8();		// ADC R/M -> R 8bit
 void ADC_RM_to_R_16();		// ADC R/M -> R 16bit
 
@@ -267,3 +270,78 @@ void Wait();				//Wait
 void Lock();				//Bus lock prefix
 void Esc_8087();			//Call 8087
 void CALC();				//Undoc
+
+//=============== 8087 =================
+
+void Esc_8087_001_000_Load();  //LOAD int/real to ST0
+void Esc_8087_011_000_Load();	//LOAD int/real to ST0
+void Esc_8087_101_000_Load();	//LOAD int/real to ST0
+void Esc_8087_111_000_Load();	//LOAD int/real to ST0
+
+void Esc_8087_111_101_Load();  //LOAD long INT to ST0
+void Esc_8087_011_101_Load();	//LOAD temp real to ST0
+void Esc_8087_111_100_Load();	//LOAD BCD to ST0
+
+void Esc_8087_001_010_Store();	//STORE ST0 to int/real
+void Esc_8087_011_010_Store();	//STORE ST0 to int/real
+void Esc_8087_101_010_Store();	//STORE ST0 to int/real
+void Esc_8087_111_010_Store();	//STORE ST0 to int/real
+
+void Esc_8087_001_011_StorePop(); //FSTP = Store and Pop
+void Esc_8087_011_011_StorePop(); //FSTP = Store and Pop
+void Esc_8087_101_011_StorePop(); //FSTP = Store and Pop + ST0 to STi 
+void Esc_8087_111_011_StorePop(); //FSTP = Store and Pop
+
+void Esc_8087_111_111_StorePop(); //StorePop ST0 Long Int to MEM
+void Esc_8087_011_111_StorePop(); //StorePop ST0 to TMP real mem
+void Esc_8087_111_110_StorePop(); //StorePop ST0 to BCD mem
+
+void Esc_8087_001_001_FXCH();	  //EXchange ST0 - STi
+
+void Esc_8087_000_010_FCOM();		//FCOM = Compare + STi to ST0
+void Esc_8087_010_010_FCOM();		//FCOM = Compare
+void Esc_8087_100_010_FCOM();		//FCOM = Compare
+void Esc_8087_110_010_FCOM();		//FCOM = Compare
+
+void Esc_8087_000_011_FCOM();		//FcomPop + STi to ST0
+void Esc_8087_010_011_FCOM();		//FcomPop
+void Esc_8087_100_011_FCOM();		//FcomPop
+void Esc_8087_110_011_FCOM();		//FcomPop
+
+void Esc_8087_001_100_TEST();		//FTST/FXAM
+
+void Esc_8087_000_000_FADD();		//FADD
+void Esc_8087_010_000_FADD();		//FADD
+void Esc_8087_100_000_FADD();		//FADD
+void Esc_8087_110_000_FADD();		//FADD
+
+void Esc_8087_000_100_FSUB();		//FSUB R = 0
+void Esc_8087_000_101_FSUB();		//FSUB R = 1
+void Esc_8087_010_100_FSUB();		//FSUB R = 0
+void Esc_8087_010_101_FSUB();		//FSUB R = 1
+void Esc_8087_100_100_FSUB();		//FSUB R = 0
+void Esc_8087_100_101_FSUB();		//FSUB R = 1
+void Esc_8087_110_100_FSUB();		//FSUB R = 0
+void Esc_8087_110_101_FSUB();		//FSUB R = 1
+
+void Esc_8087_000_001_FMUL();		//FMUL
+void Esc_8087_010_001_FMUL();		//FMUL
+void Esc_8087_100_001_FMUL();		//FMUL
+void Esc_8087_110_001_FMUL();		//FMUL
+
+void Esc_8087_000_110_FDIV();		//FDIV R = 0
+void Esc_8087_000_111_FDIV();		//FDIV R = 1
+void Esc_8087_010_110_FDIV();		//FDIV R = 0
+void Esc_8087_010_111_FDIV();		//FDIV R = 1
+void Esc_8087_100_110_FDIV();		//FDIV R = 0
+void Esc_8087_100_111_FDIV();		//FDIV R = 1
+void Esc_8087_110_110_FDIV();		//FDIV R = 0
+void Esc_8087_110_111_FDIV();		//FDIV R = 1
+
+void Esc_8087_001_111_FSQRT();		//FSQRT/FSCALE/FPREM/FRNDINIT
+void Esc_8087_001_110_FXTRACT();	//FXTRACT
+void Esc_8087_001_101_FLDZ();		//FLDZ/FLD1/FLOPI/FLOL2T
+void Esc_8087_011_100_FINIT();		//FINIT/FENI/FDISI
+void Esc_8087_101_111_FSTSW();		//FSTSW
+void Esc_8087_101_110_FSAVE();		//FSAVE
+void Esc_8087_101_100_FRSTOR();	//FRSTOR

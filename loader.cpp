@@ -7,7 +7,9 @@
 #include <Windows.h>
 #include <fstream>
 #include "video.h"
+#include "audio.h"
 #include "fdd.h"
+#include "hdd.h"
 #include "loader.h"
 
 typedef unsigned __int8 uint8;
@@ -18,28 +20,183 @@ using namespace std;
 extern HANDLE hConsole;
 extern string path;
 
-//текстура шрифта
-extern sf::Texture font_texture;
-extern sf::Sprite font_sprite;
+//текстуры шрифта
+extern sf::Texture font_texture_40;
+extern sf::Sprite font_sprite_40;
+extern sf::Texture font_texture_80;
+extern sf::Sprite font_sprite_80;
 
 //текстуры графической палитры
 extern sf::Texture CGA_320_texture;
 extern sf::Sprite CGA_320_palette_sprite;
 
-extern uint8 memory_2[1024 * 1024]; //память 2.0
+extern uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
 
 extern Video_device monitor;
-
+#ifdef DEBUG
 extern Dev_mon_device debug_monitor;
 extern FDD_mon_device FDD_monitor;
+extern FDD_mon_device HDD_monitor;
+extern Audio_mon_device Audio_monitor;
+#endif
+string filename_ROM;
+string filename_HDD_ROM;
+string filename_HDD;
+string filename_v_rom;
 
-extern string filename_ROM;
-extern string filename_test;
-extern string filename_HDD;
-extern string filename_v_rom;
-extern string filename_FDD;
 
 extern FDD_Ctrl FDD_A;
+extern HDD_Ctrl HDD;
+extern SoundMaker speaker;
+
+uint32 ROM_address = 0; //адрес загрузки файла ПЗУ
+extern uint16 Instruction_Pointer;
+extern uint16* CS;
+
+extern uint8 MB_switches;
+
+void load_diskette(uint8 drive, std::string filename_FDD)
+{
+	//открываем файл FDD
+	fstream file_FDD(path + filename_FDD, ios::binary | ios::in | ios::out);
+	if (!file_FDD.is_open()) cout << "File FDD #" << (int)drive << " " << filename_FDD << " not found!" << endl;
+	else
+	{
+		//файл FDD открыт
+		int a = 0; //counter
+		char b;    //buffer
+		cout << "FDD #" << (int)drive << " file opened OK" << endl;
+
+		//грузим сектора последовательно
+		while (file_FDD.read(&b, 1) && a<2880*1024)
+		{
+			FDD_A.load_diskette((drive - 1) * 2880 * 1024 + a, b);
+			a++;
+		}
+
+		file_FDD.close();
+		FDD_A.file_size[drive - 1] = a; //записываем размер файла
+		cout << "Загружено " << (int)(a) << " байт данных в FDD #" << (int)drive << " ";
+		
+		if (a)
+		{
+			//если загружены байты, обновляем данные 
+			FDD_A.diskette_in[drive - 1] = 1;
+			FDD_A.filename_FDD.at(drive - 1) = filename_FDD;
+		}
+
+		switch (a / 512)
+		{
+			//дискеты на 3.5"
+		case 5760:
+			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 36; //8, 9, 15, 18
+			FDD_A.diskette_cylinders[drive - 1] = 80;
+			cout << "3.5\" HEADS = 2 SECTORS = 9 CYL = 80 CAPACITY = 2880" << endl;
+			break;
+		case 2880:
+			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 18; //8, 9, 15, 18
+			FDD_A.diskette_cylinders[drive - 1] = 80;
+			cout << "3.5\" HEADS = 2 SECTORS = 9 CYL = 80 CAPACITY = 1440" << endl;
+			break;
+		case 1440:
+			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 9; //8, 9, 15, 18
+			FDD_A.diskette_cylinders[drive - 1] = 80;
+			cout << "3.5\" HEADS = 2 SECTORS = 9 CYL = 80 CAPACITY = 720" << endl;
+			break;
+
+			//дискеты на 5.25"
+		case 2400:
+			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 15; //8, 9 or 15
+			FDD_A.diskette_cylinders[drive - 1] = 80;
+			cout << "5.25\" HEADS = 2 SECTORS = 15 CYL = 80 CAPACITY = 1200" << endl;
+			break;
+		case 720:
+			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 9; //8, 9 or 15
+			FDD_A.diskette_cylinders[drive - 1] = 40;
+			cout << "5.25\" HEADS = 2 SECTORS = 9 CYL = 40 CAPACITY = 360" << endl;
+			break;
+		case 640:
+			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 8; //8, 9 or 15
+			FDD_A.diskette_cylinders[drive - 1] = 40;
+			cout << "5.25\" HEADS = 2 SECTORS = 8 CYL = 40 CAPACITY = 320" << endl;
+			break;
+		case 360:
+			FDD_A.diskette_heads[drive - 1] = 1;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 9; //8, 9 or 15
+			FDD_A.diskette_cylinders[drive - 1] = 40;
+			cout << "5.25\" HEADS = 1 SECTORS = 9 CYL = 40 CAPACITY = 180" << endl;
+			break;
+		case 320:
+			FDD_A.diskette_heads[drive - 1] = 1;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 8; //8, 9 or 15
+			FDD_A.diskette_cylinders[drive - 1] = 40;
+			cout << "5.25\" HEADS = 1 SECTORS = 8 CYL = 40 CAPACITY = 160" << endl;
+			break;
+		default:  //360
+			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
+			FDD_A.diskette_sectors[drive - 1] = 9; //8, 9 or 15
+			FDD_A.diskette_cylinders[drive - 1] = 40;
+			cout << " DEFAULT(5.25\"): HEADS = 2 SECTORS = 9 CYL = 40 CAPACITY = 360" << endl;
+			break;
+		}
+	}
+
+
+
+}
+void load_hdd(std::string filename_HDD)
+{
+	//открываем файл HDD
+
+	fstream file_HDD(path + filename_HDD, ios::binary | ios::in);
+	if (!file_HDD.is_open()) cout << "File HDD " << filename_HDD << " not found!" << endl;
+	else
+	{
+		//файл HDD открыт
+		int a = 0;
+		char b;    //buffer
+		while (!file_HDD.eof()) 
+		{
+			file_HDD.read(&b, 1);
+			//записываем виртуальный HDD
+			HDD.load_disk_data(a, b);
+			a++;
+		};
+		file_HDD.close();
+		HDD.filename = filename_HDD;//запоминаем имя файла
+		cout << "Загружено " << (int)(a - 1) << " байт данных в образ HDD" << endl;
+	}
+
+	
+	
+	
+	return;
+
+	//запись образа для тестов
+	
+	file_HDD.open(path + "test.dat", ios::binary | ios::out);
+	int a = 0;
+	char b;    //buffer
+	
+	for(int i = 0; i < 256; i++)
+	{
+		for (int u = 0; u < 512; u++)
+		{
+			char b = i;
+			file_HDD.write(&b, 1);
+		}
+		//записываем виртуальный HDD
+	};
+	file_HDD.close();
+	
+
+}
 
 void loader(int argc, char* argv[])
 {
@@ -48,12 +205,18 @@ void loader(int argc, char* argv[])
 	path = argv[0];
 	int l_symb = (int)path.find_last_of('\\');
 	path.resize(++l_symb);
-	cout << "path = " << path << endl;
+	cout << "Working catalog = " << path << endl;
 	
 	//загружаем ретро-шрифт в виде текстуры
-	if (font_texture.loadFromFile(path + "videorom_CGA.png")) cout << "Font ROM loaded" << endl;
-	font_sprite.setTexture(font_texture);
-	font_texture.setSmooth(0);
+	if (font_texture_40.loadFromFile(path + "videorom_CGA_40.png")) cout << "Font ROM(40) loaded" << endl;
+	font_sprite_40.setTexture(font_texture_40);
+	font_texture_40.setSmooth(0);
+	font_sprite_40.setScale(sf::Vector2f(1, 1.2));
+
+	if (font_texture_80.loadFromFile(path + "videorom_CGA_80.png")) cout << "Font ROM(80) loaded" << endl;
+	font_sprite_80.setTexture(font_texture_80);
+	font_texture_80.setSmooth(0);
+	font_sprite_80.setScale(sf::Vector2f(1, 1.2));
 
 	//загружаем палитры CGA
 	if (CGA_320_texture.loadFromFile(path + "CGA_320_palette.png")) cout << "CGA 320 palette loaded" << endl;
@@ -64,179 +227,224 @@ void loader(int argc, char* argv[])
 	if (!monitor.font.openFromFile(path + "ShareTechMonoRegular.ttf")) cout << "Error loading debug font" << endl;
 	else cout << "font " << path + "ShareTechMonoRegular.ttf" << " loaded" << endl;
 
+	//загружаем шрифты для окон отладки
+#ifdef DEBUG
 	if (!debug_monitor.font.openFromFile(path + "ShareTechMonoRegular.ttf")) cout << "DEBUG_MON: error loading font" << endl;
 	else cout << "DEBUG_MON: font " << path + "ShareTechMonoRegular.ttf" << " loaded" << endl;
 
 	if (!FDD_monitor.font.openFromFile(path + "arialnarrow.ttf")) cout << "FDD_MON: error loading font" << endl;
 	else cout << "FDD_MON: font " << path + "arialnarrow.ttf" << " loaded" << endl;
 
+	if (!HDD_monitor.font.openFromFile(path + "arialnarrow.ttf")) cout << "HDD_MON: error loading font" << endl;
+	else cout << "HDD_MON: font " << path + "arialnarrow.ttf" << " loaded" << endl;
+
+	if (!Audio_monitor.font.openFromFile(path + "arialnarrow.ttf")) cout << "FDD_MON: error loading font" << endl;
+	else cout << "FDD_MON: font " << path + "arialnarrow.ttf" << " loaded" << endl;
+#endif
+
+	//обрабатываем файл конфигурации
+	fstream conf_file(path + "config.ini", ios::binary | ios::in);
+	if (!conf_file.is_open()) cout << "Configuration file config.ini not found! Using default values." << endl;
+	else
+	{
+		cout << "Configuration file OK. Reading..." << endl;
+		std::string line;
+		// Читаем файл построчно
+		while (std::getline(conf_file, line))
+		{
+			//пропускаем комментарии
+			if (line.find('#') == 0) continue;
+			
+			// Ищем символ '=' в строке
+			size_t equal_pos = line.find('=');
+
+			// Если символ '=' найден и он не является первым символом (т.е. есть что-то до него)
+			if (equal_pos != std::string::npos && equal_pos > 0) {
+				// Извлекаем параметр (часть до '=')
+				std::string parameter = line.substr(0, equal_pos);
+
+				// Извлекаем значение (часть после '=')
+				std::string value = line.substr(equal_pos + 1);
+
+				// Удаление ведущих пробелов из параметра
+				size_t  first_char_param = parameter.find_first_not_of(" \t\n\r");
+				if (first_char_param == std::string::npos) {
+					parameter = ""; // Строка состоит только из пробелов
+				}
+				else {
+					parameter = parameter.substr(first_char_param);
+				}
+
+				// Удаление замыкающих пробелов из параметра
+				size_t  last_char_param = parameter.find_last_not_of(" \t\n\r");
+				if (last_char_param != std::string::npos) {
+					parameter = parameter.substr(0, last_char_param + 1);
+				}
+
+				// Удаление ведущих пробелов из значения
+				size_t first_char_value = value.find_first_not_of(" \t\n\r");
+				if (first_char_value == std::string::npos) {
+					value = ""; // Строка состоит только из пробелов
+				}
+				else {
+					value = value.substr(first_char_value);
+				}
+
+				// Удаление замыкающих пробелов из значения
+				size_t last_char_value = value.find_last_not_of(" \t\n\r");
+				if (last_char_value != std::string::npos) {
+					value = value.substr(0, last_char_value + 1);
+				}
+			
+				//обрабатываем все параметры по одному
+
+				if (parameter == "BIOS") //имя файла БИОС
+				{
+					if (value != "") filename_ROM = value;
+					cout << "BIOS file = " << filename_ROM << endl;
+				}
+
+				if (parameter == "BIOS_ADDRESS") //адрес загрузки биоса
+				{
+					if (value != "" && stoi(value, 0, 16)) ROM_address = stoi(value, 0, 16);
+					cout << "ROM address = 0x" << hex << (int)ROM_address << endl;
+				}
+
+				if (parameter == "IP") //начальный адрес выполнения кода
+				{
+					if (value != "" && stoi(value, 0, 16)) Instruction_Pointer = stoi(value, 0, 16);
+					cout << "Instruction_Pointer = 0x" << hex << (int)Instruction_Pointer << endl;
+				}
+
+				if (parameter == "CS") //начальный сегмент кода
+				{
+					if (value != "" && stoi(value, 0, 16)) *CS = stoi(value, 0, 16);
+					cout << "segment CS = 0x" << hex << (int)*CS << endl;
+				}
+
+				if (parameter == "FDD_QUANTITY") //количество дисководов
+				{
+					if (value != "" && stoi(value, 0, 10)) FDD_A.set_active_drives(stoi(value, 0, 10));
+					cout << "FDD drives = " << (int)FDD_A.get_active_drives() << endl;
+					MB_switches = (MB_switches & 0b00111111) | ((~FDD_A.get_active_drives()) << 6);  //корректируем переключатели
+				}
+
+				if (parameter == "FDD1_FILE") //диск в дисководе 1
+				{
+					//загружаем дискету в массив
+					if (value != "") load_diskette(1, value);
+					//FDD_A.diskette_in[0] = 1;
+					//FDD_A.filename_FDD.at(0) = value;
+				}
+
+				if (parameter == "FDD2_FILE") //диск в дисководе 2
+				{
+					//загружаем дискету в массив
+					if (value != "") load_diskette(2, value);
+					//FDD_A.diskette_in[1] = 1;
+					//FDD_A.filename_FDD[1] = value;
+				}
+
+				if (parameter == "FDD3_FILE") //диск в дисководе 3
+				{
+					//загружаем дискету в массив
+					if (value != "") load_diskette(3, value);
+					//FDD_A.diskette_in[2] = 1;
+					//FDD_A.filename_FDD[2] = value;
+				}
+
+				if (parameter == "FDD4_FILE") //диск в дисководе 4
+				{
+					//загружаем дискету в массив
+					if (value != "") load_diskette(4, value);
+					//FDD_A.diskette_in[3] = 1;
+					//FDD_A.filename_FDD[3] = value;
+				}
+
+				if (parameter == "HDD_FILE") //
+				{
+					//загружаем дискету в массив
+					if (value != "") load_hdd(value);
+				}
+
+				if (parameter == "HDD_ROM_FILE") //
+				{
+					//загружаем ПЗУ HDD
+					fstream file_HDD_ROM(path + value, ios::binary | ios::in);
+					if (!file_HDD_ROM.is_open()) cout << "File HDD-ROM " << value << " not found!" << endl;
+					else
+					{
+						//считываем данные из файла BIOS и записываем по адресу C8000
+						int a = 0;
+						char b;    //buffer
+						while (file_HDD_ROM.read(&b, 1)) {
+							// записываем виртуальный ROM
+							memory_2[0xC8000 + a] = b;
+							a++;
+						};
+						file_HDD_ROM.close();
+						cout << "Loaded " << dec << (int)(a) << " commands from HDD_ROM file" << endl;
+					}
+				}
+
+				if (parameter == "SPEAKER_VOLUME") //громкость спикера
+				{
+					//устанавливаем громкость
+					if (value != "" && stoi(value, 0, 10)) speaker.set_volume(stoi(value, 0, 10));
+				}
+
+				if (parameter == "VIDEO") //видеокарта
+				{
+					//выбираем тип видео
+					cout << "SET video to " << value << endl;
+				}
+				
+				if (parameter == "VIDEO_ROM_FILE") //диск в дисководе 4
+				{
+					//выбираем видео BIOS
+					if (value != "") filename_v_rom = value;
+				}
+			}
+		}
+		conf_file.close();
+	}
+
 	//загружаем ПЗУ
 	fstream file(path + filename_ROM, ios::binary | ios::in);
-	if (!file.is_open()) cout << "File " << filename_ROM << " not found!" << endl;
+	if (!file.is_open()) cout << "BIOS file " << filename_ROM << " not found!" << endl;
 	else
 	{
 		//считываем данные из файла BIOS и записываем по адресу F0000
 		int a = 0;
+		uint8 sum = 0;
 		char b;    //buffer
 		while (file.read(&b, 1)) {
 			// записываем виртуальный ROM
-			memory_2[0xF0000 + a] = b;
+			memory_2[ROM_address + a] = b;
+			sum += b;
 			a++;
 		};
 		file.close();
-		cout << "Loaded " << (int)(a) << " commands from ROM file" << endl;
-	}
-
-	//загружаем тест в память
-	fstream file_test(path + filename_test, ios::binary | ios::in);
-	if (!file_test.is_open()) cout << "File " << filename_test << " not found!" << endl;
-	else
-	{
-		int a = 0; //начальный адрес
-		char b;    //buffer
-		while (file_test.read(&b, 1)) {
-			// записываем виртуальный ROM
-			//memory.write_2(a + 0x1000, b);
-			a++;
-		};
-		file_test.close();
+		cout << "Loaded " << (int)(a) << " BIOS from ROM file (checksum = " << (int)sum << ")" << endl;
 	}
 
 	//загружаем видео ПЗУ
-	fstream file_v_rom(path + filename_v_rom, ios::binary | ios::in);
-	if (!file_v_rom.is_open()) cout << "File " << filename_v_rom << " not found!" << endl;
-	else
+	if (filename_v_rom != "")
 	{
-		int a = 0; //начальный адрес
-		char b;    //buffer
-		while (file_v_rom.read(&b, 1)) {
-			// записываем виртуальный ROM
-			memory_2[a] = b;
-			a++;
-		};
-		file_v_rom.close();
-		cout << "Загружено " << (int)(a) << " байт данных в видео ПЗУ" << endl;
-	}
-
-	//открываем файл HDD
-	fstream file_HDD(path + filename_HDD, ios::binary | ios::in | ios::out);
-	if (!file_HDD.is_open()) cout << "File " << filename_HDD << " not found!" << endl;
-	else
-	{
-		//файл HDD открыт
-		cout << "HDD file opened OK" << endl;
-	}
-
-	//открываем файл FDD
-	
-	fstream file_FDD(path + filename_FDD, ios::binary | ios::in | ios::out);
-	if (!file_FDD.is_open()) cout << "File " << filename_FDD << " not found!" << endl;
-	else
-	{
-		//файл FDD открыт
-		int a = 0; //counter
-		char b;    //buffer
-		cout << "FDD file opened OK" << endl;
-		uint8 track, sector, head;
-		uint16 byte;
-		for (track = 0; track < 80; track++)
+		fstream file_v_rom(path + filename_v_rom, ios::binary | ios::in);
+		if (!file_v_rom.is_open()) cout << "File " << filename_v_rom << " not found!" << endl;
+		else
 		{
-			for (sector = 0; sector < 9; sector++)
-			{
-				for (byte = 0; byte < 512; byte++)
-				{
-					for (head = 0; head < 2; head++)
-					{
-						if (file_FDD.read(&b, 1))
-						{
-							FDD_A.load_diskette(track, sector, head, byte, b);
-							a++;
-						}
-					}
-				}
-			}
-		}
-
-		file_FDD.close();
-		cout << "Загружено " << (int)(a) << " байт данных в FDD ";
-		switch (a / 512)
-		{
-		case 2400:
-			FDD_A.diskette_heads = 2;  // 1 or 2
-			FDD_A.diskette_sectors = 15; //8, 9 or 15
-			cout << " HEADS = 2 SECTORS = 15 CAPACITY = 1200" << endl;
-			break;
-		case 720:
-			FDD_A.diskette_heads = 2;  // 1 or 2
-			FDD_A.diskette_sectors = 9; //8, 9 or 15
-			cout << " HEADS = 2 SECTORS = 9 CAPACITY = 360" << endl;
-			break;
-		case 640:
-			FDD_A.diskette_heads = 2;  // 1 or 2
-			FDD_A.diskette_sectors = 8; //8, 9 or 15
-			cout << " HEADS = 2 SECTORS = 8 CAPACITY = 320" << endl;
-			break;
-		case 360:
-			FDD_A.diskette_heads = 1;  // 1 or 2
-			FDD_A.diskette_sectors = 9; //8, 9 or 15
-			cout << " HEADS = 1 SECTORS = 9 CAPACITY = 180" << endl;
-			break;
-		case 320:
-			FDD_A.diskette_heads = 1;  // 1 or 2
-			FDD_A.diskette_sectors = 8; //8, 9 or 15
-			cout << " HEADS = 1 SECTORS = 8 CAPACITY = 160" << endl;
-			break;
-		default:
-			FDD_A.diskette_heads = 2;  // 1 or 2
-			FDD_A.diskette_sectors = 9; //8, 9 or 15
-			cout << " DEFAULT: HEADS = 2 SECTORS = 9 CAPACITY = 360" << endl;
-			break;
+			int a = 0xC0000; //начальный адрес
+			char b;    //buffer
+			while (file_v_rom.read(&b, 1)) {
+				// записываем виртуальный ROM
+				memory_2[a] = b;
+				a++;
+			};
+			file_v_rom.close();
+			cout << "Загружено " << (int)(a) << " байт данных в видео ПЗУ" << endl;
 		}
 	}
-
-	//проверяем аргументы командной строки
-	cout << "Checking command string parameters..." << endl;
-	
-	for (int i = 0; i < argc; i++)
-	{
-		cout << (int)i << " " << argv[i] << endl;
-	}
-	
-	/*
-	for (int i = 1; i < argc; i++)
-	{
-		string s = argv[i];
-		if (s.substr(0, 2) == "-f")
-		{
-			//найдено имя файла
-			if (argc >= i + 2)
-			{
-				filename_ROM = argv[i + 1];// "Prog.txt";
-				cout << "new filename = " << filename_ROM << endl;
-			}
-			else
-			{
-				filename_ROM = "Prog.txt";
-				cout << "filename = " << filename_ROM << " (default)" << endl;
-			}
-		}
-		if (s.substr(0, 3) == "-ru")
-		{
-			//использование русского языка
-			RU_lang = true;
-			cout << "set RU lang" << endl;
-		}
-		if (s.substr(0, 5) == "-step")
-		{
-			//пошаговое выполнение
-			step_mode = true;
-			cout << "set step mode ON" << endl;
-		}
-		if (s.substr(0, 4) == "-log")
-		{
-			//пошаговое выполнение
-			log_to_console = true;
-			cout << "set log to console ON" << endl;
-		}
-	} */
 }
+

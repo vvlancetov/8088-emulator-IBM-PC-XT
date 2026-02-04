@@ -1,6 +1,5 @@
 ﻿//Emulator of IBM PC/XT with i8088 processor.
 
-#define DEBUG
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 typedef unsigned __int32 uint32;
@@ -18,13 +17,16 @@ typedef unsigned __int32 uint32;
 #include <conio.h>
 #include <bitset>
 #include <cmath>
+#include <random>
 #include <malloc.h>
 #include "opcode_functions.h"
 #include "custom_classes.h"
 #include "joystick.h"
 #include "video.h"
+#include "audio.h"
 #include "keyboard.h"
 #include "fdd.h"
+#include "hdd.h"
 #include "loader.h"
 
 using namespace std;
@@ -63,15 +65,17 @@ bool cont_exec = true; //переменная для продолжения ос
 string path = ""; //текущий каталог
 
 //текстура шрифта
-sf::Texture font_texture;
-sf::Sprite font_sprite(font_texture);
+sf::Texture font_texture_40;
+sf::Sprite font_sprite_40(font_texture_40);
+sf::Texture font_texture_80;
+sf::Sprite font_sprite_80(font_texture_80);
 
 //текстуры графической палитры
 sf::Texture CGA_320_texture;
 sf::Sprite CGA_320_palette_sprite(CGA_320_texture);
 
 //таймеры
-//sf::Clock myclock;
+//sf::Clock myclock;  //для тестов
 //sf::Clock video_clock;
 //sf::Clock cpu_clock; //таймер для выравнивания скорости процессора
 //sf::Clock kbd_clock;
@@ -86,25 +90,9 @@ uint8 exeption = 0;
 
 Mem_Ctrl memory; //создаем контроллер памяти
 
-uint8 memory_2[1024 * 1024]; //память 2.0
+uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
 
-class HDD_Ctrl // контроллер виртуального диска
-{
-private:
-	uint8 data_array[20 * 1024 * 1024] = { 0 };
-	uint16 byte_pointer = 0;		//указатель на считываемый байт
-	
 
-	// почитать
-	// frolov-lib.ru/books/bsp.old/v19/ch1.html
-
-public:
-	HDD_Ctrl();
-	void write_DMA_data(uint8 data); //запись значений на диск по байтам при старте эмулятора
-	uint8 read_DMA_data();//чтение байта с виртуального диска (ПЗУ на D14)
-};
-
-HDD_Ctrl HDD; //создаем контроллер виртуального HDD
 
 struct comment
 {
@@ -116,11 +104,19 @@ struct comment
 Video_device monitor;
 
 //второй экран для дебага
+#ifdef DEBUG
 Dev_mon_device debug_monitor(1000, 1240, "Debug Window", 3840 - 1640 - 1000, 0);
-
+#endif
 //окно для сообщений FDD
 FDD_mon_device FDD_monitor(1000, 1600, "FDD Window", 0, 0);
 
+//окно для сообщений HDD
+FDD_mon_device HDD_monitor(1000, 1600, "HDD Window", 0, 0);
+
+//отладочное окно для звука
+#ifdef DEBUG
+Audio_mon_device Audio_monitor(2000, 200, "Audio Window", 0, 1650);
+#endif
 //внутренние счетчики таймера
 struct t_counter
 {
@@ -133,6 +129,7 @@ struct t_counter
 	uint8 RL_mode = 0;
 	bool second_byte = false; //нужно считать/записать второй байт
 	bool enabled = false;     // ON/OFF
+	bool wait_for_data = false; //ожидание загрузки данных
 	bool signal_high = false;  //сигнал на выходе
 	bool one_shot_fired = false; //триггер для режима 0
 };
@@ -141,7 +138,10 @@ struct t_counter
 class IC8253
 {
 private:
-	t_counter counters[3];
+	t_counter counters[4];
+	std::chrono::steady_clock::time_point timer_start; //для отслеживания времени выполнения
+	std::chrono::steady_clock::time_point timer_end;
+	uint32 duration = 0;
 public:
 	
 	void write_port(uint16 port, uint8 data);
@@ -160,12 +160,13 @@ class IC8255
 private:
 	bool switches_hign = false;
 	uint8 port_B_out = 0;
+	bool port_B_6 = false; //уровень вывода 6 порта B
+	bool port_B_7 = false; //уровень вывода 7 порта B
 
 public:
 	void write_port(uint16 port, uint8 data);
 	uint8 read_port(uint16 port);
 };
-
 
 // создаем клавиатуру
 KBD keyboard;
@@ -185,29 +186,43 @@ IC8237 dma_ctrl;
 IC8259 int_ctrl;
 // создаем FDD
 FDD_Ctrl FDD_A;
+//создаем контроллер виртуального HDD
+HDD_Ctrl HDD;
 
 //джойстик
 game_controller joystick;
 
+//vector<string> filename_FDD = { "MS-DOS\\tst.img" ,"Demos\\8088mph.ima" ,"MS-DOS\\DOS33_test_2.img","MS-DOS\\DOS33_test_3.img" }; //массив с именами образов дискет
+
 vector<comment> comments; //комментарии к программе
-string filename_ROM = "Bios.bin";  //bios IBM pc/XT
-//string filename_ROM = "test_rom.bin";  //Landmart test
-string filename_test = "x.bin";  //тестовая программа
-string filename_HDD = "HDD.bin";   // HDD
-string filename_v_rom = "Ega-ibm.bin";   // video ROM EGA
+//файлы для загрузки по-умолчанию
+//string filename_ROM = "IBM5160 BIOSes\\050986_XT_BIOS.bin";		//bios IBM pc/XT
+//string filename_ROM = "IBM5160 BIOSes\\ruuds_test_rom.bin";	//test ROM
+//string filename_ROM = "GLABIOS_0.8b0_8XY.ROM";				//GLaBIOS
+//string filename_ROM = "IBM5160 BIOSes\\supersoft_test_rom.bin"; //Supersoft test
+//string filename_HDD = "MS-DOS\\HDD.img";						// HDD
+//string filename_HDD_ROM = "HDD ROMs\\IBM_62x0822.bin";			//HDD board ROM
+//string filename_v_rom = "Ega-ibm.bin";							// video ROM EGA
+//filename_FDD.push_back("MS-DOS\\tst.img");						// DOS 3.3
+//filename_FDD[1] = "Demos\\8088mph.ima";					//нужен второй загрузочный диск
+//filename_FDD[2] = "MS-DOS\\DOS33_test_2.img";
+//filename_FDD[3] = "MS-DOS\\DOS33_test_3.img";
 //string filename_FDD = "MS-DOS\\Disk01.img";   // DOS 3.3
-//string filename_FDD = "MS-DOS\\Tosh211.img";   // DOS 2.11
-string filename_FDD = "MS-DOS\\Games\\Pacman.img";   // 
-//string filename_FDD = "MS-DOS\\Games\\Bdash.img";   // 
+//string filename_FDD = "MS-DOS\\DOS33_test.img";   // игра + демка+ CGA проверка
+//string filename_FDD = "MS-DOS\\DOS33_test_5.img";   // демка 8088mph  не работает
+//string filename_FDD = "MS-DOS\\Games\\Pacman.img";   // 
+//string filename_FDD = "MS-DOS\\Games\\Bdash12.img";   // 
 //string filename_FDD = "MS-DOS\\Games\\Montezum.img";   // 
 //string filename_FDD = "MS-DOS\\Games\\F15cga.img";   // 
-//string filename_FDD = "MS-DOS\\Games\\Seastalk.img";   // 
 //string filename_FDD = "MS-DOS\\Games\\Galaxian.img";   // 
+//string filename_FDD = "MS-DOS\\EXPLORING-THE-IBM-PC-100-CGA.img";
+
 
 //переключатели на плате
+//uint8 MB_switches = 0b01101101; //CGA + 2FDD
 uint8 MB_switches = 0b00101101; //CGA
-
 //uint8 MB_switches = 0b00111101; //MDA
+//uint8 MB_switches = 0b00001101; //EGA
 
 #ifdef DEBUG
 vector<int> breakpoints;                    // точки останова
@@ -254,7 +269,7 @@ bool Flag_CF = false;	//Carry flag
 uint16 Stack_Pointer = 0x9000;			 //указатель стека
 uint16 Instruction_Pointer = 0xfff0;  // адрес первой команды BIOS
 
-//uint16 Instruction_Pointer = 0;  // адрес первой команды (без учета сегмента!)
+//uint16 Instruction_Pointer = 0xFE6F2;  // адрес первой команды (без учета сегмента!)
 uint16 Base_Pointer = 0;
 uint16 Source_Index = 0;
 uint16 Destination_Index = 0;
@@ -281,11 +296,13 @@ bool Interrupts_enabled = true;//разрешение прерываний
 
 //префикс замены сегмента
 uint8 Flag_segment_override = 0;
+bool keep_segment_override = false; //сохранить флаг между командами
 
-//флан аппаратных прерываний (для работы контроллера)
-bool Flag_hardware_INT = false;
-
-bool negate_IDIV = false; //флаг инверсии частного IDIV после REP(N)
+//аппаратные флаги
+bool Flag_hardware_INT = false;  //аппаратное прерывание
+bool halt_cpu = 0;				 //флаг остановки до получения прерывания
+bool negate_IDIV = false;	     //флаг инверсии частного IDIV после REP(N)
+uint8 bus_lock = 0;				 //флаг блокировки шины
 
 //временные регистры
 uint16 temp_ACC_16 = 0;
@@ -296,7 +313,12 @@ uint16 temp_Addr = 0;
 bool step_mode = false;		//ждать ли нажатия пробела для выполнения команд
 bool go_forward;			//переменная для выхода из цикла обработки нажатий
 bool log_to_console = false; //логирование команд на консоль
-bool log_to_console_FDD = 1; //логирование команд FDD на консоль
+bool log_to_console_FDD = 0; //логирование команд FDD на консоль
+bool log_to_console_HDD = 0; //логирование команд HDD на консоль
+bool log_to_console_DMA = 0; //логирование команд DMA на консоль
+bool log_to_console_INT = 0; //логирование команд INT на консоль
+bool log_to_console_DOS = 0; //логирование команд DOS на консоль
+bool log_to_console_8087 = 1; //логирование команд 8087 на консоль
 bool run_until_CX0 = false; //останов при окончании цикла
 
 bool test_mode = 0; //влияет на память
@@ -306,6 +328,10 @@ bool test_mode = 0; //влияет на память
 //таблица указателей на функции для выполнения кодов операций
 void (*op_code_table[256])() = { 0 };
 void (*backup_table[256])() = { 0 };
+void (*op_code_table_8087[64])() = { 0 };
+//счетчик команд для статистики
+int command_counter[256] = { 0 };
+bool command_counter_ON = false;
 
 //функция проверки четности
 bool parity_check[256] = { 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1 };
@@ -315,26 +341,35 @@ vector <uint16> command_history = { 0 };
 vector <uint16> command_history_1 = { 0 };
 vector <uint16> command_history_2 = { 0 };
 
+//кол-во циклов для замедления
+int empty_cycles = 0;
+
 int main(int argc, char* argv[]) {
 
 	//изначальные значения сегментов
-	*CS = 0xf000;
-	*DS = 0;
-	*SS = 0;
-	*ES = 0;
+	*CS = 0xf000; //обычный биос
+	*DS = 0x40;
+	*SS = 0x30;
+	*ES = 0x40;
 
+	//точки останова
 #ifdef DEBUG
-	//breakpoints.push_back(0xFED13);
-	//breakpoints.push_back(0xfe0d7);    //timer TEST  POST st 708
-	//breakpoints.push_back(0xe402);
-	//breakpoints.push_back(0xe3e9);    //KB TEST  POST st 736
+	
+	//breakpoints.push_back(0xc81fa); //jmp to 7c00
+	//breakpoints.push_back(0xc8003); //IBM HDD CTRL
+	//breakpoints.push_back(0xc8127); //IBM HDD CTRL
+	//breakpoints.push_back(0xc8251); //HDD INT13
+
+	//breakpoints.push_back(0x7c5f);
+	breakpoints.push_back(0x7ca5);
+	//breakpoints.push_back(0xfe3d4);    //KB TEST  POST st 736
 	// err 101 st 924
 	//breakpoints.push_back(0xe1f5);   //FDD
 	//breakpoints.push_back(0xe55b);  //disk test
 	//breakpoints.push_back(0xE437);  //disk test
 	//DRIVE DET
 	
-	//breakpoints.push_back(0xFE694);
+	//breakpoints.push_back(0xFE6F2);
 	//breakpoints.push_back(0xfecfe);
 
 	//breakpoints.push_back(0xb88);
@@ -352,7 +387,7 @@ int main(int argc, char* argv[]) {
 	//breakpoints.push_back(0xff729);
 	//breakpoints.push_back(0xff744);
 
-	//breakpoints.push_back(0xfa5d);	  //basic
+	//breakpoints.push_back(0xfa5d);   //basic
 	//breakpoints.push_back(0xb544);  //proverka PUSH
 	//breakpoints.push_back(0xe609);  //KB ввод символа
 	//breakpoints.push_back(0xe2);    //FFD statr
@@ -363,14 +398,12 @@ int main(int argc, char* argv[]) {
 	//breakpoints.push_back(0xe3a3);  //check timer
 	
 	//breakpoints.push_back(0x0700); //начало IO.SYS
-	//breakpoints.push_back(0x07D2D);
+	//breakpoints.push_back(0xFE6F2); --
 	//breakpoints.push_back(0x07DC8);  //после начала чтения MSDOS.SYS (2 сектора в 8000)
-
 
 	//breakpoints.push_back(0x7c00);  // читаем дискету
 	//breakpoints.push_back(0xF0718);  // читаем дискету
-	
-									 
+										 
 	//заполняем таблицу комментариев
 	//normal BIOS
 	
@@ -524,31 +557,27 @@ int main(int argc, char* argv[]) {
 
 	//заполняем таблицу функций
 	opcode_table_init();
+	opcode_8087_table_init(); //8087
 
-	//загружаем разные файлы
+	//загружаем конфигурацию и разные файлы
 	loader(argc, argv);
 	
 	//запускаем таймеры
-	//myclock.restart();
-	//video_clock.start();
-	//cpu_clock.start();
-	//kbd_clock.start(); 
-	//speaker_clock.start();
 	auto timer_start = steady_clock::now();
 	auto timer_end = steady_clock::now();
 	uint32 timer_video = 0;
 	uint32 timer_kb = 0;
+	uint32 timer_speaker = 0;
 
+	//настройка генератора RND для отладки
+	std::random_device rd; // Источник энтропии
+	std::mt19937 gen(rd()); // Mersenne Twister, seed из random_device
+	std::uniform_int_distribution<> distrib(1, 2000);
+	
 	//предотвращение дребезга клавиш управления
 	bool keys_up = true;
-	int tmp_log = 0;
-	//FDD_A.sector_data[0] = 0xCD;
-	//FDD_A.sector_data[1] = 0x18;
 
-	//тестер
-	//tester();
-	//monitor.sync(1);
-	//tester2(); cout << "Done " << endl;	while (1);
+	//прогоняем процессорные тесты
 	//test_mode = 1;
 	//tester3(); cout << "Done " << endl;	while (1);
 
@@ -559,6 +588,7 @@ int main(int argc, char* argv[]) {
 
 	cout << "Running..." << hex << endl;
 	//основной цикл программы
+
 	while (cont_exec)
 	{
 		op_counter++;   //счетчик операций
@@ -566,24 +596,24 @@ int main(int argc, char* argv[]) {
 
 		//переход в пошаговый режим при попадании в точку останова
 #ifdef DEBUG
-		/*
+
 		for (int b = 0; b < breakpoints.size(); b++)
 		{
 			if ((Instruction_Pointer + *CS * 16) == breakpoints.at(b))   //breakpoints.at(b)
 			{
 				step_mode = true;
-				cout << "Breakpoint at " << hex << (int)Instruction_Pointer << endl;
+				cout << "Breakpoint at " << hex << (int)(Instruction_Pointer + *CS * 16) << endl;
 				log_to_console = true;
 				service_counter = 1;
 				run_until_CX0 = false;
 			}
 		}
-		*/
+
 #endif
 
 		//переход в пошаговый режим при CX=0
 #ifdef DEBUG
-		
+
 		if ((CX == 0) && run_until_CX0)
 		{
 			//cout << "loop run OFF" << endl;
@@ -591,91 +621,117 @@ int main(int argc, char* argv[]) {
 			step_mode = true;
 			log_to_console = true;
 		}
-		
+
 #endif
 
-		//обновление спикера
-		/*
-		if (speaker_clock.getElapsedTime().asMicroseconds() > 100000)
-		{
-			speaker_clock.stop();
-			//speaker.sync();		//синхронизация звука
-			speaker_clock.restart();
-		}
-		*/
-
 		//служебные подпрограммы
-		
+
 		if (!service_counter || step_mode || log_to_console)
 		{
 			timer_end = steady_clock::now(); //останавливаем таймер
 			uint32 duration = duration_cast<microseconds>(timer_end - timer_start).count();
 			timer_video += duration;	//миллисекунды
 			timer_kb += duration;		//миллисекунды
+			timer_speaker += duration;
+
+			//корректировка скорости в реалтайме
+			if (!step_mode && !log_to_console)
+			{
+				//if (duration < 250 && empty_cycles < 8000) empty_cycles += 100;
+				//if (duration > 260 && empty_cycles > 1000) empty_cycles -= 100;
+			}
+
 
 			//отрисовка экрана монитора
-			if (timer_video > 100000)
+			if (timer_video > 16700) //16700
 			{
 				monitor.sync(timer_video); //синхроимпульс для монитора
+#ifdef DEBUG
 				debug_monitor.sync(timer_video); //синхроимпульс для монитора отладки
-				FDD_monitor.sync(); //синхроимпульс для монитора FDD
+				FDD_monitor.sync();				//синхроимпульс для монитора FDD
+				HDD_monitor.sync();				//синхроимпульс для монитора HDD
+				Audio_monitor.sync();			//мониторинг звука
+#endif
 				timer_video = 0;
 				op_counter = 0;
 			}
 
 			//опрос клавиатуры
-			if (timer_kb > 10000)
+			if (timer_kb > 8350)
 			{
-				keyboard.sync(timer_kb);    //синхронизация клавиатуры
+				keyboard.poll_keys(timer_kb);    //синхронизация клавиатуры (проверка нажатий)
+				HDD.sync_data(timer_kb);		//синхронизация буфера HDD
+				joystick.sync(timer_kb);
 				timer_kb = 0;
 			}
-			
+
+			//обновление спикера (генерация тона)
+			if (timer_speaker > 50000)
+			{
+				//speaker.sync();		//DEL
+				timer_speaker = 0;
+			}
+
 			//service_counter = 0;
 			go_forward = false;
 
-			//борба с залипанием
-			if (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) &&
-				!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) &&
-				!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) &&
-				!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) &&
-				!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Insert)) keys_up = true;
+			//борьба с залипанием
+			if (!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))) keys_up = true;
 
 			//мониторинг нажатия клавиш в обычном режиме
 #ifdef DEBUG
-			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && keys_up) { step_mode = !step_mode; keys_up = false; }
+			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up) { step_mode = !step_mode; keys_up = false; }
 
 			//включаем пропуск цикла
-			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && keys_up) 
+			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
 			{
 				//cout << "LOOP ON 1" << endl;
-				run_until_CX0 = true; 
+				run_until_CX0 = true;
 				step_mode = false;
 				log_to_console = false;
-				keys_up = false; 
+				keys_up = false;
 			}
 
 			//проверяем нажатие F10
-			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && keys_up) { log_to_console = !log_to_console; keys_up = false; }
+			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { log_to_console = !log_to_console; keys_up = false; }
 #endif
 #ifdef DEBUG
-			//выводим инфу если эмулятор работает в обычном режиме
-			if (!step_mode && !log_to_console && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Insert) && keys_up) { print_mem();  keys_up = false; }
-#endif
-			//restart
-			//if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && keys_up) restart = true;
 
 			//задержка вывода по нажатию кнопки в пошаговом режиме
 			while (!go_forward && step_mode)
 			{
-				if (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) &&
-					!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) &&
-					!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) &&
-					!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) &&
-					!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Insert)) keys_up = true;
+				if (!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))) keys_up = true;
 
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && keys_up) { step_mode = !step_mode; keys_up = false;}
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Insert) && keys_up) { print_mem(); keys_up = false; }
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && keys_up) 
+
+				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
+				{
+					for (int a = 0; a < 0x10; a++)
+					{
+						cout << "sector " << (int)(a + 3);
+						uint16 err = 0;
+						for (int b = 0; b < 0x200; b++)
+						{
+							if (memory_2[0x600 + a * 512 + b] != FDD_A.sector_data[0x1600 + a * 512 + b]) err++;
+						}
+						cout << " errors " << (int)err << endl;
+					}
+					std::this_thread::sleep_for(std::chrono::milliseconds(500));
+				}
+
+
+
+				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { step_mode = !step_mode; keys_up = false; }
+				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
 				{
 					//cout << "LOOP ON 2" << endl;
 					run_until_CX0 = true;
@@ -683,50 +739,63 @@ int main(int argc, char* argv[]) {
 					log_to_console = false;
 					keys_up = false;
 				}
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && keys_up) { go_forward = true; }
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && keys_up) { log_to_console = !log_to_console; keys_up = false; }
+				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { go_forward = true; }
+				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { log_to_console = !log_to_console; keys_up = false; }
 
 				if (!step_mode) {
 					go_forward = true;
 					break;
 				}
-				else 
+				else
 				{
 					monitor.sync(0);		//синхроимпульс для монитора
 					debug_monitor.sync(0);	//окно отладки
+					FDD_monitor.sync();
+					HDD_monitor.sync();
 				}
 			};
-			
+#endif			
 			timer_start = steady_clock::now();//перезапускаем таймер
 		}
-		
-		pc_timer.sync();	//синхронизация таймера
-		dma_ctrl.sync();	//синхронизация DMA
-		pc_timer.sync();	//синхронизация таймера
-		dma_ctrl.sync();	//синхронизация DMA
-		pc_timer.sync();	//синхронизация таймера
-		dma_ctrl.sync();	//синхронизация DMA
+		else
+		{
+			for (int r = 0; r < empty_cycles; r++); //замедление
+		}
 
-		if (!(service_counter & 15)) FDD_A.sync();
+
+		pc_timer.sync();	//синхронизация таймера
+		//dma_ctrl.sync();
+		pc_timer.sync();
+		//pc_timer.sync();
+		//pc_timer.sync();
+		//pc_timer.sync();
+
+		//if (!(service_counter & 3)) FDD_A.sync();
+		FDD_A.sync();
+		HDD.sync();
+		dma_ctrl.sync();	//синхронизация DMA
+		keyboard.sync(); 	//синхронизация клавиатуры
+
 
 		//замедление работы в пошаговом режиме
-		//if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
 		//основной цикл 
 
 		//проверка аппаратных прерываний
-		if ((op_counter & 1) == 0 && Flag_IF) //прореживаем частоту работы
+		if (Flag_IF)
 		{
 			uint8 hardware_int = int_ctrl.next_int();
 			if (hardware_int < 8)
 			{
+				//cout << "HW INT " << (int)hardware_int << endl;
+				//if (halt_cpu) cout << "HW irq " << (int)hardware_int << endl;
 				//выполняем аппаратное прерывание, меняя IP
 				//step_mode = true; log_to_console = true;
-				//помещаем в стек флаги
 				Stack_Pointer--;
-				memory.write_2(Stack_Pointer + SS_data * 16, (Flag_OF << 3) | (Flag_DF << 2) | (Flag_IF << 1) | Flag_TF);
+				memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 				Stack_Pointer--;
-				memory.write_2(Stack_Pointer + SS_data * 16, (Flag_SF << 15) | (Flag_ZF << 14) | (Flag_AF << 12) | (Flag_PF << 10) | (Flag_CF << 8));
+				memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 				//помещаем в стек сегмент
 				Stack_Pointer--;
@@ -746,46 +815,18 @@ int main(int argc, char* argv[]) {
 
 				Flag_IF = false;//запрет внешних прерываний
 				Flag_TF = false;
+				halt_cpu = false; //выход из останова
 #ifdef DEBUG
-				SetConsoleTextAttribute(hConsole, 10);
+				if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 				//cout << endl << "HARD IRQ " << (int)hardware_int << "(INT #" << (int)(hardware_int + 8) << ") AX(" << (int)AX << ") -> " << (int)*CS << ":" << (int)Instruction_Pointer << endl;
 				if (log_to_console) cout << endl << "HARD IRQ " << (int)hardware_int << "(INT #" << (int)(hardware_int + 8) << ") AX(" << (int)AX << ") -> " << (int)*CS << ":" << (int)Instruction_Pointer << endl;
-				SetConsoleTextAttribute(hConsole, 7);
+				if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 #endif
 			}
 		}
 
 #ifdef DEBUG
-
-		/*
-		if ((Instruction_Pointer + *CS * 16 >= 0xF0B14) && (Instruction_Pointer + *CS * 16 <= 0xF0B3A)) 
-		{
-			if(log_to_console) tmp_log = 4;
-			log_to_console = 0;
-		}
-
-		if ((Instruction_Pointer + *CS * 16 >= 0xF0B44) && (Instruction_Pointer + *CS * 16 <= 0xF0B55))
-		{
-			if (log_to_console) tmp_log = 4;
-			log_to_console = 0;
-		}
-
-		if ((Instruction_Pointer + *CS * 16 >= 0xFECAC) && (Instruction_Pointer + *CS * 16 <= 0xFECB6))
-		{
-			if (log_to_console) tmp_log = 4;
-			log_to_console = 0;
-		}
-		*/
-
 		
-		//else log_to_console = 0;
-		//if ((Instruction_Pointer >= 0xe5b5) && (Instruction_Pointer <= 0xe5be)) log_to_console = 1; //POST AFTER SETUP
-		//if ((Instruction_Pointer >= 0xbe5) && (Instruction_Pointer <= 0xc60)) log_to_console = 1;   //DISKETTE SETUP
-		//if ((Instruction_Pointer >= 0xe55b) && (Instruction_Pointer <= 0xe5be)) log_to_console = 1;   //POST DISKETTE ATTACHMENT TEST
-		//if (((Instruction_Pointer >= 0xc61) || (Instruction_Pointer <= 0x10bc)) && debug_key_1) log_to_console = 1;   //INT13 DISK_RESET
-		
-		//if (Instruction_Pointer == 0xd19 && !Flag_ZF) log_to_console = 1; step_mode;   //
-		//if (Instruction_Pointer == 0xc3b) log_to_console = 1;   //NEC_STAT -> SI
 		
 		//комментарии к точкам БИОС
 		/*
@@ -794,25 +835,24 @@ int main(int argc, char* argv[]) {
 			if (comments.at(j).address == Instruction_Pointer + (*CS) * 16)
 			{
 				SetConsoleTextAttribute(hConsole, 14);
-				//cout << "=============================" << endl;
 				string sss = comments.at(j).text; 
-				//sss.append("                                                                          ");
-				//sss.resize(50);
-				//sss += "441[" + to_string(memory.read_2(0x441,0)) + "]  442[" + to_string(memory.read_2(0x442, 0)) + "] AL[" + int_to_bin(AX & 255) + "]   CF[" + to_string(Flag_CF) + "]   SI[" + to_string(Source_Index) + "]";
-				cout << sss << " CY= " << (int)Flag_CF << endl;
-
-				//cout << "=============================" << endl;
+				cout << sss << endl;
 				SetConsoleTextAttribute(hConsole, 7);
 				break;
 			}
 		}
 		*/
+#endif
+		
+		if (halt_cpu) goto halt_jump; //перепрыгиваем инструкции в состоянии HALT
 
+	cmd_rep:
+#ifdef DEBUG
 		if (log_to_console) 
 		{
 			cout << hex;
 			//cout << int_to_hex(memory.read_2(0x441, 0), 2) << "  " << int_to_hex(memory.read_2(0x442, 0), 2) << " ";
-			cout << *CS << ":" << std::setfill('0') << std::setw(4) << Instruction_Pointer << "  " <<
+			cout << std::setw(4) << *CS << ":" << std::setfill('0') << std::setw(4) << Instruction_Pointer << "  " <<
 				std::setfill('0') << std::setw(2) << (int)memory_2[Instruction_Pointer + *CS * 16] << "  " <<
 				std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 1) + *CS * 16] << "  " <<
 				std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 2) + *CS * 16] << "  " <<
@@ -824,19 +864,24 @@ int main(int argc, char* argv[]) {
 		//uint8 l_code_1 = memory_2[Instruction_Pointer + *CS * 16];
 		//uint8 l_code_2 = memory_2[Instruction_Pointer + 1 + *CS * 16];
 		//uint16 IP_backup = Instruction_Pointer;
+		if (command_counter_ON) command_counter[memory_2[Instruction_Pointer + *CS * 16]]++;
+		//исполнение команды
 		op_code_table[memory_2[Instruction_Pointer + *CS * 16]]();
 
-		//проверка целостности таблицы функций
-		/*
-		for (int i = 0; i < 256; ++i)
-		{
-			if (backup_table[i] != op_code_table[i])
-			{
-				cout << i << endl;
+		if (keep_segment_override) { 
+			keep_segment_override = false; 
+			goto cmd_rep; //выполняем еще одну команду
+		} //сбрасываем флаг сохранения
+		else { Flag_segment_override = 0; } //сбрасываем флаг смены сегмента
 
-			}
+		//если установлен флаг negate_IDIV - выполняем еще одну команду
+		if (negate_IDIV)
+		{
+			if (log_to_console) cout << endl;
+			goto cmd_rep;
 		}
-		*/
+
+
 
 #ifdef DEBUG	
 		if (log_to_console) cout << "\t ZF=" << Flag_ZF << " CF=" << Flag_CF << " AF=" << Flag_AF << " SF=" << Flag_SF << " PF=" << Flag_PF << " OF=" << Flag_OF << " IF=" << Flag_IF;
@@ -845,16 +890,14 @@ int main(int argc, char* argv[]) {
 		//вывод отложенного сообщения
 		if (deferred_msg != "")
 		{
-			cout << deferred_msg << endl;
+			if (log_to_console) cout << deferred_msg << endl;
 			deferred_msg = "";
 		}
 #endif				
-		
-		//возвращаем временно отключенные логи
-		if (tmp_log == 4) 
+		if (bus_lock == 2) bus_lock = 1;
+		else
 		{
-			log_to_console = 1;
-			tmp_log = 0;
+			if (bus_lock == 1) bus_lock = 0;
 		}
 
 		//обрабока исключений
@@ -866,6 +909,10 @@ int main(int argc, char* argv[]) {
 			uint16 new_IP = memory.read_2(exeption * 4) + memory.read_2(exeption * 4 + 1) * 256;
 			uint16 new_CS = memory.read_2(exeption * 4 + 2) + memory.read_2(exeption * 4 + 3) * 256;
 
+			if (log_to_console || 1) SetConsoleTextAttribute(hConsole, 10);
+			if (log_to_console || 1) cout << "EXEPTION " << (int)exeption << " jump to " << int_to_hex(new_CS, 4) << ":" << int_to_hex(new_IP, 4) << " ret to " << int_to_hex(*CS, 4) << ":" << int_to_hex(Instruction_Pointer + 2, 4) << endl;
+			if (log_to_console || 1) SetConsoleTextAttribute(hConsole, 7);
+
 			//помещаем в стек флаги
 			Stack_Pointer--;
 			memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
@@ -875,27 +922,35 @@ int main(int argc, char* argv[]) {
 			//помещаем в стек сегмент
 			Stack_Pointer--;
 			memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
-			Stack_Pointer--; 
+			Stack_Pointer--;
 			memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
-			
+
 			//помещаем в стек IP
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 2) >> 8);
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 2) & 255);
 			
 			//передаем управление
 			Flag_IF = false;//запрет внешних прерываний
 			Flag_TF = false;
 			*CS = new_CS;
-			uint16 old = Instruction_Pointer;
 			Instruction_Pointer = new_IP;
-			SetConsoleTextAttribute(hConsole, 10);
-			if (log_to_console) cout << "EXEPTION " << (int)exeption << " jump to " << (int)new_CS << ":" << (int)Instruction_Pointer << " ret to " << (int)old;
-			SetConsoleTextAttribute(hConsole, 7);
-
 			exeption = 0; //сброс флага
 		}
+
+		//обработка Trap Flag
+		if (Flag_TF)
+		{
+			exeption = 0x11; //прерывание 1
+			cout << "It is a Trap!" << endl;
+			Flag_TF = 0;
+		}
+
+halt_jump:
+		//уменьшаем таймер сна контроллера прерываний после выполнения команды
+		if (int_ctrl.sleep_timer) int_ctrl.sleep_timer--;
+
 		continue;
 	}
 	monitor.sync(1);
@@ -903,8 +958,6 @@ int main(int argc, char* argv[]) {
 	while (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space)) std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	return 0;
 }
-
-
 
 //контроллер памяти
 void Mem_Ctrl::write_2(uint32 address, uint8 data) //запись значений в ячейки
@@ -916,128 +969,6 @@ void Mem_Ctrl::write_2(uint32 address, uint8 data) //запись значени
 uint8 Mem_Ctrl::read_2(uint32 address) //чтение данных из памяти
 {
 	return memory_2[address & 0xFFFFF];
-}
-
-//накопитель
-HDD_Ctrl::HDD_Ctrl()
-{
-	//конструктор
-}
-void HDD_Ctrl::write_DMA_data(uint8 data)
-{
-	//запись значений на диск по байтам при старте эмулятора
-	data_array[byte_pointer] = data;
-	byte_pointer++;
-	if (byte_pointer == size(data_array))
-	{
-		cout << "превышение адресного пространства HDD (" << (int)byte_pointer << "). Сброс в начало." << endl;
-		byte_pointer = 0;
-	}
-
-}
-uint8 HDD_Ctrl::read_DMA_data()
-{
-	if (byte_pointer >= size(data_array))
-	{
-		cout << "превышение адресного пространства HDD. Чтение невозможно" << endl;
-		return 0;
-	}
-
-	//чтение бита с виртуального диска
-	return data_array[byte_pointer];
-}
-
-//звуковая карта и пищалка
-void SoundMaker::sync()	//счетчик тактов
-{
-	if (!beeping)
-	{
-		audio_stream.stop();
-		return; //возврат если нет звука
-	}
-	
-	// создаем звуковой сэмпл
-	if (freq_changed)
-	{
-		for (int i = 0; i < sample_size; i++)
-		{
-			if (timer_freq < 10) timer_freq = 10;
-			int h_max = 5000; //максимальная амплитуда
-			int step = (floor(8000.0 / timer_freq)) * 2;			//период частоты в отсчетах
-			//float a = i / step * 3.1415;			//угол
-			//h =  (sin(a) - 0.5) * 20000 + 10000;  //синус
-			int mini_step = i % step;
-			
-			sound_sample[i] = h_max * sin(mini_step * 2 * 3.1415926 / step);
-
-			//if (mini_step < step / 2) h = h_max;
-			//else h = -h_max;
-			
-			//sound_sample[i] = floor(h) * sin(3.1415 * i / 160);  //синус
-			//sound_sample[i] = h * pow(sin(3.1415 * i / 160), 2);  //квадрат
-		}
-		freq_changed = false;
-		audio_stream.s_buffer = sound_sample;
-	}
-
-	if (audio_stream.getStatus() == sf::SoundSource::Status::Stopped)
-	{
-		//audio_stream.play();
-	}
-}	
-void SoundMaker::beep_on()     //сигнал ВКЛ
-{
-	if (freq_changed) //пока отключим
-	{
-		//пересчитываем семпл
-		for (int i = 0; i < sample_size; i++)
-		{
-			if (timer_freq < 10) timer_freq = 10;
-			int h_max = 5000;								//максимальная амплитуда
-			int step = (floor(8000.0 / timer_freq)) * 2;	//период частоты в отсчетах
-			int mini_step = i % step;
-			sound_sample[i] = h_max * sin(mini_step * 2 * 3.1415926 / step);
-		}
-		if (audio_stream.getStatus() == sf::SoundSource::Status::Playing) audio_stream.stop();
-		audio_stream.s_buffer = sound_sample;
-		freq_changed = false;
-	}
-	
-	//audio_stream.play();
-	beeping = true;
-}
-void SoundMaker::beep_off()    //сигнал ВЫКЛ
-{
-	audio_stream.stop();
-	beeping = false;
-}
-bool MyAudioStream::onGetData(Chunk& data)
-{
-	data.samples = s_buffer;
-	data.sampleCount = sample_size;
-	buffer_ready = false;
-	return true;
-}
-void MyAudioStream::onSeek(sf::Time timeOffset)
-{
-	return;
-}
-void SoundMaker::change_tone()
-{
-		//пересчитываем семпл
-		/*
-		for (int i = 0; i < sample_size; i++)
-		{
-			if (timer_freq < 10) timer_freq = 10;
-			int h_max = 5000;								//максимальная амплитуда
-			int step = (floor(8000.0 / timer_freq)) * 2;	//период частоты в отсчетах
-			int mini_step = i % step;
-			sound_sample[i] = h_max * sin(mini_step * 2 * 3.1415926 / step);
-		}
-		if (beeping) audio_stream.stop();
-		audio_stream.s_buffer = sound_sample;
-		if (beeping) audio_stream.play();
-		*/
 }
 
 //контроллер ввода-вывода
@@ -1126,6 +1057,13 @@ void IO_Ctrl::output_to_port_8(uint16 address, uint8 data)	//вывод в по�
 		joystick.start_meazure();
 	}
 
+	//HDD
+	if (address >= 0x320 && address <= 0x327)
+	{
+		HDD.write_port(address, data);
+		//deferred_msg = "write HDD port 0x" + int_to_hex(address, 4); + "-> 0x" + int_to_hex(data, 2);
+	}
+
 }
 void IO_Ctrl::output_to_port_16(uint16 address, uint16 data)
 {
@@ -1136,6 +1074,7 @@ void IO_Ctrl::output_to_port_16(uint16 address, uint16 data)
 uint8 IO_Ctrl::input_from_port_8(uint16 address)				//ввод из порта, w - ширина
 {
 	if (test_mode) return 0xFF;
+	
 	//timer
 	if (address >= 0x40 && address <= 0x43)
 	{
@@ -1179,6 +1118,15 @@ uint8 IO_Ctrl::input_from_port_8(uint16 address)				//ввод из порта, 
 	if (address == 0x201)
 	{
 		return joystick.get_input();
+	}
+	
+	//HDD
+	if (address >= 0x320 && address <= 0x327)
+	{
+		uint8 d = HDD.read_port(address);
+		deferred_msg = "READ HDD port 0x" + int_to_hex(address, 4) + " <- 0x" + int_to_hex(d, 2);
+		//cout << deferred_msg << endl;
+		return d;
 	}
 
 	return 0;
@@ -1262,6 +1210,7 @@ uint8 IC8253::read_port(uint16 port)
 					return counters[n].latch_value >> 8; //MSB
 				}
 			}
+			
 		}
 		else  //текущее значение
 		{
@@ -1286,9 +1235,11 @@ uint8 IC8253::read_port(uint16 port)
 					return counters[n].count >> 8; //MSB
 				}
 			}
+			
 		}
+		return 0; //заглушка
 }
-inline void IC8253::sync()
+void IC8253::sync()
 {
 	// режимы работы
 	// 0 - int on TC, 1 - one - shot, 2 - Rate Gen, 3 - Square wave, 4 - Soft Trigg, 5 - HW trigg
@@ -1300,13 +1251,13 @@ inline void IC8253::sync()
 			if (counters[n].mode == 0)
 			{
 				//единичный отсчет
-				counters[n].count -=1;
+				counters[n].count--;
 				if ((counters[n].count) == 0) counters[n].signal_high = true;
 			}
 			if (counters[n].mode == 1)
 			{
 				//синхроимпульсы c инверсией
-				counters[n].count -=1;
+				counters[n].count--;
 				if ((counters[n].count) == 0) counters[n].signal_high = false;
 				else counters[n].signal_high = false;
 			}
@@ -1314,48 +1265,85 @@ inline void IC8253::sync()
 			if (counters[n].mode == 2)
 			{
 				//синхроимпульсы
-				counters[n].count-=1;
+				counters[n].count--;
 				if ((counters[n].count) == 0) 
 				{
 					counters[n].signal_high = false;
 					//перезагрузка счетчика
 					counters[n].count = counters[n].initial_count;
+
 				}
 				else counters[n].signal_high = true;
+				
+				if (n == 2) //передача уровня сигнала в спикер
+				{
+					if (counters[n].signal_high) speaker.put_sample(1);
+					else speaker.put_sample(-1);
+				}
+
+				if (n == 0) // прерывание таймера
+				{
+					if (!counters[n].signal_high) int_ctrl.request_IRQ(0);
+				}
+
 			}
 			if (counters[n].mode == 3)
 			{
 				//квадратный сигнал
-				counters[n].count-=1;
-				if (((counters[n].count) & 7) == 0) counters[n].signal_high = true;
+				if (counters[n].count == 0) counters[n].count = counters[n].initial_count;
+				counters[n].count--;
+				if (counters[n].count > (counters[n].initial_count >> 1)) counters[n].signal_high = true;
+				else counters[n].signal_high = false;
+				/*
 				if (counters[n].signal_high == true)
 				{
 					if (counters[n].count < counters[n].initial_count/2) counters[n].signal_high = false;
 				}
+				*/
+				if (n == 2) //передача уровня сигнала в спикер
+				{
+					if (counters[n].signal_high) speaker.put_sample(1);
+					else speaker.put_sample(-1);
+				}
+				
 			}
 		}
 	}
 		
 	//прерывания таймера
-	if (counters[0].enabled)
+	if (counters[0].enabled && !counters[0].wait_for_data)  //Timer 0
 	{
-		if (counters[0].mode == 0 && counters[0].signal_high == true &&  !counters[0].one_shot_fired)
+		if (counters[0].mode == 0 && counters[0].signal_high &&  !counters[0].one_shot_fired)
 		{
 			//при высоком сигнале вызываем прерывание 0
+			//cout << "IRQ  t1" << endl;
 			int_ctrl.request_IRQ(0);
+			int_ctrl.set_timeout(5);
 			counters[0].one_shot_fired = true; //срабатываение 1 раз
 		}
 
 		if (counters[0].mode == 3 && counters[0].count == 0)
 		{
 			//при нуле вызываем IRQ
-			//cout << " timer IRO 0 ";
+			//if (halt_cpu) cout << " timer IRO 0 ";
+			//cout << "IRQ  t2" << endl;
 			int_ctrl.request_IRQ(0);
+			int_ctrl.set_timeout(5);
 		}
+		
+		if (counters[0].mode == 2 && counters[0].count == 0)
+		{
+			//при нуле вызываем IRQ
+			//if (halt_cpu) cout << " timer IRO 0 ";
+			//cout << "IRQ  t2" << endl;
+			int_ctrl.request_IRQ(0);
+			int_ctrl.set_timeout(5);
+		}
+
 	}
 
 	//refresh DRAM
-	if (counters[1].enabled)
+	if (counters[1].enabled) //Timer 1
 	{
 		if (counters[1].signal_high == 0)
 		{
@@ -1363,15 +1351,31 @@ inline void IC8253::sync()
 			dma_ctrl.request_hw_dma(0);
 		}
 	}
-	/*
+	
 	if (counters[2].enabled)
 	{
-		
+		//место для счетчика 2
+
 	}
-	*/
+	
+	//отдельный таймер для синхронизации реального времени
+	counters[3].count--;
+	if (counters[3].count == 0)
+	{
+		//синхронизируем скорость
+		timer_end = chrono::steady_clock::now(); //считываем время
+		duration = chrono::duration_cast<chrono::microseconds>(timer_end - timer_start).count();
+		timer_start = chrono::steady_clock::now(); //засекаем заново
+		if (duration > 65000) empty_cycles -= 50;
+		if (duration > 55000) empty_cycles -= 5;
+		if (duration < 44000) empty_cycles += 50;
+		if (duration < 54000) empty_cycles += 5;
+		//cout << (int)empty_cycles << "  ";
+	}
 }
 void IC8253::write_port(uint16 port, uint8 data)
 {
+	//cout << "port = " << (int)port << " data = " << (int)data << endl;
 	if (port >= 0x40 && port <= 0x42)
 	{
 		uint8 n = port - 0x40;
@@ -1385,39 +1389,20 @@ void IC8253::write_port(uint16 port, uint8 data)
 			counters[n].initial_count = counters[n].count = data;
 			counters[n].enabled = true;
 			if (counters[n].mode == 0) counters[n].signal_high = false; //сброс выхода при перезагрузке
-			if (n == 2)
-			{
-				//рассчитываем частоту звука
-				uint16 freq = 1193000 / counters[n].initial_count;
-				if (speaker.timer_freq != freq)
-				{
-					//произошла смена частоты воспроизведения
-					speaker.timer_freq = freq;
-					speaker.change_tone();
-				}
-			}
+			counters[n].wait_for_data = false; //отмена ожидания загрузки
+			if (n == 2) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
 			break;
 		case 2:
 			counters[n].initial_count = counters[n].count = data * 256;
 			counters[n].enabled = true;
 			if (counters[n].mode == 0) counters[n].signal_high = false; //сброс выхода при перезагрузке
-			if (n == 2)
-			{
-				//рассчитываем частоту звука
-				uint16 freq = 1193000 / counters[n].initial_count;
-				if (speaker.timer_freq != freq)
-				{
-					//произошла смена частоты воспроизведения
-					speaker.timer_freq = freq;
-					speaker.change_tone();
-				}
-			}
+			counters[n].wait_for_data = false; //отмена ожидания загрузки
+			if (n == 2) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
 			break;
 		case 3:
 			if (!counters[n].second_byte)
 			{
 				counters[n].count = (counters[n].count & 0xFF00) | data;
-				counters[n].initial_count = counters[n].count;
 				counters[n].second_byte = true;
 				counters[n].enabled = false;  //stop
 				//cout << "LB = " << hex << (int)data << endl;
@@ -1430,23 +1415,14 @@ void IC8253::write_port(uint16 port, uint8 data)
 				counters[n].second_byte = false;
 				counters[n].enabled = true;  //start
 				if (counters[n].mode == 0) counters[n].signal_high = false; // //сброс выхода при перезагрузке
+				counters[n].wait_for_data = false; //отмена ожидания загрузки
 				//cout << "HB = " << hex << (int)data << endl;
-				if (n == 2 && counters[n].initial_count)
-				{
-					//рассчитываем частоту звука
-					uint16 freq = 1193000 / counters[n].initial_count;
-					if (speaker.timer_freq != freq)
-					{
-						//произошла смена частоты воспроизведения
-						speaker.timer_freq = freq;
-						speaker.change_tone();
-						//cout << "SPK init = " << dec << (int)counters[n].initial_count << "  curr = " << (int)counters[n].count << endl;
-					}
-				}
+				if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 рассчитываем частоту звука
 			}
 		}
 		//if (counters[n].mode == 0) counters[n].enabled;
 		//deferred_msg = "counter " + to_string(n) + " set: count = " + to_string(counters[n].count);
+		//cout << "counter " << to_string(n) << " set: count = " << to_string(counters[n].count) << endl;
 	}
 	
 	//запись контрольного слова
@@ -1458,6 +1434,7 @@ void IC8253::write_port(uint16 port, uint8 data)
 		int mode = (data >> 1) & 7;
 		int BCD_mode = data & 1;
 		//deferred_msg = "set timer " + to_string(timer_N);
+		//cout << "set timer " << to_string(timer_N) << endl;
 
 		if (RL == 0) 
 		{
@@ -1465,6 +1442,7 @@ void IC8253::write_port(uint16 port, uint8 data)
 			counters[timer_N].latch_on = 1;
 			counters[timer_N].latch_value = counters[timer_N].count;
 			//deferred_msg = "counter " + to_string(timer_N) + " latch rq (" + to_string(counters[timer_N].latch_value) + ")";
+			//cout << "counter " << to_string(timer_N) << " latch rq (" << to_string(counters[timer_N].latch_value) << ")" << endl;
 		}
 		else
 		{
@@ -1475,14 +1453,20 @@ void IC8253::write_port(uint16 port, uint8 data)
 			//  3 - LSB then MSB
 
 			//режимы от 0 до 5
-			if (mode == 0)counters[timer_N].one_shot_fired = false; //переустанавливаем триггер для режима 0
+			if (mode == 0)
+			{
+				counters[timer_N].one_shot_fired = false; //переустанавливаем триггер для режима 0
+				counters[timer_N].wait_for_data = true;   //ждем загрузки данных
+			}
 			
 			counters[timer_N].mode = mode;
 			if (mode == 6) counters[timer_N].mode = 2;
 			if (mode == 7) counters[timer_N].mode = 3;
 
 			counters[timer_N].BCD_mode = BCD_mode; // 1 - считаем в BCD
+			
 			//deferred_msg = "counter " + to_string(timer_N) + " set: RL = " + to_string(RL) + " mode = " + to_string(counters[timer_N].mode);
+			//cout << "counter " << to_string(timer_N) << " set: RL = " << to_string(RL) << " mode = " << to_string(counters[timer_N].mode) << endl;
 		}
 	}
 }
@@ -1528,6 +1512,7 @@ string IC8253::get_ch_data(int channel)
 //DMA controller
 void IC8237::write_port(uint16 port, uint8 data)
 {
+	
 	switch(port)
 	{
 	//запись параметров по отдельным каналам
@@ -1561,7 +1546,7 @@ void IC8237::write_port(uint16 port, uint8 data)
 			cha_attribute[0].base_address = cha_attribute[0].curr_address & (0xFF00) | (data);
 		}
 		cha_attribute[0].flip_flop = !cha_attribute[0].flip_flop;
-		//deferred_msg = "write DMA 0 curr addr = " + to_string(cha_attribute[0].curr_address);
+		if (log_to_console_DMA) cout << "write DMA 0 curr addr = " << to_string(cha_attribute[0].curr_address) << endl;
 		break;
 	case 1:
 		//current world count
@@ -1576,7 +1561,7 @@ void IC8237::write_port(uint16 port, uint8 data)
 			cha_attribute[0].base_word_count = cha_attribute[0].word_count & (0xFF00) | (data);
 		}
 		cha_attribute[0].flip_flop = !cha_attribute[0].flip_flop;
-		//deferred_msg = "write DMA 0 world count = " + to_string(cha_attribute[0].word_count);
+		if (log_to_console_DMA) cout << "write DMA 0 world count = " << to_string(cha_attribute[0].word_count) << endl;
 		break;
 	case 2:
 		//current address
@@ -1591,7 +1576,7 @@ void IC8237::write_port(uint16 port, uint8 data)
 			cha_attribute[1].base_address = cha_attribute[1].curr_address & (0xFF00) | (data);
 		}
 		cha_attribute[1].flip_flop = !cha_attribute[1].flip_flop;
-		//deferred_msg = "write DMA 1 curr addr = " + to_string(cha_attribute[1].curr_address);
+		if (log_to_console_DMA) cout << "write DMA 1 curr addr = " << to_string(cha_attribute[1].curr_address) << endl;
 		break;
 	case 3:
 		//current world count
@@ -1606,7 +1591,7 @@ void IC8237::write_port(uint16 port, uint8 data)
 			cha_attribute[1].base_word_count = cha_attribute[1].word_count & (0xFF00) | (data);
 		}
 		cha_attribute[1].flip_flop = !cha_attribute[1].flip_flop;
-		//deferred_msg = "write DMA 1 world count = " + to_string(cha_attribute[1].word_count);
+		if (log_to_console_DMA) cout << "write DMA 1 world count = " << to_string(cha_attribute[1].word_count) << endl;
 		break;
 	case 4:
 		//current address
@@ -1621,7 +1606,7 @@ void IC8237::write_port(uint16 port, uint8 data)
 			cha_attribute[2].base_address = cha_attribute[2].curr_address & (0xFF00) | (data);
 		}
 		cha_attribute[2].flip_flop = !cha_attribute[2].flip_flop;
-		//deferred_msg = "write DMA 2 curr addr = " + to_string(cha_attribute[2].curr_address);
+		if (log_to_console_DMA) cout << "write DMA 2 curr addr = " << to_string(cha_attribute[2].curr_address) << endl;
 		break;
 	case 5:
 		//current world count
@@ -1636,7 +1621,7 @@ void IC8237::write_port(uint16 port, uint8 data)
 			cha_attribute[2].base_word_count = cha_attribute[2].word_count & (0xFF00) | (data);
 		}
 		cha_attribute[2].flip_flop = !cha_attribute[2].flip_flop;
-		//deferred_msg = "write DMA 2 world count = " + to_string(cha_attribute[2].word_count);
+		if (log_to_console_DMA) cout << "write DMA 2 world count = " << to_string(cha_attribute[2].word_count) << endl;
 		break;
 	case 6:
 		//current address
@@ -1651,7 +1636,7 @@ void IC8237::write_port(uint16 port, uint8 data)
 			cha_attribute[3].base_address = cha_attribute[3].curr_address & (0xFF00) | (data);
 		}
 		cha_attribute[3].flip_flop = !cha_attribute[3].flip_flop;
-		//deferred_msg = "write DMA 3 curr addr = " + to_string(cha_attribute[3].curr_address);
+		if (log_to_console_DMA) cout << "write DMA 3 curr addr = " << to_string(cha_attribute[3].curr_address) << endl;
 		break;
 	case 7:
 		//current world count
@@ -1666,15 +1651,15 @@ void IC8237::write_port(uint16 port, uint8 data)
 			cha_attribute[3].base_word_count = cha_attribute[3].word_count & (0xFF00) | (data);
 		}
 		cha_attribute[3].flip_flop = !cha_attribute[3].flip_flop;
-		//deferred_msg = "write DMA 3 world count = " + to_string(cha_attribute[3].word_count);
+		if (log_to_console_DMA) cout << "write DMA 3 world count = " << to_string(cha_attribute[3].word_count) << endl;
 		break;
 	case 8:
-		//deferred_msg = "DMA: Write command reg (" + int_to_bin(data) + ")";
+		if (log_to_console_DMA) cout << "DMA: Write command reg (" + int_to_bin(data) + ")";
 		M_to_M_enable = data & 1;
 		Ch0_adr_hold = (data >> 1) & 1;
 		Ctrl_disabled = (data >> 2) & 1;
-		//if (Ctrl_disabled) deferred_msg += " DMA DISABLE";
-		//else deferred_msg += " DMA ENABLE";
+		if (Ctrl_disabled && log_to_console_DMA) cout << " DMA DISABLE";
+		else { if (log_to_console_DMA) cout << " DMA ENABLE"; }
 		compressed_timings = (data >> 3) & 1;
 		rotating_priority = (data >> 4) & 1;
 		extended_write = (data >> 5) & 1;
@@ -1683,11 +1668,11 @@ void IC8237::write_port(uint16 port, uint8 data)
 		break;
 	case 9:  //запрос на DMA
 		cha_attribute[data & 3].request_bit = (data >> 2) & 1;
-		//deferred_msg = "DMA: Write request reg CHA " + to_string(data & 3) + " = " + to_string((data >> 2) & 1);
+		if (log_to_console_DMA) cout << "DMA: Write request reg CHA " + to_string(data & 3) + " = " + to_string((data >> 2) & 1) << endl;
 		break;
 	case 10:
 		cha_attribute[data & 3].masked = (data >> 2) & 1;
-		//deferred_msg = "DMA: channel " + to_string(data & 3) + " mack register bit = " + to_string(cha_attribute[data & 3].masked);
+		if (log_to_console_DMA) cout << "DMA: channel " + to_string(data & 3) + " mack register bit = " + to_string(cha_attribute[data & 3].masked) << endl;
 		break;
 	case 11:
 		cha_attribute[data & 3].mode_select = (data >> 6) & 3;
@@ -1697,17 +1682,18 @@ void IC8237::write_port(uint16 port, uint8 data)
 			{
 			cha_attribute[data & 3].transfer_select = (data >> 2) & 3;
 			}
-		//deferred_msg = "DMA: cha " + to_string(data & 3) + " set mode = " + to_string((data >> 6) & 3) + " adr_dec = " + to_string((data >> 5) & 1) + " autoinit = " + to_string((data >> 4) & 1) + " transfer(V-W-R) = " + to_string((data >> 2) & 3);
+		if (log_to_console_DMA) cout << "DMA: cha " + to_string(data & 3) + " set mode = " + to_string((data >> 6) & 3) + " adr_dec = " + to_string((data >> 5) & 1) + " autoinit = " + to_string((data >> 4) & 1) + " transfer(V-W-R) = " + to_string((data >> 2) & 3) << endl;
+		//cout << "DMA set mode " << to_string((data >> 6) & 3) << endl;
 		break;
 	case 12:
-		//deferred_msg = "DMA: Clear byte pointer flip/flop (" + int_to_bin(data) + ")";
+		if (log_to_console_DMA) cout << "DMA: Clear byte pointer flip/flop (" + int_to_bin(data) + ")" << endl;
 		cha_attribute[0].flip_flop = 0;
 		cha_attribute[1].flip_flop = 0;
 		cha_attribute[2].flip_flop = 0;
 		cha_attribute[3].flip_flop = 0;
 		break;
 	case 13:
-		//deferred_msg = "DMA: Master clear (" + int_to_bin(data) + ")";
+		if (log_to_console_DMA) cout << "DMA: Master clear (" + int_to_bin(data) + ")" << endl;
 		M_to_M_enable = false;
 		Ch0_adr_hold = false;
 		//Ctrl_disabled = false;
@@ -1731,10 +1717,10 @@ void IC8237::write_port(uint16 port, uint8 data)
 		}
 		break;
 	case 14:
-		//deferred_msg = "DMA: reset mask REG????";
+		if (log_to_console_DMA) cout << "DMA: reset mask REG????" << endl;
 		break;
 	case 15:
-		//deferred_msg = "DMA: Write all mask register bits (" + int_to_bin(data) + ")";
+		if (log_to_console_DMA) cout << "DMA: Write all mask register bits (" + int_to_bin(data) + ")" << endl;
 		if (data & 1) cha_attribute[0].masked = true;
 		else cha_attribute[0].masked = false;
 		if ((data >> 1) & 1) cha_attribute[1].masked = true;
@@ -1745,15 +1731,15 @@ void IC8237::write_port(uint16 port, uint8 data)
 		else cha_attribute[3].masked = false;
 		break;
 	case 0x83:
-		//deferred_msg = "write DMA page REG = " + int_to_hex(data, 2);
+		if (log_to_console_DMA) cout << "write DMA page REG = " + int_to_hex(data, 2) << endl;
 		cha_attribute[1].page = data;
 		break;
 	case 0x81:
-		//deferred_msg = "write DMA page REG = " + int_to_hex(data, 2);
+		if (log_to_console_DMA) cout << "write DMA page REG = " + int_to_hex(data, 2) << endl;
 		cha_attribute[2].page = data;
 		break;
 	case 0x82:
-		//deferred_msg = "write DMA page REG = " + int_to_hex(data, 2);
+		if (log_to_console_DMA) cout << "write DMA page REG = " + int_to_hex(data, 2) << endl;
 		cha_attribute[3].page = data;
 		break;
 	}
@@ -1841,10 +1827,11 @@ uint8 IC8237::read_port(uint16 port)
 		return cha_attribute[3].page;
 	}
 
+	if(test_mode) return out; //в тестовом режиме выходим сразу
 	cout << "DMA: unknown request on port " << (int)port << " IP = " << (int)Instruction_Pointer;
 	step_mode = 1; 
 	log_to_console = 1; 
-	return out;
+	return 255;
 }
 void IC8237::sync()
 {
@@ -1876,7 +1863,7 @@ void IC8237::sync()
 			if (cha_attribute[i].mode_select == 0)
 			{
 				//demand mode - пока нет
-				return;
+				continue;
 			}
 
 			if (cha_attribute[i].mode_select == 1)
@@ -1901,16 +1888,24 @@ void IC8237::sync()
 					if (i == 2) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.get_DMA_data()); //буфер FDD
 					if (i == 3) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, HDD.read_DMA_data()); //буфер HDD
 
-					if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
+					if (cha_attribute[i].adress_decrement)	--cha_attribute[i].curr_address;
 					else ++cha_attribute[i].curr_address;
+
 					--cha_attribute[i].word_count;
+					if (i == 2 && cha_attribute[i].word_count == 0xFFFF) FDD_A.EOP = 1; //сигнал конца передачи
+					if (i == 3 && cha_attribute[i].word_count == 0xFFFF)
+					{
+						HDD.EOP = 1; //сигнал конца передачи
+						//cout << "DMA HDD WRITE EOP" << endl;
+						//step_mode = 1;
+					}
 
 					break;
 
 				case 2:   //read - чтение из памяти - запись в IO
 
-					//берем данные из буфера IO
-					
+					//берем данные из оперативной памяти
+					//cout << " - here - i = " << (int)i << endl;
 					if (i == 0) mem_buffer = memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256); //буфер для M-to-M
 					//канал 1 только для записи
 					if (i == 2) FDD_A.put_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
@@ -1918,8 +1913,16 @@ void IC8237::sync()
 
 					if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
 					else ++cha_attribute[i].curr_address;
+
 					--cha_attribute[i].word_count;
-				
+					if (i == 2 && cha_attribute[i].word_count == 0xFFFF) FDD_A.EOP = 1; //сигнал конца передачи
+					if (i == 3 && cha_attribute[i].word_count == 0xFFFF)
+					{
+						HDD.EOP = 1; //сигнал конца передачи
+						//cout << "DMA HDD READ EOP" << endl;
+						//step_mode = 1;
+					}
+
 					break;
 				}
 
@@ -1929,8 +1932,12 @@ void IC8237::sync()
 				//завершение передачи если WC = 0
 				if (cha_attribute[i].word_count == 0xFFFF)
 				{
+					//if (i == 2 && cha_attribute[i].request_bit) FDD_A.EOP = 1; //сигнал конца передачи
+					//if (i == 3 && cha_attribute[i].request_bit) HDD.EOP = 1; //сигнал конца передачи
+
 					cha_attribute[i].TC_reached = 1; //достижение предела передачи
-					
+					cha_attribute[i].request_bit = 0; //сброс бита запроса
+
 					if (cha_attribute[i].autoinitialization)
 					{
 						cha_attribute[i].curr_address = cha_attribute[i].base_address;
@@ -1942,9 +1949,7 @@ void IC8237::sync()
 						cha_attribute[i].masked = 1;
 					}
 				}
-				return;
-				
-				return;
+				continue;
 			}
 
 			if (cha_attribute[i].mode_select == 2)
@@ -2014,15 +2019,15 @@ void IC8237::sync()
 					//если нет авто, ставим маску
 					cha_attribute[i].masked = 1;
 				}
-				return;
+				continue;
 			}
 			
 			if (cha_attribute[i].mode_select == 3)
 			{
 				//cascade mode, каскадный режим не нужен
-				return;
+				continue;
 			}
-			break; //выходим из цикла если отработал один канал
+			//break; //выходим из цикла если отработал один канал
 		}
 	}
 
@@ -2031,7 +2036,7 @@ void IC8237::sync()
 	//работа канала 3 - HDD
 
 }
-bool IC8237::request_hw_dma(int channel)
+uint8 IC8237::request_hw_dma(int channel)
 {
 	//устройство запрашивает передачу по каналу
 	//возврат 1 - отказ
@@ -2050,17 +2055,31 @@ bool IC8237::request_hw_dma(int channel)
 	
 	if (channel == 2) //FDD
 	{
-		if (cha_attribute[2].masked) return 1; //возврат, если стоит маска
-		if (cha_attribute[2].request_bit) return 1; //возврат, бит уже установлен
-		//if (cha_attribute[2].pending) return; //возврат, если уже в работе - проверить, не нужно ли начать заново
-		//if (cha_attribute[2].TC_reached) return; //возврат, если передача уже закончена и нет автопродления
+		if (cha_attribute[2].masked || cha_attribute[2].request_bit) 
+		{
+			uint8 out = cha_attribute[2].masked + 2 * cha_attribute[2].request_bit; //возврат флагов
+			//if (cha_attribute[2].TC_reached) cha_attribute[2].TC_reached = 0; //сброс флага ТС
+			return out; //возврат, если стоит маска/запрос/конец передачи данных
+		};
+		
 		cha_attribute[2].request_bit = 1; //активируем запрос
 		//продумать способ активации работы DMA по запросу, чтобы не делать синхронизацию на каждом такте
+		//cout << "DMA FDD 0 = OK" << endl;
 		return 0;
 	}
 
 	if (channel == 3) //HDD
 	{
+		if (cha_attribute[3].masked || cha_attribute[3].request_bit)
+		{
+			uint8 out = cha_attribute[3].masked + 2 * cha_attribute[3].request_bit; //возврат флагов
+			//if (cha_attribute[2].TC_reached) cha_attribute[2].TC_reached = 0; //сброс флага ТС
+			return out; //возврат, если стоит маска/запрос/конец передачи данных
+		};
+
+		cha_attribute[3].request_bit = 1; //активируем запрос
+		//продумать способ активации работы DMA по запросу, чтобы не делать синхронизацию на каждом такте
+		//cout << "DMA FDD 0 = OK" << endl;
 		return 0;
 	}
 
@@ -2150,27 +2169,32 @@ void IC8255::write_port(uint16 port, uint8 data)
 		port_B_out = data; //запоминаем значение
 		//IC parametrs
 		//deferred_msg = "Port 61 out: " + int_to_bin(data) + " ";
-		if (data & 1)
+		if ((data & 1) == 1)
 		{
 			//deferred_msg = deferred_msg + "T_Gate 2 ON  ";
 			//pc_timer.enable_timer(2);
+			//speaker.beep_on();
 		}
 		else 
 		{ 
 			//deferred_msg = deferred_msg + "T_Gate 2 OFF "; 
 			//pc_timer.disable_timer(2);
+			//speaker.beep_off();
 		}
-		if ((data & 2) == 2)
+		
+		if ((data & 2) == 2) // пины 0 и 1
 		{
 			//deferred_msg = deferred_msg + "SPK_ON  ";
 			speaker.beep_on();
+			//cout << "BEEP ON" << endl;
 		}
 		else
 		{
 			//deferred_msg = deferred_msg + "SPK_OFF ";
 			speaker.beep_off();
+			//cout << "BEEP OFF" << endl;
 		}
-
+		
 		if (((data >> 3) & 1) == 1) 
 		{
 			//deferred_msg = deferred_msg + "SWITCHES_HIGH ";
@@ -2183,7 +2207,8 @@ void IC8255::write_port(uint16 port, uint8 data)
 		}
 		//if ((data & 16) == 0) deferred_msg = deferred_msg + "+RAM_parity_CHK ";
 		//if ((data & 32) == 0) deferred_msg = deferred_msg + "+IO_CHECK ";
-		if ((data & 64) == 0)
+		
+		if ((data & 64) == 0)  //pin6
 		{
 			//deferred_msg = deferred_msg + "+KB_clock_LOW ";
 			keyboard.set_CLK_low();
@@ -2193,18 +2218,22 @@ void IC8255::write_port(uint16 port, uint8 data)
 			//deferred_msg = deferred_msg + "+KB_clock_HIGH ";
 			keyboard.set_CLK_high();
 		}
-		if ((data & 128) == 0)
+		
+		if ((data & 128) == 0) //pin7
 		{
 			//deferred_msg = deferred_msg + "enable_KB ";
-			keyboard.enabled = true;
+			//if (port_B_7) keyboard.data_line_enabled = true; //включаем передачу данных
+			keyboard.data_line_enabled = true;
+			//cout << "KB_EN" << endl;
+			port_B_7 = false;
 		}
 		else
 		{
 			//deferred_msg = deferred_msg + "clear_KB ";
-			//keyboard.clear();
-			keyboard.enabled = false;
-			//keyboard.enabled = false;
+			port_B_7 = true; //переключаем состояние
 		}
+		
+		Audio_monitor.set_pinout(data & 0b11);
 		break;
 	case 0x63:
 		//control register
@@ -2259,30 +2288,55 @@ uint8 IC8255::read_port(uint16 port)
 //INT controller
 void IC8259::write_port(uint16 port, uint8 data)
 {
-	//cout << endl << "write port " << port << " " << (bitset<8>)data <<  " next_ICW=" << (int)next_ICW << endl;
+	if(log_to_console_INT) cout << endl << "write port " << port << " " << (bitset<8>)data <<  " next_ICW=" << (int)next_ICW << endl;
 	
 	//Initialization Commands
 
 	if ((port == 0x20) && ((data >> 4) & 1) && (next_ICW == 1))
 	{
 		//Initialization Command Word 1
-		//deferred_msg = "INT_Ctrl Init_1: ";
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl Init_1: ";
+		
 		if (data & 1) 
 		{ 
-			//deferred_msg += "ICW4_ON "; 
+			if (log_to_console_INT) deferred_msg += "ICW4_ON ";
 			wait_ICW4 = 1;
 		}
 		else 
 		{ 
-			//deferred_msg += "ICW4_OFF "; 
+			if (log_to_console_INT) deferred_msg += "ICW4_OFF ";
 			wait_ICW4 = 0; 
 		}
-		//if (data & 2) deferred_msg += "SINGLE_MODE ";
-		//else  deferred_msg += "CASCADE_MODE ";
-		//if (data & 4) deferred_msg += "INTERV_4 ";
-		//else  deferred_msg += "INTERV_8 ";
-		//if (data & 8) deferred_msg += "LEVEL_MODE ";
-		//else  deferred_msg += "EDGE_MODE ";
+		
+		if (data & 2) {
+			if (log_to_console_INT) deferred_msg += "SINGLE_MODE ";
+			cascade_mode = false;
+		}
+		else 
+		{ 
+			if (log_to_console_INT) deferred_msg += "CASCADE_MODE ";
+			cascade_mode = true;
+		}
+
+		if (data & 4) {
+			if (log_to_console_INT) deferred_msg += "ADDR_INTERVAL_4 ";
+			ADDR_INTERVAL_4 = true;
+		}
+		else 
+		{ 
+			if (log_to_console_INT) deferred_msg += "ADDR_INTERVAL_8 ";
+			ADDR_INTERVAL_4 = false;
+		}
+		
+		if (data & 8)
+		{
+			if (log_to_console_INT) deferred_msg += "LEVEL_MODE ";
+		}
+		else
+		{
+			if (log_to_console_INT) deferred_msg += "EDGE_MODE ";
+		}
+		INT_vector_addr_80 = data & 0xE0;//выделяем биты А7-А5
 		next_ICW = 2;
 		return;
 	}
@@ -2290,10 +2344,11 @@ void IC8259::write_port(uint16 port, uint8 data)
 	if ((port == 0x21) && next_ICW == 2)
 	{
 		//Initialization Command Word 2
-		//deferred_msg = "INT_Ctrl Init_2: ";
-		INT_vector_addr = data & 0xF8;
-		//deferred_msg += "INT_vector_addr " + int_to_hex(INT_vector_addr, 2);
-		if (cascade) next_ICW = 3;
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl Init_2: ";
+		INT_vector_addr_86 = data & 0xF8;// биты А7 - А3
+		INT_vector_addr_80 += data * 256;// старшие биты адреса таблицы
+		if (log_to_console_INT) deferred_msg += "INT_vector_addr " + int_to_bin(data);
+		if (cascade_mode) next_ICW = 3;
 		else
 		{
 			if (wait_ICW4) next_ICW = 4;
@@ -2302,19 +2357,42 @@ void IC8259::write_port(uint16 port, uint8 data)
 		return;
 	}
 	
+	if ((port == 0x21) && next_ICW == 3)
+	{
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl Init_3: it should not be here. ERROR.";
+		if (wait_ICW4) next_ICW = 4;
+		else { enabled = true; next_ICW = 0; }
+		return;
+	}
+
 	if ((port == 0x21) && !((data >> 5) & 7) && next_ICW == 4)
 	{
 		//Initialization Command Word 4
-		//deferred_msg = "INT_Ctrl Init_4: ";
-		
-		//if (data & 16) deferred_msg += "NESTED ON ";
-		//else  deferred_msg += "NESTED OFF ";
-		//if (data & 8) deferred_msg += "BUFFERED ";
-		//else  deferred_msg += "NOT_BUFFERED ";
-		//if (data & 2) deferred_msg += "AUTO EOI ";
-		//else  deferred_msg += "NORMAL EOI ";
-		//if (data & 2) deferred_msg += "8086 ";
-		//else deferred_msg += "8085 ";
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl Init_4: ";
+
+		if (data & 16) {
+			if (log_to_console_INT) deferred_msg += "NESTED_ON "; nested_mode = true;
+		}
+		else {
+			if (log_to_console_INT) deferred_msg += "NESTED_OFF "; nested_mode = false;
+		}
+
+		if ((data & 8) && log_to_console_INT) deferred_msg += "BUFFERED ";
+		else { if (log_to_console_INT) deferred_msg += "NOT_BUFFERED "; }
+		if (data & 2) {
+			if (log_to_console_INT) deferred_msg += "AUTO_EOI "; AUTO_EOI = true;
+		}
+		else {
+			if (log_to_console_INT) deferred_msg += "NORMAL_EOI "; AUTO_EOI = false;
+		}
+		if (data & 2) 
+		{ 
+			if (log_to_console_INT) deferred_msg += "8086_mode "; mode_8086 = true;
+		}
+		else 
+		{
+			if (log_to_console_INT) deferred_msg += "8085_mode "; mode_8086 = false;
+		}
 		
 		//включение
 		enabled = true;
@@ -2324,24 +2402,24 @@ void IC8259::write_port(uint16 port, uint8 data)
 
 	//Operation Command Words
 
-	if ((port == 0x21) && (next_ICW == 0))  // next_ICW == 0 - инициализация завершена
+	if ((port == 0x21) && (next_ICW == 0) && enabled)  // next_ICW == 0 && ENABLED - инициализация завершена
 	{
 		//Operation Command Word 1
-		//deferred_msg = "INT_Ctrl Command_1: masked bits " + int_to_bin(data);
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl Command_1: masked bits " + int_to_bin(data);
 		IM_REG = data;
-		sleep_timer = 5;
+		sleep_timer = 2;
 		return;
 	}
 	
-	if ((port == 0x20) && (next_ICW == 0) && !((data >> 3) & 3))
+	if ((port == 0x20) && (next_ICW == 0) && !(((data >> 3) & 3) == 1) && enabled) // OCW2
 	{
 		//Operation Command Word 2
-		//deferred_msg = "INT_Ctrl Command_2: IR_LEVEL=" + to_string((int)(data & 7)) + " cmd_code=" + to_string((data >> 5) & 7);
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl Command_2: IR_LEVEL=" + to_string((int)(data & 7)) + " cmd_code=" + to_string((data >> 5) & 7);
 
 		if (((data >> 5) & 7) == 1)
 		{
 			//сбрасываем бит самого высокого уровня в IS_REG
-			//cout << "EIO ISR " << int_to_bin(IS_REG) << " -> ";
+			if (log_to_console_INT) cout << "EIO ISR " << int_to_bin(IS_REG) << " -> ";
 			for (uint8 v = 0; v < 8; v++)
 			{
 				if ((IS_REG >> v) & 1)
@@ -2350,96 +2428,154 @@ void IC8259::write_port(uint16 port, uint8 data)
 					break;
 				}
 			}
-			//cout << int_to_bin(IS_REG);
+			if (log_to_console_INT) cout << int_to_bin(IS_REG);
 		}
 
 		if (((data >> 5) & 7) == 3)
 		{
 			//сбрасываем указанный бит в IS_REG
 			uint8 b = data & 7; //номер прерывания для сброса
-			//cout << "EIO ISR " << int_to_bin(IS_REG) << " -> ";
+			if (log_to_console_INT) cout << "EIO ISR " << int_to_bin(IS_REG) << " -> ";
 			IS_REG = IS_REG & (~(1 << b));
-			//cout << int_to_bin(IS_REG);
+			if (log_to_console_INT) cout << int_to_bin(IS_REG);
 		}
-		sleep_timer = 5;
+		
+		sleep_timer = 2;
 		return;
 	}
 
-	if ((port == 0x20) && (next_ICW == 0) && (data & 152) == 8)
+	if ((port == 0x20) && (next_ICW == 0) && (((data >> 3) & 3) == 1) && enabled) // OCW3
 	{
-		//Operation Command Word 2
-		//deferred_msg = "INT_Ctrl Command_3: " + int_to_bin(data);
+		//Operation Command Word 3
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl Command_3: " + int_to_bin(data) + " ";
 		switch (data & 3)
 		{
 		case 2:
 			//read IR REG
 			next_reg_to_read = 1;
-			//deferred_msg += " read IRR next";
+			if (log_to_console_INT) deferred_msg += "SET next_reg_to_read = IRR ";
 			break;
 		case 3:
 			//read IS REG
 			next_reg_to_read = 2;
-			//deferred_msg += " read ISR next";
+			if (log_to_console_INT) deferred_msg += "SET next_reg_to_read = ISR ";
 			break;
 		}
+		
+		if ((data >> 2) & 1)
+		{
+			// poll command
+			if (log_to_console_INT) deferred_msg += "DO_POLL  ";
+		}
+		
+		switch ((data >> 5) & 3)
+		{
+		case 2:
+			//Reset special mask
+			if (log_to_console_INT) deferred_msg += "RESET_SPEC_MASK ";
+			break;
+		case 3:
+			//SET special mask
+			if (log_to_console_INT) deferred_msg += "SET_SPEC_MASK ";
+			break;
+		}
+		
 		return;
 	}
 }
 uint8 IC8259::read_port(uint16 port)
 {
-	//cout << endl << "read port " << port << endl;
-	if ((next_reg_to_read == 1) & ((port & 1) == 0))
+	if (log_to_console_INT)  cout << endl << "read port " << port << endl;
+	if ((next_reg_to_read == 1) && ((port & 1) == 0))
 	{
-		//deferred_msg = "INT_Ctrl read IRR = " + int_to_bin(IR_REG);
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl read IRR = " + int_to_bin(IR_REG);
 		return IR_REG;
 	}
 
-	if ((next_reg_to_read == 2) & ((port & 1) == 0))
+	if ((next_reg_to_read == 2) && ((port & 1) == 0))
 	{
-		//deferred_msg = "INT_Ctrl read ISR = " + int_to_bin(IS_REG);
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl read ISR = " + int_to_bin(IS_REG);
 		return IS_REG;
 	}
 
 	if (port & 1)
 	{
-		//deferred_msg = "INT_Ctrl read IMR = " + int_to_bin(IM_REG);
+		if (log_to_console_INT) deferred_msg = "INT_Ctrl read IMR = " + int_to_bin(IM_REG);
 		return IM_REG;
 	}
 
 	return 0;
 }
-void IC8259::request_IRQ(uint8 irq)
+uint8 IC8259::request_IRQ(uint8 irq)
 {
 	//обработка запросов и изменение IR_REG
 	
-	if (!enabled) return; //выход если отключен сам контроллер
+	if (!enabled)
+	{
+		if (log_to_console_INT) deferred_msg = "INT_Ctr is OFF. IRQ_" + to_string(irq) + " request denied ";
+		return 1; //выход если отключен сам контроллер
+	}
 						  
 	//проверяем маски
-	if ((IM_REG >> irq) & 1) return; //выход если маскировано данное INT
-	if ((IS_REG >> irq) & 1) return; //выход если данное INT уже обслуживается
+	if ((IM_REG >> irq) & 1) 
+	{
+		if (log_to_console_INT) deferred_msg = "INT_Ctr: IRQ_" + to_string(irq) + " is masked and request denied ";
+		return 2; //выход если маскировано данное INT
+	}
+	if ((IS_REG >> irq) & 1)
+	{
+		if (log_to_console_INT) deferred_msg = "INT_Ctr: IRQ_" + to_string(irq) + " in service. Request denied ";
+		return 3; //выход если данное INT уже обслуживается
+	}
 
 	//дополняем регистр запросов
 	IR_REG = IR_REG | (1 << irq);
+	return 0;
 }
 uint8 IC8259::get_last_int() { return last_INT; }
+uint16 IC8259::get_last_int_addr() //возврат адреса вектора
+{
+	if (mode_8086)
+	{
+		//mode 8086
+		return INT_vector_addr_86 + last_INT; // T7-T3 + INT
+	}
+	else
+	{
+		// mode 8080/85
+		return INT_vector_addr_80 + last_INT; 
+	}
+	
+}
+
 uint8 IC8259::next_int()
 {
 	if (sleep_timer) 
 	{
 		sleep_timer--;
+		if (log_to_console_INT) deferred_msg = "sleep timer = " + to_string(sleep_timer) + " return 255";
 		return 255;
 	}
-	if (!enabled) return 255; //контроллер отключен
+	
+	if (!enabled) 
+	{
+		if (log_to_console_INT) deferred_msg = "INT Ctrl OFF return 255";
+		return 255; //контроллер отключен
+	}
 
 	// просматриваем вектора прерываний
 	
 	for (uint8 v = 0; v < 8; v++)
 	{
-		if (((IR_REG >> v) & 1) && !((IS_REG >> v) & 1))
+		if (((IR_REG >> v) & 1) && !((IS_REG >> v) & 1) && !((IM_REG >> v) & 1))
 		{
 			IR_REG = IR_REG & ~(1 << v); //отключаем бит в регистре запросов
 			IS_REG = IS_REG | (1 << v); //устанавливаем бит в регистре обслуживания
-			return v;
+			last_INT = v;//запоминаем текущее прерывание
+			//SetConsoleTextAttribute(hConsole, 10);
+			//cout << "INT CTRL EN = " << (int)enabled << " IR_REG = " << (bitset<8>)IR_REG << " IS_REG = " << (bitset<8>)IS_REG << " IM_REG = " << (bitset<8>)IM_REG << endl;
+			//SetConsoleTextAttribute(hConsole, 7);
+			return v; //возвращаем номер активного прерывания
 		}
 		if ((IS_REG >> v) & 1) return 255; // если уже обслуживается более высокий уровень - возврат
 	}
@@ -2458,16 +2594,17 @@ string IC8259::get_ch_data(int ch)
 
 	return out;
 }
+void IC8259::set_timeout(uint8 delay)
+{
+	sleep_timer = delay;
+}
 
 void print_mem()
 {
-	
-	for (int i = 0x449; i < 0x4A8; i++)
+	for (int i = 0; i < 256; i++)
 	{
-		cout << hex << "[" << (int)i << "] " << (int)(memory.read_2(i));
-		cout << endl;
+		cout << hex << (int)i << "\t" << (int)command_counter[i] << endl;
 	}
-	
 }
 
 Dev_mon_device::Dev_mon_device(uint16 w, uint16 h, string title, uint16 x_pos, uint16 y_pos)   // конструктор класса
@@ -2481,7 +2618,7 @@ Dev_mon_device::Dev_mon_device(uint16 w, uint16 h, string title, uint16 x_pos, u
 	my_display_W = sf::VideoMode::getDesktopMode().size.x;
 
 	cout << "Debug window Init " << (int)h << " x " << (int)w << " display name " << title << endl;
-
+#ifdef DEBUG
 	//создаем главное окно
 	main_window.create(sf::VideoMode(sf::Vector2u(GAME_WINDOW_X_RES, GAME_WINDOW_Y_RES)), title, sf::Style::Titlebar, sf::State::Windowed);
 	main_window.setPosition({ x_pos, y_pos });
@@ -2490,6 +2627,7 @@ Dev_mon_device::Dev_mon_device(uint16 w, uint16 h, string title, uint16 x_pos, u
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
 	main_window.setActive(true);
+#endif
 }
 
 void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
@@ -2596,7 +2734,7 @@ void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
 
 	for (int s = 0; s < 16; s++)
 	{
-		text.setString("[" + int_to_hex(*SS, 4) + ":" + int_to_hex(Stack_Pointer, 4) + "] " + int_to_hex((int)(memory.read_2(uint16(Stack_Pointer + (s * 2)) + SS_data * 16) + memory.read_2(uint16(Stack_Pointer + (s * 2) + 1) + SS_data * 16) * 256), 4));
+		text.setString("[" + int_to_hex(*SS, 4) + ":" + int_to_hex(Stack_Pointer + s * 2, 4) + "] " + int_to_hex((int)(memory.read_2(uint16(Stack_Pointer + (s * 2)) + SS_data * 16) + memory.read_2(uint16(Stack_Pointer + (s * 2) + 1) + SS_data * 16) * 256), 4));
 		text.setPosition(sf::Vector2f(10, 700 + s * 30));
 		main_window.draw(text);
 	}
@@ -2630,13 +2768,23 @@ void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
 	text.setFillColor(sf::Color::White);
 	main_window.draw(text);
 
-	if (speaker.beeping && pc_timer.is_count_enabled(2))
+	//данные пищалки
+	if (speaker.beeping && !halt_cpu)
 	{
-		text.setString("BEEP ON");
+		text.setString(to_string(speaker.timer_freq) + " Hz");
 		text.setPosition(sf::Vector2f(730, 1200));
 		text.setFillColor(sf::Color::Yellow);
 		main_window.draw(text);
 	}
+
+	if (halt_cpu)
+	{
+		text.setString("HALT");
+		text.setPosition(sf::Vector2f(730, 1200));
+		text.setFillColor(sf::Color::Yellow);
+		main_window.draw(text);
+	}
+
 
 	string sec = to_string(round(memory.read_2(0x46c) / 1.82) / 10);
 	sec.resize(sec.find_first_of(",") + 2);
@@ -2765,6 +2913,57 @@ void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
 		text.setPosition(sf::Vector2f(300, 750 + i * 30));
 		main_window.draw(text);
 	}
+	
+	//ON or OFF
+	if (int_ctrl.enabled) text.setString("Enabled");
+	else text.setString("Disabled");
+	text.setPosition(sf::Vector2f(620, 690));
+	main_window.draw(text);
+
+	//keyboard buffer size
+	text.setString("KB_buffer = " + to_string(keyboard.get_buf_size()));
+	text.setPosition(sf::Vector2f(620, 750));
+	main_window.draw(text);
+
+	//KB_line status
+	text.setString("KB_line = " + to_string(keyboard.data_line_enabled));
+	text.setPosition(sf::Vector2f(620, 780));
+	main_window.draw(text);
+
+	//cascade mode
+	if (int_ctrl.cascade_mode) text.setString("Cascade ON");
+	else text.setString("Cascade OFF");
+	text.setPosition(sf::Vector2f(620, 810));
+	main_window.draw(text);
+
+	//nested mode
+	if (int_ctrl.nested_mode) text.setString("Nested ON");
+	else text.setString("Nested OFF");
+	text.setPosition(sf::Vector2f(620, 840));
+	main_window.draw(text);
+
+	//ADDR_INTERVAL
+	if (int_ctrl.ADDR_INTERVAL_4) text.setString("ADDR_INTERVAL = 4");
+	else text.setString("ADDR_INTERVAL = 8");
+	text.setPosition(sf::Vector2f(620, 870));
+	main_window.draw(text);
+
+	//AUTO_EOI
+	if (int_ctrl.AUTO_EOI) text.setString("AUTO_EOI ON");
+	else text.setString("AUTO_EOI OFF");
+	text.setPosition(sf::Vector2f(620, 900));
+	main_window.draw(text);
+
+	//mode_8086
+	if (int_ctrl.mode_8086) text.setString("Mode 86/88");
+	else text.setString("Mode 80/85");
+	text.setPosition(sf::Vector2f(620, 930));
+	main_window.draw(text);
+
+	//sleep_timer
+	text.setString("sleep_timer = " + to_string(int_ctrl.sleep_timer));
+	text.setPosition(sf::Vector2f(620, 960));
+	main_window.draw(text);
 
 	text.setString("----------------------------------");
 	text.setPosition(sf::Vector2f(300, 990));
@@ -2920,18 +3119,35 @@ void FDD_mon_device::sync()
 	//cout << "for i=" << (int)begin << " to " << (int)log_strings.size() << endl;
 	for (int i = begin; i < log_strings.size(); i++)
 	{
+		text.setFillColor(sf::Color::White);
+		if (log_strings.at(i).find("INT13(READ)") != std::string::npos) text.setFillColor(sf::Color::Green);
 		if (log_strings.at(i).find("INT13")!=std::string::npos) text.setFillColor(sf::Color::Green);
-		else text.setFillColor(sf::Color::White);
+		if (log_strings.at(i).find("INT13(WRITE)") != std::string::npos) text.setFillColor(sf::Color::Red);
+		if (log_strings.at(i).find("EXEcu") != std::string::npos) text.setFillColor(sf::Color::Cyan);
+		if (log_strings.at(i).find("Result OK") != std::string::npos) text.setFillColor(sf::Color::Green);
+		if (log_strings.at(i).find("ERR") != std::string::npos) text.setFillColor(sf::Color::Red);
+		
 		text.setString(log_strings.at(i));
 		text.setPosition(sf::Vector2f(0, 50 + (i - begin) * 25));
 		main_window.draw(text);
 	}
-
+#ifdef DEBUG
 	main_window.display();
+#endif
+
+
 }
 
 void FDD_mon_device::log(string log_string)
 {
+	//запоминаем последнюю строку
+	//last_str = "";
+	
 	// пишем в массив строк
-	log_strings.push_back(log_string);	
+	if (last_str != log_string) log_strings.push_back(log_string);
+	last_str = log_string;
 }
+
+
+
+
