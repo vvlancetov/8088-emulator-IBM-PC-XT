@@ -1,6 +1,7 @@
 #include "opcode_functions.h"
 #include "custom_classes.h"
 #include "video.h"
+#include "audio.h"
 #include <Windows.h>
 #include <iostream>
 #include <string>
@@ -12,7 +13,7 @@
 #include <thread>
 #include <cmath>
 
-#define DEBUG
+//#define DEBUG
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 
@@ -143,20 +144,22 @@ void tester()
 	
 	step_mode = 0; log_to_console = 0;
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x89);
-	memory.write_2(*CS * 16 + uint16(Instruction_Pointer + 1), 0xD8);
+	memory.write_2(*CS * 16 + Instruction_Pointer, 0x3C);
+	memory.write_2(*CS * 16 + uint16(Instruction_Pointer + 1), 0xFF);
 
 	cout << "Start test" << endl;
 	
 	//кол-во операций
-	int cycles = 1000000;
+	int cycles = 10000000;
 
 	auto start = std::chrono::system_clock::now();
 
-	for (int i = 0;i < cycles;++i)
+	for (int i = 0;i < 256;++i)
 	{
+		AX = i;
 		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
+		cout << "AX = " << (int)AX << " cmp " << (int)i << " FZ = " << Flag_ZF << endl;
 	}
 	
 	auto end = std::chrono::system_clock::now();

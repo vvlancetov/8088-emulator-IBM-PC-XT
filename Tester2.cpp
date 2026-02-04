@@ -1,8 +1,7 @@
 #include "opcode_functions.h"
 #include "custom_classes.h"
 #include "video.h"
-
-
+#include "audio.h"
 #include <Windows.h>
 #include <iostream>
 #include <fstream>
@@ -13,7 +12,7 @@
 #include <sstream>
 #include <thread>
 
-#define DEBUG
+//#define DEBUG
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 

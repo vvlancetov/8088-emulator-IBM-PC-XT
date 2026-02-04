@@ -1,6 +1,7 @@
 #include "opcode_functions.h"
 #include "custom_classes.h"
 #include "video.h"
+#include "audio.h"
 #include <Windows.h>
 #include <iostream>
 #include <fstream>
@@ -11,7 +12,7 @@
 #include <sstream>
 #include <thread>
 
-#define DEBUG
+//#define DEBUG
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 
@@ -70,6 +71,7 @@ extern uint16 temp_Addr;
 
 //префикс замены сегмента
 extern uint8 Flag_segment_override;
+extern bool keep_segment_override; //сохранить флаг между командами
 
 //флаг аппаратных прерываний
 extern bool Flag_hardware_INT;
@@ -104,12 +106,19 @@ extern void (*op_code_table[256])();
 
 extern std::string path;
 
-uint8 process2(string json_str); //деклараци€
-
 extern bool test_log;
 extern bool repeat_test_op;
 extern bool exeption_fired;
 extern bool negate_IDIV;
+
+struct data_error
+{
+	int total_err;
+	int op_err;
+
+};
+
+data_error process2(string json_str); //деклараци€
 
 void tester3()
 {
@@ -149,13 +158,30 @@ void tester3()
 	"tests2\\FB.json","tests2\\FC.json","tests2\\FD.json","tests2\\FE.0.json","tests2\\FE.1.json","tests2\\FF.0.json","tests2\\FF.1.json","tests2\\FF.2.json","tests2\\FF.3.json","tests2\\FF.4.json",
 	"tests2\\FF.5.json","tests2\\FF.6.json","tests2\\FF.7.json" };
 	
-	string files[10] = { "tests2\\38.json","tests2\\39.json","tests2\\3A.json","tests2\\3B.json","tests2\\3C.json","tests2\\3D.json", "tests2\\80.7.json", "tests2\\81.7.json","tests2\\82.7.json", "tests2\\83.7.json" };
-		
+	// сделаны D0 и D1
+	//string files[4] = {"tests2\\27.json","tests2\\2F.json","tests2\\F6.7.json","tests2\\F7.7.json"};
+	//сопроцессор
+	string files[8] = { "tests2\\D8.json","tests2\\D9.json","tests2\\DA.json","tests2\\DB.json","tests2\\DC.json","tests2\\DD.json", "tests2\\DE.json","tests2\\DF.json" };
 
 	//move - 88, 89, 8A, 8B, 8C, 8E, A0, A1, A2, A3, A4, A5, B0 - BF, C6, C7
 	//pop, push - 06, 07, 0E, 16, 17, 1E, 1F, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 5A, 5B, 5C, 5D, 5E, 5F, 8F, 9C, 9D, FF.6, FF.7
 	//str - A4, A5, A6, A7, AA, AB, AC, AD, AE, AF    
 	//cmp - 38, 39, 3A, 3B, 3C, 3D, 80.7, 81.7, 82.7, 83.7 
+	//XCHG - 86, 87, 91 - 97
+	//LEA, LDS, LES - 8D, C4, C5
+	//LAHF, SAHF - 9E, 9F
+	//POPF, PUSHF - 9D, 9C
+	//ADD - 00, 01, 02, 03, 04, 05, 80.0, 81.0, 82.0, 83.0
+	//ADC - 10, 11, 12, 13, 14, 15, 80.2, 81.2, 82.2, 83.2
+	//SUB - 28, 29, 2A, 2B, 2C, 2D, 80.5, 81.5, 82.5, 83.5
+	//SBB - 18, 19, 1A, 1B, 1C, 1D, 80.3, 81.3, 82.3, 83.3
+	//INC - 40 - 47, FE.0, FF.0
+	//DEC - 48 - 4F, FE.1, FF.1
+	//CMP - 38, 39, 3A, 3B, 3C, 3D, 80.7, 81.7, 82.7, 83.7
+	//AND - 20, 21, 22, 23, 24, 25, 80.4, 81.4, 82.4, 83.4
+	//OR  - 08, 09, 0A, 0B, 0C, 0D, 80.1, 81.1, 82.1, 83.1
+	//XOR - 30, 31, 32, 33, 34, 35, 80.6, 81.6, 82.6, 83.6
+	//test - 84, 85, A8, A9, F6.0, F6.1, F7.0, F7.1
 
 	test_log = 0;
 
@@ -164,48 +190,76 @@ void tester3()
 	{
 		//открываем файл json
 		//string json_file_name = "tests2\\f7.0.json";
-		string json_file_name = f_N;
+		string json_file_name = f_N.replace(0,6, "tests");
 		file_N++;
 
 		//неопределенные флаги
-		if (json_file_name == "tests2\\08.json") AF_undef = true;
-		if (json_file_name == "tests2\\09.json") AF_undef = true;
-		if (json_file_name == "tests2\\0A.json") AF_undef = true;
-		if (json_file_name == "tests2\\0B.json") AF_undef = true;
-		if (json_file_name == "tests2\\0C.json") AF_undef = true;
-		if (json_file_name == "tests2\\0D.json") AF_undef = true;
-		if (json_file_name == "tests2\\20.json") AF_undef = true;
-		if (json_file_name == "tests2\\21.json") AF_undef = true;
-		if (json_file_name == "tests2\\22.json") AF_undef = true;
-		if (json_file_name == "tests2\\23.json") AF_undef = true;
-		if (json_file_name == "tests2\\24.json") AF_undef = true;
-		if (json_file_name == "tests2\\25.json") AF_undef = true;
-		if (json_file_name == "tests2\\30.json") AF_undef = true;
-		if (json_file_name == "tests2\\31.json") AF_undef = true;
-		if (json_file_name == "tests2\\32.json") AF_undef = true;
-		if (json_file_name == "tests2\\33.json") AF_undef = true;
-		if (json_file_name == "tests2\\34.json") AF_undef = true;
-		if (json_file_name == "tests2\\35.json") AF_undef = true;
-		if (json_file_name == "tests2\\80.1.json") AF_undef = true;
-		if (json_file_name == "tests2\\80.4.json") AF_undef = true;
-		if (json_file_name == "tests2\\27.json") OF_undef = true;
-		if (json_file_name == "tests2\\2F.json") OF_undef = true;
-		if (json_file_name == "tests2\\37.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; }
-		if (json_file_name == "tests2\\3F.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; }
-		if (json_file_name == "tests2\\80.6.json") AF_undef = true;
-		if (json_file_name == "tests2\\83.1.json") AF_undef = true;
-		if (json_file_name == "tests2\\A8.json") AF_undef = true;
-		if (json_file_name == "tests2\\A9.json") AF_undef = true;
-		if (json_file_name == "tests2\\D3.5.json") OF_undef = true;
-		if (json_file_name == "tests2\\F6.6.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests2\\F6.7.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests2\\F7.6.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests2\\F7.7.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests2\\D4.json") { OF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name == "tests\\08.json") AF_undef = true;
+		if (json_file_name == "tests\\09.json") AF_undef = true;
+		if (json_file_name == "tests\\0A.json") AF_undef = true;
+		if (json_file_name == "tests\\0B.json") AF_undef = true;
+		if (json_file_name == "tests\\0C.json") AF_undef = true;
+		if (json_file_name == "tests\\0D.json") AF_undef = true;
+		if (json_file_name == "tests\\20.json") AF_undef = true;
+		if (json_file_name == "tests\\21.json") AF_undef = true;
+		if (json_file_name == "tests\\22.json") AF_undef = true;
+		if (json_file_name == "tests\\23.json") AF_undef = true;
+		if (json_file_name == "tests\\24.json") AF_undef = true;
+		if (json_file_name == "tests\\25.json") AF_undef = true;
+		if (json_file_name == "tests\\30.json") AF_undef = true;
+		if (json_file_name == "tests\\31.json") AF_undef = true;
+		if (json_file_name == "tests\\32.json") AF_undef = true;
+		if (json_file_name == "tests\\33.json") AF_undef = true;
+		if (json_file_name == "tests\\34.json") AF_undef = true;
+		if (json_file_name == "tests\\35.json") AF_undef = true;
+		if (json_file_name == "tests\\80.1.json") AF_undef = true;
+		if (json_file_name == "tests\\80.4.json") AF_undef = true;
+		if (json_file_name == "tests\\27.json") OF_undef = true;
+		if (json_file_name == "tests\\2F.json") OF_undef = true;
+		if (json_file_name == "tests\\37.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; }
+		if (json_file_name == "tests\\3F.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; }
+		if (json_file_name == "tests\\80.6.json") AF_undef = true;
+		if (json_file_name == "tests\\81.1.json") AF_undef = true;
+		if (json_file_name == "tests\\81.4.json") AF_undef = true;
+		if (json_file_name == "tests\\81.6.json") AF_undef = true;
+		if (json_file_name == "tests\\82.1.json") AF_undef = true;
+		if (json_file_name == "tests\\83.1.json") AF_undef = true;
+		if (json_file_name == "tests\\82.4.json") AF_undef = true;
+		if (json_file_name == "tests\\83.4.json") AF_undef = true;
+		if (json_file_name == "tests\\82.6.json") AF_undef = true;
+		if (json_file_name == "tests\\83.6.json") AF_undef = true;
+		if (json_file_name == "tests\\84.json") AF_undef = true;
+		if (json_file_name == "tests\\85.json") AF_undef = true;
+		if (json_file_name == "tests\\A8.json") AF_undef = true;
+		if (json_file_name == "tests\\A9.json") AF_undef = true;
+		if (json_file_name == "tests2\\F6.0.json") AF_undef = true;
+		if (json_file_name == "tests\\F6.4.json") { AF_undef = true; PF_undef = true; ZF_undef = true; SF_undef = true; }
+		//if (json_file_name == "tests2\\F7.4.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
+		if (json_file_name == "tests\\F6.5.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
+		if (json_file_name == "tests\\F7.1.json") AF_undef = true;
+		if (json_file_name == "tests\\F7.5.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true;}
+		if (json_file_name == "tests\\F6.6.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name == "tests\\F6.7.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name == "tests\\F7.6.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name == "tests\\F7.7.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name == "tests\\D4.json") { OF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name == "tests\\D0.4.json") AF_undef = true;
+		if (json_file_name == "tests\\D0.5.json") AF_undef = true;
+		if (json_file_name == "tests\\D0.7.json") AF_undef = true;
+		if (json_file_name == "tests\\D1.4.json") AF_undef = true;
+		if (json_file_name == "tests\\D1.5.json") AF_undef = true;
+		if (json_file_name == "tests\\D1.7.json") AF_undef = true;
+		if (json_file_name == "tests\\D2.4.json") AF_undef = true;
+		if (json_file_name == "tests\\D2.5.json") AF_undef = true;
+		if (json_file_name == "tests\\D2.7.json") AF_undef = true;
+		if (json_file_name == "tests\\D3.4.json") AF_undef = true;
+		if (json_file_name == "tests\\D3.5.json") AF_undef = true;
+		if (json_file_name == "tests\\D3.7.json") AF_undef = true;
+		
 
 		std::string json_string;
 		std::ifstream inputFile(path + json_file_name);
-		cout << file_N << "/" << files->size()  << " Testing start file: " << json_file_name << "   ";
+		cout << file_N << "/" << files->size()  << " Testing file: " << json_file_name << " ";
 		enum class i_state { wait, copy, process };
 
 		i_state state = i_state::wait;
@@ -213,6 +267,7 @@ void tester3()
 
 		uint16 total_err = 0;
 		uint16 total_ops = 0;
+		uint16 ip_err = 0;
 
 		bool OP_name_printed = 0;
 
@@ -246,7 +301,7 @@ void tester3()
 						json_string += line;
 						if (line.find("\"name\":") != std::string::npos && !OP_name_printed)
 						{
-							cout << line.substr(12) << endl;
+							cout << line.substr(12) << " ";
 							OP_name_printed = 1;
 						}
 					}
@@ -255,14 +310,12 @@ void tester3()
 						//последн€€ скобка закрылась
 						json_string += "\n}";
 						if (test_log) cout << "test file " << json_file_name << " ";
-						total_err += process2(json_string);
+						data_error r = process2(json_string);
+						total_err += r.total_err;
+						ip_err += r.op_err;
 						total_ops++;
-						if (!test_log) cout << "\rOperations:  " << (int)total_ops;
-						if (total_err) SetConsoleTextAttribute(hConsole, 12);
-						if (!test_log) cout << "   Errors:  " << (int)total_err;
-						SetConsoleTextAttribute(hConsole, 7);
 						//cout << json_string << endl;
-						if (total_ops == 100) { cout << std::endl;  goto end_test; }//выход
+						if (total_ops == 10000) { goto end_test; }//выход
 						state = i_state::wait;
 					}
 					break;
@@ -276,14 +329,20 @@ void tester3()
 		}
 
 	end_test:
+		SetConsoleTextAttribute(hConsole, 7);
+		cout << " Operations: " << (int)total_ops;
+		if (total_err) SetConsoleTextAttribute(hConsole, 12);
+		cout << " Errors: " << (int)total_err << " (ip_err " << (int)ip_err << ")";
+		SetConsoleTextAttribute(hConsole, 7);
+
 		timer.stop();
 		uint16 el = timer.getElapsedTime().asSeconds();
-		cout << "Total time: " << (int)(el / 3600) << " h " << (int)((el % 3600) / 60) << " min " << (int)((el % 3600) % 60) << " sec" << endl;
+		cout << "Total time: " << (int)(el / 3600) << " h " << (int)((el % 3600) / 60) << " min " << (int)((el % 3600) % 60) << " sec";
 		cout << std::endl;
 	}
 }
 
-uint8 process2(string json_str)
+data_error process2(string json_str)
 {
 	//cout << json_str << endl;
 	nlohmann::json jsonData; //объект json
@@ -366,6 +425,13 @@ test_rep:
 	
 	op_code_table[memory.read_2((Instruction_Pointer + *CS * 16) & 0xFFFFF)]();
 	
+
+	if (keep_segment_override) { 
+		keep_segment_override = false; //сбрасываем флаг сохранени€
+		goto test_rep; //выполн€ем еще одну команду
+	} 
+	else { Flag_segment_override = 0; } //сбрасываем флаг смены сегмента
+
 	//еще один круг
 	if (negate_IDIV)
 	{
@@ -373,7 +439,7 @@ test_rep:
 	}
 	//обрабока исключений
 
-	monitor.sync(1);
+	//monitor.sync(1);
 	if (test_log) cout << "\t ZF=" << Flag_ZF << " CF=" << Flag_CF << " AF=" << Flag_AF << " SF=" << Flag_SF << " PF=" << Flag_PF << " OF=" << Flag_OF << " IF=" << Flag_IF << endl;
 	
 	if (exeption)
@@ -381,26 +447,26 @@ test_rep:
 		exeption -= 0x10; //убираем префикс исключени€
 		//помещаем в стек IP и переходим по адресу прерывани€
 		//новые адреса
-		uint16 new_IP = memory.read_2(exeption * 4) + memory.read_2(exeption * 4 + 1) * 256;
-		uint16 new_CS = memory.read_2(exeption * 4 + 2) + memory.read_2(exeption * 4 + 3) * 256;
+		uint16 new_IP = memory_2[exeption * 4] + memory_2[exeption * 4 + 1] * 256;
+		uint16 new_CS = memory_2[exeption * 4 + 2] + memory_2[exeption * 4 + 3] * 256;
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
 
 		//помещаем в стек сегмент
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = *CS >> 8;
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = (*CS) & 255;
 		
 		//помещаем в стек IP
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = Instruction_Pointer >> 8;
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = Instruction_Pointer & 255;
 		
 		//передаем управление
 		Flag_IF = false;//запрет внешних прерываний
@@ -408,9 +474,9 @@ test_rep:
 		*CS = new_CS;
 		uint16 old = Instruction_Pointer;
 		Instruction_Pointer = new_IP;
-		SetConsoleTextAttribute(hConsole, 10);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 		if (log_to_console) cout << "EXEPTION " << (int)exeption << " jump to " << (int)new_CS << ":" << (int)Instruction_Pointer << " ret to " << (int)old;
-		SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 
 		exeption = 0; //сброс флага
 		exeption_fired = 1; //дл€ проверки результата
@@ -422,7 +488,9 @@ test_rep:
 	//DS = &DS_data;
 	
 	//свер€ем данные после выполнени€
-	uint8 err = 0;
+	data_error d_err = {0,0};
+	
+
 	
 	if (jsonData["final"]["regs"]["ax"].is_null()) jsonData["final"]["regs"]["ax"] = jsonData["initial"]["regs"]["ax"];
 	if (jsonData["final"]["regs"]["bx"].is_null()) jsonData["final"]["regs"]["bx"] = jsonData["initial"]["regs"]["bx"];
@@ -448,10 +516,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log) SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 	if (test_log) cout << "BX = " << hex << (int)BX << " supposed " << (uint16)jsonData["final"]["regs"]["bx"];
 	if (BX == (uint16)jsonData["final"]["regs"]["bx"])
@@ -460,10 +528,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 	if (test_log) cout << "CX = " << hex << (int)CX << " supposed " << (uint16)jsonData["final"]["regs"]["cx"];
 	if (CX == (uint16)jsonData["final"]["regs"]["cx"])
@@ -472,10 +540,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 	if (test_log) cout << "DX = " << hex << (int)DX << " supposed " << (uint16)jsonData["final"]["regs"]["dx"];
 	if (DX == (uint16)jsonData["final"]["regs"]["dx"])
@@ -484,10 +552,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) 	cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 
@@ -498,10 +566,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "SS = " << hex << (int)*SS << " supposed " << (uint16)jsonData["final"]["regs"]["ss"];
@@ -511,10 +579,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "DS = " << hex << (int)*DS << " supposed " << (uint16)jsonData["final"]["regs"]["ds"];
@@ -524,10 +592,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "ES = " << hex << (int)*ES << " supposed " << (uint16)jsonData["final"]["regs"]["es"];
@@ -537,10 +605,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "SP = " << hex << (int)Stack_Pointer << " supposed " << (uint16)jsonData["final"]["regs"]["sp"];
@@ -550,10 +618,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "BP = " << hex << (int)Base_Pointer << " supposed " << (uint16)jsonData["final"]["regs"]["bp"];
@@ -563,10 +631,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "SI = " << hex << (int)Source_Index << " supposed " << (uint16)jsonData["final"]["regs"]["si"];
@@ -576,10 +644,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "DI = " << hex << (int)Destination_Index << " supposed " << (uint16)jsonData["final"]["regs"]["di"];
@@ -589,10 +657,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "IP = " << hex << (int)Instruction_Pointer << " supposed " << (uint16)jsonData["final"]["regs"]["ip"];
@@ -602,10 +670,11 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		if (Instruction_Pointer != 0x400) err++;  //игнорируем ошибку в файле F6.7
-		SetConsoleTextAttribute(hConsole, 7);
+		if (Instruction_Pointer != 0x400) d_err.total_err++;  //игнорируем ошибку в файле F6.7
+		d_err.op_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	//проверка флагов
@@ -620,10 +689,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "Flag_DF = " << Flag_DF << " supposed " << ((Flags >> 10) & 1);
@@ -633,10 +702,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "Flag_IF = " << Flag_IF << " supposed " << ((Flags >> 9) & 1);
@@ -646,10 +715,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "Flag_TF = " << Flag_TF << " supposed " << ((Flags >> 8) & 1);
@@ -659,10 +728,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "Flag_SF = " << Flag_SF << " supposed " << ((Flags >> 7) & 1);
@@ -673,10 +742,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "Flag_ZF = " << Flag_ZF << " supposed " << ((Flags >> 6) & 1);
@@ -687,10 +756,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 	if (test_log) cout << "Flag_AF = " << Flag_AF << " supposed " << ((Flags >> 4) & 1);
 	if ((Flag_AF == ((Flags >> 4) & 1) )|| AF_undef)
@@ -700,10 +769,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "Flag_PF = " << Flag_PF << " supposed " << ((Flags >> 2) & 1);
@@ -714,10 +783,10 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
 	if (test_log) cout << "Flag_CF = " << Flag_CF << " supposed " << ((Flags) & 1);
@@ -728,15 +797,15 @@ test_rep:
 	}
 	else
 	{
-		SetConsoleTextAttribute(hConsole, 12);
+		if (test_log)SetConsoleTextAttribute(hConsole, 12);
 		if (test_log) cout << " ERROR" << endl;
-		err++;
-		SetConsoleTextAttribute(hConsole, 7);
+		d_err.total_err++;
+		if (test_log)SetConsoleTextAttribute(hConsole, 7);
 	}
 
-	if (err) SetConsoleTextAttribute(hConsole, 12);
-	if (test_log) cout << "ERRORs = " << (int)err << endl << endl;
-	SetConsoleTextAttribute(hConsole, 7);
+	if (d_err.total_err) SetConsoleTextAttribute(hConsole, 12);
+	if (test_log) cout << "ERRORs = " << (int)d_err.total_err << endl << endl;
+	if (test_log)SetConsoleTextAttribute(hConsole, 7);
 
 	if (test_log) cout << "Checking RAM" << endl;
 	for (auto e : jsonData["final"]["ram"])
@@ -749,17 +818,18 @@ test_rep:
 		}
 		else
 		{
-			SetConsoleTextAttribute(hConsole, 12);
+			if (test_log)SetConsoleTextAttribute(hConsole, 12);
 			if (test_log) cout << " ERROR" << endl;
 			string op_name = jsonData["name"];
-			if (!exeption_fired) err++;
-			SetConsoleTextAttribute(hConsole, 7);
+			if (!exeption_fired) d_err.total_err++;
+			if (test_log)SetConsoleTextAttribute(hConsole, 7);
 		}
 	}
 
 	//пауза
-	if (test_log) while (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && err) { std::this_thread::sleep_for(std::chrono::milliseconds(50)); }
+	if (test_log) while (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && d_err.total_err) { std::this_thread::sleep_for(std::chrono::milliseconds(50)); }
+	//if (test_log) while (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8)) { std::this_thread::sleep_for(std::chrono::milliseconds(50)); }
 
-	return err;
+	return d_err;
 
 }
