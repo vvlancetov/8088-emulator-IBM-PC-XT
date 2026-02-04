@@ -86,9 +86,4 @@
       <Filter>Resource Files</Filter>
     </Text>
   </ItemGroup>
-  <ItemGroup>
-    <None Include="x64\Debug\config.ini">
-      <Filter>Resource Files</Filter>
-    </None>
-  </ItemGroup>
 </Project>
