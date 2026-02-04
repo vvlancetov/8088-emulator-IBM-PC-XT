@@ -175,11 +175,10 @@
     <ClInclude Include="video.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="x64\Debug\config.ini" />
-    <None Include="x64\Debug\IBM5160 BIOSes\050986_XT_BIOS_mod.bin" />
+    <Text Include="todo.txt" />
   </ItemGroup>
   <ItemGroup>
-    <Text Include="todo.txt" />
+    <None Include="x64\Debug\config.ini" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
