@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/todo.txt
+/Backup 08-01-26.zip
+/Backup 04-02-26.zip
