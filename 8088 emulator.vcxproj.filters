@@ -87,6 +87,11 @@
     </Text>
   </ItemGroup>
   <ItemGroup>
-    <None Include="config.ini" />
+    <None Include="README.md">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="config.ini">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
