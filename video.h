@@ -89,6 +89,7 @@ public:
 	void teletype(uint8 symbol);
 	std::string get_mode_name();
 	void show_joy_sence(uint8 central_point);
+	bool has_focus();
 };
 
 //монитор отладки

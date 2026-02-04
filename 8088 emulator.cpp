@@ -92,8 +92,6 @@ Mem_Ctrl memory; //создаем контроллер памяти
 
 uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
 
-
-
 struct comment
 {
 	int address;
@@ -192,9 +190,8 @@ HDD_Ctrl HDD;
 //джойстик
 game_controller joystick;
 
-//vector<string> filename_FDD = { "MS-DOS\\tst.img" ,"Demos\\8088mph.ima" ,"MS-DOS\\DOS33_test_2.img","MS-DOS\\DOS33_test_3.img" }; //массив с именами образов дискет
-
 vector<comment> comments; //комментарии к программе
+/*
 //файлы для загрузки по-умолчанию
 //string filename_ROM = "IBM5160 BIOSes\\050986_XT_BIOS.bin";		//bios IBM pc/XT
 //string filename_ROM = "IBM5160 BIOSes\\ruuds_test_rom.bin";	//test ROM
@@ -216,7 +213,7 @@ vector<comment> comments; //комментарии к программе
 //string filename_FDD = "MS-DOS\\Games\\F15cga.img";   // 
 //string filename_FDD = "MS-DOS\\Games\\Galaxian.img";   // 
 //string filename_FDD = "MS-DOS\\EXPLORING-THE-IBM-PC-100-CGA.img";
-
+*/
 
 //переключатели на плате
 //uint8 MB_switches = 0b01101101; //CGA + 2FDD
@@ -661,7 +658,7 @@ int main(int argc, char* argv[]) {
 			//опрос клавиатуры
 			if (timer_kb > 8350)
 			{
-				keyboard.poll_keys(timer_kb);    //синхронизация клавиатуры (проверка нажатий)
+				keyboard.poll_keys(timer_kb, monitor.has_focus());    //синхронизация клавиатуры (проверка нажатий)
 				HDD.sync_data(timer_kb);		//синхронизация буфера HDD
 				joystick.sync(timer_kb);
 				timer_kb = 0;

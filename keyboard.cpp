@@ -15,8 +15,10 @@ using namespace std;
 extern IC8259 int_ctrl;
 
 //клавиатура
-void KBD::poll_keys(uint32 elapsed_us)
+void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 {
+	//has_focus - флаг наличия фокуса у окна монитора
+	
 	//технические клавиши F5-F10 для управления эмулятором
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
@@ -36,7 +38,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 	//записываем нажатия в буфер
 
 	// ====================  F1-F12 ============
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F1))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F1) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F1)])
@@ -63,7 +65,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F2))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F2) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F2)])
@@ -81,7 +83,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F3))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F3) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F3)])
@@ -99,7 +101,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F4))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F4) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F4)])
@@ -117,7 +119,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 	
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F5)])
@@ -135,7 +137,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F6)])
@@ -153,7 +155,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 	
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F7)])
@@ -171,7 +173,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F8)])
@@ -189,7 +191,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 	
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F9)])
@@ -207,7 +209,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F10)])
@@ -226,7 +228,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 	}
 
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F11))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F11) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F11)])
@@ -244,7 +246,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F12))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F12) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F12)])
@@ -265,7 +267,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 
 	// ==================== num 1 - 0 ==============
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num1))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num1) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num1)])
@@ -283,7 +285,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num2))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num2) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num2)])
@@ -301,7 +303,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num3)])
@@ -319,7 +321,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num4)])
@@ -337,7 +339,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num5)])
@@ -355,7 +357,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num6))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num6) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num6)])
@@ -373,7 +375,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num7))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num7) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num7)])
@@ -391,7 +393,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num8))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num8) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num8)])
@@ -409,7 +411,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num9))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num9) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num9)])
@@ -427,7 +429,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num0))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num0) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Num0)])
@@ -448,7 +450,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 
 	// ======================= A - Z ===============
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Q))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Q) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Q)])
@@ -466,7 +468,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::W)])
@@ -484,7 +486,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::E))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::E) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::E)])
@@ -502,7 +504,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::R))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::R) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::R)])
@@ -520,7 +522,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::T))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::T) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::T)])
@@ -538,7 +540,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Y))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Y) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Y)])
@@ -556,7 +558,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::U))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::U) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::U)])
@@ -574,7 +576,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::I))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::I) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::I)])
@@ -592,7 +594,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::O))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::O) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::O)])
@@ -610,7 +612,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::P))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::P) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::P)])
@@ -628,7 +630,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::A)])
@@ -646,7 +648,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::S)])
@@ -663,7 +665,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::S)] = 0;
 		}
 	}
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::D)])
@@ -680,7 +682,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::D)] = 0;
 		}
 	}
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::F)])
@@ -697,7 +699,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::F)] = 0;
 		}
 	}
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::G))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::G) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::G)])
@@ -714,7 +716,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::G)] = 0;
 		}
 	}
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::H))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::H) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::H)])
@@ -731,7 +733,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::H)] = 0;
 		}
 	}
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::J))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::J) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::J)])
@@ -748,7 +750,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::J)] = 0;
 		}
 	}
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::K))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::K) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::K)])
@@ -765,7 +767,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 			pressed_keys[(int)(KBD_key::K)] = 0;
 		}
 	}
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::L))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::L) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::L)])
@@ -783,7 +785,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Z)])
@@ -801,7 +803,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::X))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::X) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::X)])
@@ -819,7 +821,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::C))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::C) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::C)])
@@ -837,7 +839,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::V))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::V) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::V)])
@@ -855,7 +857,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::B))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::B) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::B)])
@@ -873,7 +875,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::N))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::N) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::N)])
@@ -891,7 +893,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::M))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::M) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::M)])
@@ -912,7 +914,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 
 	// ======================= Others ==============
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::ENTER)])
@@ -930,7 +932,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::SPACE)])
@@ -948,7 +950,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Grave))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Grave) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Grave)])
@@ -966,7 +968,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Hyphen)])
@@ -984,7 +986,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Equal))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Equal) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Equal)])
@@ -1002,7 +1004,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Backspace)])
@@ -1020,7 +1022,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Escape)])
@@ -1038,7 +1040,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Tab))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Tab) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Tab)])
@@ -1056,7 +1058,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::LShift)])
@@ -1074,7 +1076,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::RShift)])
@@ -1092,7 +1094,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::LControl)])
@@ -1110,7 +1112,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 	
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::RControl)])
@@ -1130,7 +1132,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LAlt))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LAlt) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::LAlt)])
@@ -1148,7 +1150,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RAlt))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RAlt) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::RAlt)])
@@ -1168,7 +1170,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backslash))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backslash) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Backslash)])
@@ -1186,7 +1188,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LBracket))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LBracket) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::LBracket)])
@@ -1204,7 +1206,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RBracket))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RBracket) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::RBracket)])
@@ -1222,7 +1224,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Semicolon))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Semicolon) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Semicolon)])
@@ -1240,7 +1242,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Apostrophe))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Apostrophe) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Apostrophe)])
@@ -1258,7 +1260,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Comma))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Comma) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Comma)])
@@ -1276,7 +1278,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Period))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Period) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Period)])
@@ -1294,7 +1296,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Slash))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Slash) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Slash)])
@@ -1312,7 +1314,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Delete))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Delete) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Delete)])
@@ -1332,7 +1334,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Insert))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Insert) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Insert)])
@@ -1352,7 +1354,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Home))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Home) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Home)])
@@ -1372,7 +1374,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::End))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::End) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::End)])
@@ -1392,7 +1394,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::PageUp))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::PageUp) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::PageUp)])
@@ -1412,7 +1414,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::PageDown))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::PageDown) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::PageDown)])
@@ -1432,7 +1434,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 	
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::PrintScreen))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::PrintScreen) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::PrintScreen)])
@@ -1456,7 +1458,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 	
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::CapsLock))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::CapsLock) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::CapsLock)])
@@ -1474,7 +1476,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumLock))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumLock) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::NumLock)])
@@ -1492,7 +1494,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::ScrollLock))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::ScrollLock) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::ScrLock)])
@@ -1510,7 +1512,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Pause))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Pause) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Pause)])
@@ -1534,7 +1536,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 
 	//=================== NumPad =========================
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadDivide))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadDivide) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::NumpadDivide)])
@@ -1554,7 +1556,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMultiply))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMultiply) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::NumpadMultiply)])
@@ -1572,7 +1574,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMinus))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMinus) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::NumpadMinus)])
@@ -1590,7 +1592,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::NumpadPlus)])
@@ -1608,7 +1610,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadEnter))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadEnter) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::NumpadEnter)])
@@ -1628,7 +1630,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad0))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad0) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad0)])
@@ -1646,7 +1648,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadDecimal))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadDecimal) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::NumpadDecimal)])
@@ -1664,7 +1666,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad1))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad1) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad1)])
@@ -1682,7 +1684,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad2))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad2) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad2)])
@@ -1700,7 +1702,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad3))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad3) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad3)])
@@ -1718,7 +1720,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad4))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad4) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad4)])
@@ -1736,7 +1738,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad5))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad5) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad5)])
@@ -1754,7 +1756,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad6))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad6) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad6)])
@@ -1772,7 +1774,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad7))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad7) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad7)])
@@ -1790,7 +1792,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad8))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad8) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad8)])
@@ -1808,7 +1810,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad9))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad9) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Numpad9)])
@@ -1828,7 +1830,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 
 	//=================== ARROWS =========================
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Up)])
@@ -1860,7 +1862,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Down)])
@@ -1892,7 +1894,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Left)])
@@ -1924,7 +1926,7 @@ void KBD::poll_keys(uint32 elapsed_us)
 		}
 	}
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right))
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::Right)])

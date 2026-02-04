@@ -24,7 +24,7 @@ public:
 	KBD(){};
 	bool CLK_high = false;
 	bool data_line_enabled = false;
-	void poll_keys(uint32 elapsed_us);			//синхронизация клавиатуры
+	void poll_keys(uint32 elapsed_us, bool has_focus);			//синхронизация клавиатуры
 	uint8 read_scan_code();	 //чтение скан-кода клавиатуры
 	uint8 get_buf_size();	 //проверка объема буфера ввода
 	void set_CLK_low();

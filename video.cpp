@@ -657,3 +657,7 @@ void Video_device::show_joy_sence(uint8 central_point)
 	joy_sence_show_timer = 1000000; //включаем таймер
 	joy_sence_value = central_point;
 }
+bool Video_device::has_focus()
+{
+	return main_window.hasFocus();
+}
