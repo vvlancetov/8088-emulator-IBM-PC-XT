@@ -176,6 +176,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="x64\Debug\config.ini" />
+    <None Include="x64\Debug\IBM5160 BIOSes\050986_XT_BIOS_mod.bin" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="todo.txt" />

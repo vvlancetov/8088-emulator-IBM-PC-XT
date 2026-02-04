@@ -85,6 +85,9 @@
     <None Include="x64\Debug\config.ini">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="x64\Debug\IBM5160 BIOSes\050986_XT_BIOS_mod.bin">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Text Include="todo.txt">

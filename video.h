@@ -77,8 +77,6 @@ public:
 	void write_vram_MDA(uint16 address, uint8 data); //запись в видеопамять
 	uint8 read_vram_MDA(uint16 address);			 //чтение из видеопамяти
 
-
-
 	uint8 line_height = 10;						//высота строки в пикселях
 	Video_device();								// конструктор класса
 	void sync(int elapsed_ms);					//импульс синхронизации
