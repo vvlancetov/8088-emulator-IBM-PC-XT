@@ -361,7 +361,7 @@ int main(int argc, char* argv[]) {
 	//breakpoints.push_back(0xc8251); //HDD INT13
 
 	//breakpoints.push_back(0x7c5f);
-	breakpoints.push_back(0x7ca5);
+	//breakpoints.push_back(0x7ca5);
 	//breakpoints.push_back(0xfe3d4);    //KB TEST  POST st 736
 	// err 101 st 924
 	//breakpoints.push_back(0xe1f5);   //FDD
@@ -591,6 +591,8 @@ int main(int argc, char* argv[]) {
 
 	while (cont_exec)
 	{
+		
+		
 		op_counter++;   //счетчик операций
 		service_counter++;  //счетчик для вызова служебных процедур
 
