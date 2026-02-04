@@ -29,13 +29,13 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -151,11 +151,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="8088 emulator.cpp" />
+    <ClCompile Include="audio.cpp" />
     <ClCompile Include="fdd.cpp" />
     <ClCompile Include="joystick.cpp" />
     <ClCompile Include="keyboard.cpp" />
     <ClCompile Include="loader.cpp" />
     <ClCompile Include="opcode_functions.cpp" />
+    <ClCompile Include="hdd.cpp" />
     <ClCompile Include="Tester.cpp" />
     <ClCompile Include="Tester2.cpp" />
     <ClCompile Include="Tester3.cpp" />
@@ -164,11 +166,19 @@
   <ItemGroup>
     <ClInclude Include="custom_classes.h" />
     <ClInclude Include="fdd.h" />
+    <ClInclude Include="audio.h" />
+    <ClInclude Include="hdd.h" />
     <ClInclude Include="joystick.h" />
     <ClInclude Include="keyboard.h" />
     <ClInclude Include="loader.h" />
     <ClInclude Include="opcode_functions.h" />
     <ClInclude Include="video.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="x64\Debug\config.ini" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="todo.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
