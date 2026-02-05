@@ -356,7 +356,7 @@ int main(int argc, char* argv[]) {
 	//breakpoints.push_back(0xc8003); //IBM HDD CTRL
 	//breakpoints.push_back(0xc8127); //IBM HDD CTRL
 	//breakpoints.push_back(0xc8251); //HDD INT13
-
+	//breakpoints.push_back(0xc81d5); //HDD boot loader
 	//breakpoints.push_back(0x7c5f);
 	//breakpoints.push_back(0x7ca5);
 	//breakpoints.push_back(0xfe3d4);    //KB TEST  POST st 736

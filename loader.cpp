@@ -376,14 +376,16 @@ void loader(int argc, char* argv[])
 					{
 						//считываем данные из файла BIOS и записываем по адресу C8000
 						int a = 0;
+						uint8 checksum = 0;
 						char b;    //buffer
 						while (file_HDD_ROM.read(&b, 1)) {
 							// записываем виртуальный ROM
 							memory_2[0xC8000 + a] = b;
 							a++;
+							checksum += b;
 						};
 						file_HDD_ROM.close();
-						cout << "Loaded " << dec << (int)(a) << " commands from HDD_ROM file" << endl;
+						cout << "Loaded " << dec << (int)(a) << " commands from HDD_ROM file (checksum = " << hex << (int)checksum  << ")" << endl;
 					}
 				}
 

@@ -52,6 +52,7 @@ HDD_Ctrl::HDD_Ctrl()
 
 HDD_Ctrl::~HDD_Ctrl()
 {
+	flush_buffer();
 	free(sector_data);
 }
 
