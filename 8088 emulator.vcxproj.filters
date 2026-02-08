@@ -21,13 +21,13 @@
     <ClCompile Include="8088 emulator.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Tester.cpp">
+    <ClCompile Include="tester.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Tester2.cpp">
+    <ClCompile Include="tester2.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Tester3.cpp">
+    <ClCompile Include="tester3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="joystick.cpp">
@@ -49,6 +49,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="hdd.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="brakepointer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -78,6 +81,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="hdd.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="breakpointer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

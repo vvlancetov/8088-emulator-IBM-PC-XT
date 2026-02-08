@@ -90,4 +90,7 @@ public:
 	void write_DMA_data(uint8 data);
 	uint32 real_address(uint8 head, uint16 cylinder, uint8 sector);
 	void flush_buffer();
+	int get_drv();//получить номер текущего диска
+	std::string get_CSH(); //получить CSH
+	std::string get_state();//получить статус
 };

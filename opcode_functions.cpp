@@ -25,7 +25,7 @@ extern HANDLE hConsole;
 extern uint8 exeption;
 #ifdef DEBUG
 extern FDD_mon_device FDD_monitor;
-extern FDD_mon_device HDD_monitor;
+extern HDD_mon_device HDD_monitor;
 #endif
 
 //регистры процессора
@@ -151,7 +151,9 @@ extern IC8259 int_ctrl;
 //extern uint16 Stack_Pointer;
 
 extern uint16 registers[8];
-extern bool parity_check[256];
+
+//функция проверки четности
+bool parity_check[256] = { 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1 };
 
 extern bool log_to_console;
 extern bool step_mode;
@@ -159,7 +161,7 @@ extern bool log_to_console_8087;
 
 extern string regnames[8];
 extern string pairnames[4];
-extern Video_device monitor;
+extern Monitor monitor;
 
 extern void (*op_code_table[256])();
 extern void (*op_code_table_8087[64])();
@@ -174,6 +176,7 @@ extern uint8 bus_lock;
 //счетчик команд
 extern int command_counter[256];
 extern bool command_counter_ON;
+
 
 //=============
 __int16 DispCalc16(uint16 data); //декларация
@@ -1822,134 +1825,7 @@ __int16 DispCalc16(uint16 data)
 	//if (log_to_console) cout << " disp = " << (int)data << "	";
 	return disp;
 }
-void syscall(uint8 INT_number)
-{
-	return; //выключаем
-	
-	if (log_to_console) cout << "INT " << (int)INT_number << "(syscall)" << endl;
-	if (INT_number == 0x10)
-	{
-		//INT 10 - усправление режимами работы монитора
-		if ((AX >> 8) == 0)
-		{
-			//устанавливаем видеорежим
-			monitor.set_CGA_mode(AX & 255);
-			return;
-		}
-		if ((AX >> 8) == 1)
-		{
-			//установка типа курсора
-			monitor.set_cursor_type(CX);
-			return;
-		}
-		if ((AX >> 8) == 2)
-		{
-			//установка позиции курсора
-			monitor.set_cursor_position(DX & 255, DX >> 8, BX >> 8);
-			return;
-		}
-		if ((AX >> 8) == 3)
-		{
-			//чтение позиции курсора
-			//регистры обновятся в самой функции
-			monitor.read_cursor_position();
-			return;
-		}
-		if ((AX >> 8) == 0xE)
-		{
-			//вывод символа в позицию курсора
-			monitor.teletype(AX & 255);
-			monitor.sync(1);
-			//if (log_to_console || 1) cout << "sym_out(" << (int)(AX & 255) << ")" << endl;
-			return;
-		}
 
-	}
-	if (INT_number == 0x16)
-	{
-		//функции клавиатуры
-		if ((AX >> 8) == 0)
-		{
-			//ждем нажатия клавиши
-			uint8 key = 0;
-			while (!key)
-			{
-			start:
-				key = _getch();
-				if (!key) 
-				{ 
-					key = _getch(); 
-					goto start;
-				}
-				if (key == 13) { key = 13; break; }
-				if (key == 8) { key = 8; break; }
-				if (key == 9) { key = 9; break; }
-				if (key < 32 || key > 126) key = 0;
-				
-			};
-
-			//while (_kbhit()) _getch(); //очищаем буфер
-			//cout << (int)key << " = " << (int)key << endl;
-			AX = (AX & 0xFF00) | key;
-			//if (log_to_console || 1) cout << "get key_code (" << (int)key << ")" << endl;
-		}
-		if ((AX >> 8) == 1)
-		{
-			//проверка наличия символа в буфере ввода
-
-
-
-		}
-	}
-	if (INT_number == 0x21)
-	{
-		//cout << "(DOS " << (int)(AX >> 8) << ")";
-		//системные вызовы DOS
-		if ((AX >> 8) == 2)
-		{
-			//вывод символа
-			monitor.teletype(DX & 255);
-		}
-
-		if ((AX >> 8) == 1)
-		{
-			//ввод символа + вывод на экран
-			//ждем нажатия клавиши
-			uint8 key = 0;
-			while (!key)
-			{
-			start_2:
-				key = _getch();
-				if (!key)
-				{
-					key = _getch();
-					goto start_2;
-				}
-				if (key == 13) { key = 13; break; }
-				if (key == 8) { key = 8; break; }
-				if (key == 9) { key = 9; break; }
-				if (key < 32 || key > 126) key = 0;
-				
-			};
-			//cout << "key = " << (int)key << endl;
-			AX = (AX & 0xFF00) | key;
-			monitor.teletype(key);
-			monitor.sync(1);
-		}
-		if ((AX >> 8) == 9)
-		{
-			//вывод строки ($)
-			
-			while (memory.read_2(DX + *DS * 16) != 36)
-			{
-				monitor.teletype(memory.read_2(DX + *DS * 16));
-				DX++;
-			}
-			monitor.sync(1);
-		}
-
-	}
-}
 std::string get_int21_data()
 {
 	string out;
@@ -10060,8 +9936,47 @@ void INT_N()			//INT = Interrupt
 	if ((int_type == 0x13) && !test_mode)
 	{
 		//step_mode = 1;
-		if (*ptr_DL > 4) HDD_monitor.log("INT13(HDD) drv=" + int_to_hex(DX & 255, 2) + " AX = " + int_to_hex(AX, 4));
+		//if (*ptr_DL > 4) HDD_monitor.log("INT13(HDD) drv=" + int_to_hex(DX & 255, 2) + " AX = " + int_to_hex(AX, 4));
 		//добавляем инфу по вызову
+		if (log_to_console_FDD) cout << "INT13 DRV=" << int_to_hex(DX & 255, 2) << " AH=" << (int)*ptr_AH << " ";
+		if (log_to_console_FDD) switch (*ptr_AH)
+		{
+		case 0x0:
+			cout << "RESET DISKETTE SYSTEM";
+			break;
+		case 0x1:
+			cout << "READ THE STATUS OF THE SYSTEM INTO (AH)";
+			break;
+		case 0x2:
+			cout << "READ THE DESIRED SECTORS INTO MEMORY";
+			break;
+		case 0x3:
+			cout << "WRITE THE DESIRED SECTORS FROM MEMORY";
+			break;
+		case 0x4:
+			cout << "VERIFY THE DESIRED SECTORS";
+			break;
+		case 0x5:
+			cout << "FORMAT THE DESIRED TRACK";
+			break;
+		case 0x8:
+			cout << "READ DRIVE PARAMETERS";
+			break;
+		case 0x15:
+			cout << "READ DASD TYPE";
+			break;
+		case 0x16:
+			cout << "DISK CHANGE LINE STATUS";
+			break;
+		case 0x17:
+			cout << "SET DASD TYPE FOR FORMAT";
+			break;
+		case 0x18:
+			cout << "SET MEDIA TYPE FOR FORMAT (tracks=" << dec << (int)(*ptr_CH + (*ptr_CL >> 6) * 256) << " sectors=" << (int)(*ptr_CL & 0b00111111) << " drv=" << (int)*ptr_DL;
+			break;
+		}
+		if (log_to_console_FDD) cout << endl;
+
 
 #ifdef DEBUG
 		if (log_to_console_FDD && (AX >> 8) == 2 && (*ptr_DL < 4)) FDD_monitor.log("INT13(READ) drv=" + int_to_hex(DX & 255, 2) + " head=" + int_to_hex(DX >> 8, 2) + " track=" + int_to_hex(CX >> 8, 2) + " sector_beg=" + int_to_hex(CX & 255, 2) + " sector_num=" + int_to_hex(AX & 255, 2) + " buff = [" + int_to_hex(*ES, 4) + ":" + int_to_hex(BX, 4) + "]");

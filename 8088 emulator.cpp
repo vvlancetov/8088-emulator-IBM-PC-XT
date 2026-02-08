@@ -6,6 +6,7 @@ typedef unsigned __int32 uint32;
 
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
+#include "custom_classes.h"
 #include <Windows.h>
 #include <iostream>
 #include <fstream>
@@ -20,7 +21,6 @@ typedef unsigned __int32 uint32;
 #include <random>
 #include <malloc.h>
 #include "opcode_functions.h"
-#include "custom_classes.h"
 #include "joystick.h"
 #include "video.h"
 #include "audio.h"
@@ -28,30 +28,12 @@ typedef unsigned __int32 uint32;
 #include "fdd.h"
 #include "hdd.h"
 #include "loader.h"
+#include "breakpointer.h"
 
 using namespace std;
 using namespace std::chrono;
 
-template< typename T >
-std::string int_to_hex(T i, int w)
-{
-	std::stringstream stream;
-	stream << ""
-		<< std::setfill('0') << std::setw(w)
-		<< std::hex << (int)i;
-	return stream.str();
-}
-
-template< typename T >
-std::string int_to_bin(T i)
-{
-	std::stringstream stream;
-	stream << ""
-		<< (std::bitset<8>)i;
-	return stream.str();
-}
-
-void print_mem();
+void process_debug_keys();
 extern void tester();
 extern void tester2();
 extern void tester3();
@@ -60,7 +42,7 @@ string deferred_msg = ""; //отложенные сообщения эмулят
 
 HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 uint8 global_error = 0; //глобальный код ошибки
-bool cont_exec = true; //переменная для продолжения основного цикла. снимается HALT
+bool cont_exec = true;  //переменная для продолжения основного цикла. снимается HALT
 
 string path = ""; //текущий каталог
 
@@ -69,17 +51,12 @@ sf::Texture font_texture_40;
 sf::Sprite font_sprite_40(font_texture_40);
 sf::Texture font_texture_80;
 sf::Sprite font_sprite_80(font_texture_80);
+sf::Texture font_texture_80_MDA;
+sf::Sprite font_sprite_80_MDA(font_texture_80_MDA);
 
 //текстуры графической палитры
 sf::Texture CGA_320_texture;
 sf::Sprite CGA_320_palette_sprite(CGA_320_texture);
-
-//таймеры
-//sf::Clock myclock;  //для тестов
-//sf::Clock video_clock;
-//sf::Clock cpu_clock; //таймер для выравнивания скорости процессора
-//sf::Clock kbd_clock;
-//sf::Clock speaker_clock;
 
 //счетчики
 uint32 op_counter = 0;
@@ -92,79 +69,26 @@ Mem_Ctrl memory; //создаем контроллер памяти
 
 uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
 
-struct comment
-{
-	int address;
-	string text;
-};
-
 //создаем монитор
-Video_device monitor;
+Monitor monitor;
 
-//второй экран для дебага
-#ifdef DEBUG
-Dev_mon_device debug_monitor(1000, 1240, "Debug Window", 3840 - 1640 - 1000, 0);
-#endif
+//экран для дебага (width, height, name, x_pos, y_pos)
+Dev_mon_device debug_monitor(870, 1240, "Debug Window", 1196, 0);
+
 //окно для сообщений FDD
 FDD_mon_device FDD_monitor(1000, 1600, "FDD Window", 0, 0);
 
 //окно для сообщений HDD
-FDD_mon_device HDD_monitor(1000, 1600, "HDD Window", 0, 0);
+HDD_mon_device HDD_monitor(1000, 1600, "HDD Window", 500, 200);
 
 //отладочное окно для звука
-#ifdef DEBUG
-Audio_mon_device Audio_monitor(2000, 200, "Audio Window", 0, 1650);
-#endif
-//внутренние счетчики таймера
-struct t_counter
-{
-	uint16 count = 0;
-	uint16 initial_count = 0;
-	bool latch_on = false;
-	uint16 latch_value = 0;
-	uint8 mode = 0; // 0 - int on TC, 1 - one-shot, 2 - Rate Gen, 3 - Square wave, 4 - Soft Trigg, 5 - HW trigg
-	bool BCD_mode = false;
-	uint8 RL_mode = 0;
-	bool second_byte = false; //нужно считать/записать второй байт
-	bool enabled = false;     // ON/OFF
-	bool wait_for_data = false; //ожидание загрузки данных
-	bool signal_high = false;  //сигнал на выходе
-	bool one_shot_fired = false; //триггер для режима 0
-};
+Audio_mon_device Audio_monitor(1000, 200, "Audio Window", 0, 1650);
 
-//таймер
-class IC8253
-{
-private:
-	t_counter counters[4];
-	std::chrono::steady_clock::time_point timer_start; //для отслеживания времени выполнения
-	std::chrono::steady_clock::time_point timer_end;
-	uint32 duration = 0;
-public:
-	
-	void write_port(uint16 port, uint8 data);
-	uint8 read_port(uint16 port);
-	void sync();
-	void enable_timer(uint8 n);
-	void disable_timer(uint8 n);
-	bool is_count_enabled(uint8 n);
-	uint16 get_time(uint8 number);
-	string get_ch_data(int channel);
-};
+//отладочное окно для памяти
+Mem_mon_device Mem_monitor(660, 1670, "Memory Window", 800, 300);
 
-//контроллер PPI
-class IC8255
-{
-private:
-	bool switches_hign = false;
-	uint8 port_B_out = 0;
-	bool port_B_6 = false; //уровень вывода 6 порта B
-	bool port_B_7 = false; //уровень вывода 7 порта B
-
-public:
-	void write_port(uint16 port, uint8 data);
-	uint8 read_port(uint16 port);
-};
+//менеджер точек останова и комментариев
+Breakpointer bp_mgr;
 
 // создаем клавиатуру
 KBD keyboard;
@@ -190,41 +114,11 @@ HDD_Ctrl HDD;
 //джойстик
 game_controller joystick;
 
-vector<comment> comments; //комментарии к программе
-/*
-//файлы для загрузки по-умолчанию
-//string filename_ROM = "IBM5160 BIOSes\\050986_XT_BIOS.bin";		//bios IBM pc/XT
-//string filename_ROM = "IBM5160 BIOSes\\ruuds_test_rom.bin";	//test ROM
-//string filename_ROM = "GLABIOS_0.8b0_8XY.ROM";				//GLaBIOS
-//string filename_ROM = "IBM5160 BIOSes\\supersoft_test_rom.bin"; //Supersoft test
-//string filename_HDD = "MS-DOS\\HDD.img";						// HDD
-//string filename_HDD_ROM = "HDD ROMs\\IBM_62x0822.bin";			//HDD board ROM
-//string filename_v_rom = "Ega-ibm.bin";							// video ROM EGA
-//filename_FDD.push_back("MS-DOS\\tst.img");						// DOS 3.3
-//filename_FDD[1] = "Demos\\8088mph.ima";					//нужен второй загрузочный диск
-//filename_FDD[2] = "MS-DOS\\DOS33_test_2.img";
-//filename_FDD[3] = "MS-DOS\\DOS33_test_3.img";
-//string filename_FDD = "MS-DOS\\Disk01.img";   // DOS 3.3
-//string filename_FDD = "MS-DOS\\DOS33_test.img";   // игра + демка+ CGA проверка
-//string filename_FDD = "MS-DOS\\DOS33_test_5.img";   // демка 8088mph  не работает
-//string filename_FDD = "MS-DOS\\Games\\Pacman.img";   // 
-//string filename_FDD = "MS-DOS\\Games\\Bdash12.img";   // 
-//string filename_FDD = "MS-DOS\\Games\\Montezum.img";   // 
-//string filename_FDD = "MS-DOS\\Games\\F15cga.img";   // 
-//string filename_FDD = "MS-DOS\\Games\\Galaxian.img";   // 
-//string filename_FDD = "MS-DOS\\EXPLORING-THE-IBM-PC-100-CGA.img";
-*/
-
 //переключатели на плате
 //uint8 MB_switches = 0b01101101; //CGA + 2FDD
 uint8 MB_switches = 0b00101101; //CGA
 //uint8 MB_switches = 0b00111101; //MDA
 //uint8 MB_switches = 0b00001101; //EGA
-
-#ifdef DEBUG
-vector<int> breakpoints;                    // точки останова
-string tmp_s;
-#endif
 
 //регистры процессора
 uint16 AX = 0; // AX
@@ -315,8 +209,15 @@ bool log_to_console_HDD = 0; //логирование команд HDD на ко
 bool log_to_console_DMA = 0; //логирование команд DMA на консоль
 bool log_to_console_INT = 0; //логирование команд INT на консоль
 bool log_to_console_DOS = 0; //логирование команд DOS на консоль
-bool log_to_console_8087 = 1; //логирование команд 8087 на консоль
+bool log_to_console_8087 = 0; //логирование команд 8087 на консоль
 bool run_until_CX0 = false; //останов при окончании цикла
+
+//флаги дополнительных окон
+bool show_debug_window = true; //основное отладочное окно
+bool show_fdd_window = true; //отладочное окно FDD
+bool show_hdd_window = true; //отладочное окно HDD
+bool show_audio_window = true; //отладочное окно звука
+bool show_memory_window = true; //отладочное окно памяти
 
 bool test_mode = 0; //влияет на память
 
@@ -330,8 +231,6 @@ void (*op_code_table_8087[64])() = { 0 };
 int command_counter[256] = { 0 };
 bool command_counter_ON = false;
 
-//функция проверки четности
-bool parity_check[256] = { 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1 };
 
 bool debug_key_1 = false;
 vector <uint16> command_history = { 0 };
@@ -341,6 +240,9 @@ vector <uint16> command_history_2 = { 0 };
 //кол-во циклов для замедления
 int empty_cycles = 0;
 
+//предотвращение дребезга клавиш управления
+bool keys_up = true;
+
 int main(int argc, char* argv[]) {
 
 	//изначальные значения сегментов
@@ -348,207 +250,6 @@ int main(int argc, char* argv[]) {
 	*DS = 0x40;
 	*SS = 0x30;
 	*ES = 0x40;
-
-	//точки останова
-#ifdef DEBUG
-	
-	//breakpoints.push_back(0xc81fa); //jmp to 7c00
-	//breakpoints.push_back(0xc8003); //IBM HDD CTRL
-	//breakpoints.push_back(0xc8127); //IBM HDD CTRL
-	//breakpoints.push_back(0xc8251); //HDD INT13
-	//breakpoints.push_back(0xc81d5); //HDD boot loader
-	//breakpoints.push_back(0x7c5f);
-	//breakpoints.push_back(0x7ca5);
-	//breakpoints.push_back(0xfe3d4);    //KB TEST  POST st 736
-	// err 101 st 924
-	//breakpoints.push_back(0xe1f5);   //FDD
-	//breakpoints.push_back(0xe55b);  //disk test
-	//breakpoints.push_back(0xE437);  //disk test
-	//DRIVE DET
-	
-	//breakpoints.push_back(0xFE6F2);
-	//breakpoints.push_back(0xfecfe);
-
-	//breakpoints.push_back(0xb88);
-	//breakpoints.push_back(0xb8b);
-	//breakpoints.push_back(0xb92);
-	//breakpoints.push_back(0xb9e);
-	//breakpoints.push_back(0xff0ac); // проверка FDD В тесте
-	//breakpoints.push_back(0xfee95); // проверка FPU
-	//breakpoints.push_back(0xfed38);  //MDA test
-	//breakpoints.push_back(0xfec89);  //INT test
-
-	//breakpoints.push_back(0xff505);
-	//breakpoints.push_back(0xfea2f);
-	//breakpoints.push_back(0xfee78);
-	//breakpoints.push_back(0xff729);
-	//breakpoints.push_back(0xff744);
-
-	//breakpoints.push_back(0xfa5d);   //basic
-	//breakpoints.push_back(0xb544);  //proverka PUSH
-	//breakpoints.push_back(0xe609);  //KB ввод символа
-	//breakpoints.push_back(0xe2);    //FFD statr
-	//breakpoints.push_back(0x0b1b);  //2315 diskette - wait
-	//breakpoints.push_back(0xe437);  //POST st 787
-	//breakpoints.push_back(0xFFE261);  //CTR Line TEST POST st 576
-	//breakpoints.push_back(0xff23);  //int 8
-	//breakpoints.push_back(0xe3a3);  //check timer
-	
-	//breakpoints.push_back(0x0700); //начало IO.SYS
-	//breakpoints.push_back(0xFE6F2); --
-	//breakpoints.push_back(0x07DC8);  //после начала чтения MSDOS.SYS (2 сектора в 8000)
-
-	//breakpoints.push_back(0x7c00);  // читаем дискету
-	//breakpoints.push_back(0xF0718);  // читаем дискету
-										 
-	//заполняем таблицу комментариев
-	//normal BIOS
-	
-	comments.push_back({ 0xFE0AC,"POST[198]: CPU test complete" });
-	comments.push_back({ 0xFE0D7,"POST[224]: ROS CHECKSUM TEST I complete" });
-	comments.push_back({ 0xFE166,"POST[343]: DMA INITIALIZATION complete" });
-	comments.push_back({ 0xFE1CE,"POST[395]: MEMTEST complete" });
-	comments.push_back({ 0xFE1DA,"POST[405]: Interrupt CTRL test START" });
-	comments.push_back({ 0xFE20b,"POST[441]: DETERMINE CONFIGURATION" });
-	comments.push_back({ 0xFE261,"POST[492]: INITIALIZE AND START CRT CONTROLLER" });
-	comments.push_back({ 0xFE2ee,"POST[560]: SETUP VIDEO DATA ON SCREEN" });
-	comments.push_back({ 0xfe33d,"POST[615]: ADVANCED VIDEO CARD " });
-	comments.push_back({ 0xfe35c,"POST[640]: INTERRUPT CONTROLLER TEST" });
-	comments.push_back({ 0xfe38f,"POST[684]: TEST TIMER" });
-	comments.push_back({ 0xfe3d4,"POST[729]: KEYBOARD TEST" });
-	comments.push_back({ 0xfe40f,"POST[736]: HARDWARE INT.VECTOR TABLE" });
-	comments.push_back({ 0xfe437,"POST[787]: HARDWARE INT COPYED" });
-	comments.push_back({ 0xfe499,"POST[863]: ADDITIONAL MEMTEST " });
-	
-	//	comments.push_back({ 0xff859,"POST: INT15" });
-	//	comments.push_back({ 0xf1c78,"POST: RET from INT15" });
-
-	//	comments.push_back({ 0xfeca0,"POST[1452]: WAITF" });
-	//	comments.push_back({ 0xfecbc,"POST[1475]: RET from WAITF" });
-	
-	//	comments.push_back({ 0xf0b14,"Disk[2308]: WAIT_INT" });
-	//	comments.push_back({ 0xf0b3b,"Disk[]: RET from WAIT_INT" });
-
-	comments.push_back({ 0xf00ad,"DISK[352]: RET from INT13" });
-	
-	comments.push_back({ 0xf00e2,"Disk[389]: INT13 - Disk_reset" });
-	comments.push_back({ 0xf0131,"DISK[432]: RET from Disk_reset" });
-
-	comments.push_back({ 0xf0133,"Disk[437]: Error - @NEC_STATUS(0x442) BAD" });
-	
-	comments.push_back({ 0xf013a,"Disk[449]: Disk_Status" });
-
-	comments.push_back({ 0xf0146,"Disk[469]: Disk_read" });
-	comments.push_back({ 0xf0151,"Disk[472]: RET from Disk_read" });
-
-	comments.push_back({ 0xf040B,"Disk[966]: DR_TYPE_CHECK" });
-	comments.push_back({ 0xf0420,"Disk[977]: DSK TYPE NOT VALID" });
-	comments.push_back({ 0xf0424,"Disk[980]: TYPE VALID (see in BX)" });
-	comments.push_back({ 0xf042A,"Disk[984]: RET from DR_TYPE_CHECK" });
-	comments.push_back({ 0xfe5a5,"POST[1027]: DISK ERROR" });
-
-	comments.push_back({ 0xf050D,"Disk[1157]: RD_WR_VF" });
-	comments.push_back({ 0xf05BA,"Disk[1263]: RET from RD_WR_VF" });
-	comments.push_back({ 0xf0929,"Disk[1350]: MED_CHANGE" });
-	comments.push_back({ 0xf0954,"Disk[1387]: RET from MED_CHANGE" });
-
-	comments.push_back({ 0xf06c2,"Disk[1445]: DMA SETUP" });
-	comments.push_back({ 0xf0724,"Disk[1504]: RET from DMA SETUP" });
-
-	comments.push_back({ 0xf0725,"Disk[1527]: NEC (FDD) INIT" });
-	comments.push_back({ 0xf074a,"Disk[1541]: RET from NEC (FDD) INIT" });
-
-	comments.push_back({ 0xf074b,"Disk[1552]: RWV_COM (read/write common)" });
-	comments.push_back({ 0xf0780,"Disk[1574]: RET from RWV_COM (read/write common)" });
-
-	comments.push_back({ 0xf088c,"DISK[1767]: SETUP_END" });
-	comments.push_back({ 0xf089f,"DISK[1775]: Error - @DSKETTE_STATUS(0x441) BAD " });
-	comments.push_back({ 0xf08a5,"DISK[1780]: RET from SETUP_END" });
-	
-	comments.push_back({ 0xf08A6,"DISK[1790]: SETUP_DBL" });
-	comments.push_back({ 0xf08FE,"DISK[1854]: RET from SETUP_DBL" });
-	
-	comments.push_back({ 0xf0914,"DISK[1865]: READ ID" });
-	comments.push_back({ 0xf0928,"DISK[1875]: RET from READ ID" });
-
-	comments.push_back({ 0xf0958,"DISK[1925]: GET_PARAM" });
-	comments.push_back({ 0xf096c,"DISK[1939]: RET from GET_PARAM" });
-	comments.push_back({ 0xf096d,"DISK[1961]: MOTOR ON" });
-	comments.push_back({ 0xf09B7,"DISK[2008]: RET from MOTOR ON" });
-	comments.push_back({ 0xf09b8,"DISK[2021]: TURN ON" });
-	comments.push_back({ 0xf0A0D,"DISK[2064]: RET from TURN ON" });
-	comments.push_back({ 0xf0A10,"DISK[2069]: RET from TURN ON" });
-
-	comments.push_back({ 0xf0a11,"DISK[2080]: HD_WAIT" });
-	comments.push_back({ 0xf0a4a,"Disk[2135]: NEC OUTPUT" });
-	comments.push_back({ 0xf0a6d,"Disk[2166]: RET from NEC OUTPUT" });
-
-	comments.push_back({ 0xf0a6e,"DISK[2182]: SEEK" });
-	comments.push_back({ 0xf0AD5,"DISK[2242]: RET from SEEK" });
-
-	comments.push_back({ 0xf0AD6,"DISK[2253]: RECALL" });
-	comments.push_back({ 0xf0aec,"DISK[2265]: RET from RECALL" });
-
-	comments.push_back({ 0xf0aed,"DISK[2277]: CHK_STAT_2" });
-	comments.push_back({ 0xf0B11,"DISK[2297]: CHK_STAT_2 SET @DSKETTE_STATUS(BAD SEEK) in 0x441" });
-	comments.push_back({ 0xf0B0B,"DISK[2293]: RET from CHK_STAT_2" });
-	
-	comments.push_back({ 0xf0b33,"Disk[2325]: Error - no INT" });
-	comments.push_back({ 0xf0b3c,"Disk[2341]: RESULTS PROC" });
-	comments.push_back({ 0xf0b7a,"Disk[2389]: RET from RESULTS PROC" });
-		
-	//comments.push_back({ 0xf0b4e,"Disk[2353]: POINT 1 (1100 0000)" });
-	//comments.push_back({ 0xf0b5c,"Disk[2362]: POINT 3 (set carry)" });
-	//comments.push_back({ 0xf0b6d,"Disk[2377]: POINT 2 (0001 0000)" });
-	comments.push_back({ 0xf0b85,"DISK[2415]: DETERMINE DRIVE" });
-	
-	comments.push_back({ 0xf0be5,"DISK[2486]: DISK SETUP" });
-
-	comments.push_back({ 0xf0be5,"DISK[2487]: DSKETTE_SETUP" });
-	comments.push_back({ 0xF0c3b,"DISK[2518]: NEC_STATUS->SI (DSKETTE_SETUP)" });
-	comments.push_back({ 0xF0c54,"DISK[2528]: ERR CHESK (DSKETTE_SETUP)" });
-
-	comments.push_back({ 0xf0c60,"DISK[2539]: RET from DSKETTE_SETUP" });
-		
-	//comments.push_back({ 0xf0118,"Disk[]: POINT 4 CMP" });
-	//comments.push_back({ 0xf011a,"Disk[]: POINT 5 CMP" });
-
-	comments.push_back({ 0xFE6F2,"POST[1178]: BOOT STRAP LOADER " });
-	comments.push_back({ 0xFE71F,"POST[1210]: BOOT UNABLE. GOTO RESIDENT BASIC (INT18)" });
-	comments.push_back({ 0xFE707,"POST[1193]: INT13(LOAD) - RESET DISKETTE" });
-	comments.push_back({ 0xFE718,"POST[1201]: INT13(LOAD) - READ SECTOR 1" });
-	comments.push_back({ 0xFE71d,"POST[1205]: TRY READ BOOT SECTOR" });
-	comments.push_back({ 0xFE71D,"POST[1205]: BOOT ERROR - RETRY" });
-	comments.push_back({ 0xFE721,"POST[1215]: BOOT OK - JUMP TO BOOTLOADER" });
-	comments.push_back({ 0xFE5BE,"POST[1047]: DISK ERROR" });
-	//comments.push_back({ 0xFE5C1,"POST[1052]: SETUP PRINTER AND RS232" });
-	comments.push_back({ 0xFE5F6,"POST[1075]: ERROR - 2 BEEPS" });
-	//comments.push_back({ 0xFE604,"POST[1081]: WAIT FOR KEY" });
-	comments.push_back({ 0xFE614,"POST[1088]: POST OK - 1 BEEP" });
-	comments.push_back({ 0xFE621,"POST[1093]: LOOP -> BEGIN" });
-	//comments.push_back({ 0xFE66B,"POST[1137]: SET UP EQUIP FLAG TO INDICATE NUMBER OF PRINTERS AND RS232 CARDS" });
-	//comments.push_back({ 0xFE686,"POST[1154]: ENABLE NMI INTERRUPTS" });
-	comments.push_back({ 0xFE694,"POST[1162]: THE BOOT LOADER (INT19)" });
-	
-	//comments.push_back({ 0xF0D82,"KBD[281]: KBD Interrupt (IRQ1)" });
-	//comments.push_back({ 0xF0c86,"KBD[104]: GET KEY Pressed" });
-	//comments.push_back({ 0xF0c61,"KBD[81]: INT16" });
-	//comments.push_back({ 0xF0c92,"KBD[112]: K1" });
-	//comments.push_back({ 0xF0cff,"KBD[180]: K1S" });
-	//comments.push_back({ 0xF0d0c,"KBD[186]: INT15(dummy)" });
-	//comments.push_back({ 0xF0d1b,"KBD[195]: key detected from INT" });
-	//comments.push_back({ 0xF0d82,"KBD[280]: KB_INT_1" });
-	//comments.push_back({ 0xF0d75,"KBD[268]: K4 inc KB buffer" });
-	//comments.push_back({ 0xF0cdd,"KBD[158]: K500 (write to buffer) " });
-	//comments.push_back({ 0xF1181,"KBD[896]: K61 (put char to buffer) " });
-	//comments.push_back({ 0xFa19,"POST[2210]: TIMER_INT_1" });
-	//comments.push_back({ 0xFa67,"POST[2252]: TIMER_INT_1 EXIT" });
-	//comments.push_back({ 0xFa5d,"POST[]: IN1C user interrupt " });
-	//comments.push_back({ 0xFf49,"POST[]: dummy return " });
-	//comments.push_back({ 0xd3d,"KBD[]: K10_S_XLAT " });
-	//comments.push_back({ 0xd32,"KBD[]: K10_E_XLAT " });
-	
-#endif
 
 	setlocale(LC_ALL, "Russian");
 
@@ -558,7 +259,7 @@ int main(int argc, char* argv[]) {
 
 	//загружаем конфигурацию и разные файлы
 	loader(argc, argv);
-	
+
 	//запускаем таймеры
 	auto timer_start = steady_clock::now();
 	auto timer_end = steady_clock::now();
@@ -571,57 +272,19 @@ int main(int argc, char* argv[]) {
 	std::mt19937 gen(rd()); // Mersenne Twister, seed из random_device
 	std::uniform_int_distribution<> distrib(1, 2000);
 	
-	//предотвращение дребезга клавиш управления
-	bool keys_up = true;
-
 	//прогоняем процессорные тесты
 	//test_mode = 1;
 	//tester3(); cout << "Done " << endl;	while (1);
-
-	//*CS = 0x100;
-	//Instruction_Pointer = 0;
-	//step_mode = 1;
-	//log_to_console = 1;
 
 	cout << "Running..." << hex << endl;
 	//основной цикл программы
 
 	while (cont_exec)
 	{
-		
-		
-		op_counter++;   //счетчик операций
-		service_counter++;  //счетчик для вызова служебных процедур
-
-		//переход в пошаговый режим при попадании в точку останова
-#ifdef DEBUG
-
-		for (int b = 0; b < breakpoints.size(); b++)
-		{
-			if ((Instruction_Pointer + *CS * 16) == breakpoints.at(b))   //breakpoints.at(b)
-			{
-				step_mode = true;
-				cout << "Breakpoint at " << hex << (int)(Instruction_Pointer + *CS * 16) << endl;
-				log_to_console = true;
-				service_counter = 1;
-				run_until_CX0 = false;
-			}
-		}
-
-#endif
-
-		//переход в пошаговый режим при CX=0
-#ifdef DEBUG
-
-		if ((CX == 0) && run_until_CX0)
-		{
-			//cout << "loop run OFF" << endl;
-			run_until_CX0 = false;
-			step_mode = true;
-			log_to_console = true;
-		}
-
-#endif
+		op_counter++;			//счетчик операций
+		service_counter++;		//счетчик для вызова служебных процедур
+		bp_mgr.check_points();	//проверка точек останова и печать комментариев к точкам
+		//bp_mgr.set_comments_EN(1); //включение комментов к коду
 
 		//служебные подпрограммы
 
@@ -633,24 +296,15 @@ int main(int argc, char* argv[]) {
 			timer_kb += duration;		//миллисекунды
 			timer_speaker += duration;
 
-			//корректировка скорости в реалтайме
-			if (!step_mode && !log_to_console)
-			{
-				//if (duration < 250 && empty_cycles < 8000) empty_cycles += 100;
-				//if (duration > 260 && empty_cycles > 1000) empty_cycles -= 100;
-			}
-
-
 			//отрисовка экрана монитора
 			if (timer_video > 16700) //16700
 			{
 				monitor.sync(timer_video); //синхроимпульс для монитора
-#ifdef DEBUG
 				debug_monitor.sync(timer_video); //синхроимпульс для монитора отладки
 				FDD_monitor.sync();				//синхроимпульс для монитора FDD
 				HDD_monitor.sync();				//синхроимпульс для монитора HDD
 				Audio_monitor.sync();			//мониторинг звука
-#endif
+				Mem_monitor.sync();				//мониторинг памяти
 				timer_video = 0;
 				op_counter = 0;
 			}
@@ -664,54 +318,18 @@ int main(int argc, char* argv[]) {
 				timer_kb = 0;
 			}
 
-			//обновление спикера (генерация тона)
-			if (timer_speaker > 50000)
-			{
-				//speaker.sync();		//DEL
-				timer_speaker = 0;
-			}
-
 			//service_counter = 0;
 			go_forward = false;
 
-			//борьба с залипанием
-			if (!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-				!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))) keys_up = true;
-
-			//мониторинг нажатия клавиш в обычном режиме
-#ifdef DEBUG
-			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up) { step_mode = !step_mode; keys_up = false; }
-
-			//включаем пропуск цикла
-			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
-			{
-				//cout << "LOOP ON 1" << endl;
-				run_until_CX0 = true;
-				step_mode = false;
-				log_to_console = false;
-				keys_up = false;
-			}
-
-			//проверяем нажатие F10
-			if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { log_to_console = !log_to_console; keys_up = false; }
-#endif
-#ifdef DEBUG
+			process_debug_keys();		//обработка нажатий кнопок
 
 			//задержка вывода по нажатию кнопки в пошаговом режиме
 			while (!go_forward && step_mode)
 			{
-				if (!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-					!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))) keys_up = true;
-
-
+				
+				process_debug_keys();	//обработка нажатий кнопок
+				
+				//процедура сравнения загруженных данных (удалить)
 				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
 				{
 					for (int a = 0; a < 0x10; a++)
@@ -727,20 +345,6 @@ int main(int argc, char* argv[]) {
 					std::this_thread::sleep_for(std::chrono::milliseconds(500));
 				}
 
-
-
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { step_mode = !step_mode; keys_up = false; }
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
-				{
-					//cout << "LOOP ON 2" << endl;
-					run_until_CX0 = true;
-					step_mode = false;
-					log_to_console = false;
-					keys_up = false;
-				}
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { go_forward = true; }
-				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { log_to_console = !log_to_console; keys_up = false; }
-
 				if (!step_mode) {
 					go_forward = true;
 					break;
@@ -751,9 +355,11 @@ int main(int argc, char* argv[]) {
 					debug_monitor.sync(0);	//окно отладки
 					FDD_monitor.sync();
 					HDD_monitor.sync();
+					Audio_monitor.sync();			//мониторинг звука
+					Mem_monitor.sync();				//мониторинг памяти
 				}
 			};
-#endif			
+			
 			timer_start = steady_clock::now();//перезапускаем таймер
 		}
 		else
@@ -761,11 +367,10 @@ int main(int argc, char* argv[]) {
 			for (int r = 0; r < empty_cycles; r++); //замедление
 		}
 
-
 		pc_timer.sync();	//синхронизация таймера
 		//dma_ctrl.sync();
 		pc_timer.sync();
-		//pc_timer.sync();
+		pc_timer.sync();
 		//pc_timer.sync();
 		//pc_timer.sync();
 
@@ -777,9 +382,7 @@ int main(int argc, char* argv[]) {
 
 
 		//замедление работы в пошаговом режиме
-		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-		//основной цикл 
+		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
 		//проверка аппаратных прерываний
 		if (Flag_IF)
@@ -824,25 +427,6 @@ int main(int argc, char* argv[]) {
 			}
 		}
 
-#ifdef DEBUG
-		
-		
-		//комментарии к точкам БИОС
-		/*
-		for (int j = 0; j < comments.size(); j++)
-		{
-			if (comments.at(j).address == Instruction_Pointer + (*CS) * 16)
-			{
-				SetConsoleTextAttribute(hConsole, 14);
-				string sss = comments.at(j).text; 
-				cout << sss << endl;
-				SetConsoleTextAttribute(hConsole, 7);
-				break;
-			}
-		}
-		*/
-#endif
-		
 		if (halt_cpu) goto halt_jump; //перепрыгиваем инструкции в состоянии HALT
 
 	cmd_rep:
@@ -879,8 +463,6 @@ int main(int argc, char* argv[]) {
 			if (log_to_console) cout << endl;
 			goto cmd_rep;
 		}
-
-
 
 #ifdef DEBUG	
 		if (log_to_console) cout << "\t ZF=" << Flag_ZF << " CF=" << Flag_CF << " AF=" << Flag_AF << " SF=" << Flag_SF << " PF=" << Flag_PF << " OF=" << Flag_OF << " IF=" << Flag_IF;
@@ -1019,27 +601,11 @@ void IO_Ctrl::output_to_port_8(uint16 address, uint8 data)	//вывод в по�
 		}
 	}
 
-	//MDA, Hercules VIDEO ADAPTER
-	if (address == 0x3B4)
+	//VIDEO ADAPTER
+	if (address >= 0x3B0 && address < 0x3E0)
 	{
 		//deferred_msg = "MDA, Hercules index port (0x3B4) write -> 0x" + int_to_hex(data, 2);
-	}
-	if (address == 0x3B5)
-	{
-		//deferred_msg = "MDA, Hercules data port (0x3B5) write -> 0x" + int_to_hex(data, 2);
-	}
-
-	//Monochrome
-	if (address == 0xb4 || address == 0xb5)
-	{
-		//deferred_msg = "Monochrome Video port (0xb4 / 0xb5) write -> 0x" + int_to_hex(data, 2);
-	}
-
-	//CGA VIDEO ADAPTER
-	if (address >= 0x3D0 && address <= 0x3DF)
-	{
 		monitor.write_port(address, data);
-		//deferred_msg = "CGA port ("+ int_to_hex(address, 4) + ") write -> 0x" + int_to_hex(data, 2);
 	}
 
 	//FDD_A
@@ -1101,8 +667,8 @@ uint8 IO_Ctrl::input_from_port_8(uint16 address)				//ввод из порта, 
 		return int_ctrl.read_port(address & 255);
 	}
 
-	//CGA VIDEO ADAPTER
-	if (address >= 0x3D0 && address <= 0x3DF)
+	//VIDEO ADAPTER
+	if (address >= 0x3B0 && address < 0x3E0)
 	{
 		return monitor.read_port(address);
 	}
@@ -1877,6 +1443,10 @@ void IC8237::sync()
 					if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
 					else ++cha_attribute[i].curr_address;
 					--cha_attribute[i].word_count;
+					
+					if (i == 2 && cha_attribute[i].word_count == 0xFFFF) FDD_A.EOP = 1; //сигнал конца передачи
+					if (i == 3 && cha_attribute[i].word_count == 0xFFFF) HDD.EOP = 1; //сигнал конца передачи
+
 					break;
 
 				case 1:   //Write - запись в память
@@ -1884,7 +1454,7 @@ void IC8237::sync()
 					//берем данные из буфера IO
 					//канал 0 только для чтения
 					if (i == 1) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, mem_buffer); //буфер для M-to-M
-					if (i == 2) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.get_DMA_data()); //буфер FDD
+					if (i == 2) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.read_DMA_data()); //буфер FDD
 					if (i == 3) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, HDD.read_DMA_data()); //буфер HDD
 
 					if (cha_attribute[i].adress_decrement)	--cha_attribute[i].curr_address;
@@ -1907,7 +1477,7 @@ void IC8237::sync()
 					//cout << " - here - i = " << (int)i << endl;
 					if (i == 0) mem_buffer = memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256); //буфер для M-to-M
 					//канал 1 только для записи
-					if (i == 2) FDD_A.put_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
+					if (i == 2) FDD_A.write_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
 					if (i == 3) HDD.write_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер HDD
 
 					if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
@@ -1977,7 +1547,7 @@ void IC8237::sync()
 						//берем данные из буфера IO
 						//канал 0 только для чтения
 						if (i == 1) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, mem_buffer); //буфер для M-to-M
-						if (i == 2) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.get_DMA_data()); //буфер FDD
+						if (i == 2) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.read_DMA_data()); //буфер FDD
 						if (i == 3) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, HDD.read_DMA_data()); //буфер HDD
 
 						if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
@@ -1995,7 +1565,7 @@ void IC8237::sync()
 						
 						if (i == 0) mem_buffer = memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256); //буфер для M-to-M
 						//канал 1 только для записи
-						if (i == 2) FDD_A.put_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
+						if (i == 2) FDD_A.write_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
 						if (i == 3) HDD.write_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер HDD
 
 						if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
@@ -2586,9 +2156,9 @@ string IC8259::get_ch_data(int ch)
 	string out;
 	if ((IM_REG >> ch) & 1) out += " #   ";
 	else out += "     ";
-	if ((IR_REG >> ch) & 1) out += " +  ";
+	if ((IR_REG >> ch) & 1) out += "+   ";
 	else out += "    ";
-	if ((IS_REG >> ch) & 1) out += "  V";
+	if ((IS_REG >> ch) & 1) out += "V";
 	else out += "   ";
 
 	return out;
@@ -2598,555 +2168,88 @@ void IC8259::set_timeout(uint8 delay)
 	sleep_timer = delay;
 }
 
-void print_mem()
+void process_debug_keys()
 {
-	for (int i = 0; i < 256; i++)
+	//борьба с залипанием
+	if (
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num1) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num2) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
+		) keys_up = true;
+
+	//мониторинг нажатия клавиш в обычном режиме
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up) { step_mode = !step_mode; keys_up = false; }
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num1) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		cout << hex << (int)i << "\t" << (int)command_counter[i] << endl;
+		show_debug_window = !show_debug_window;
+		if (show_debug_window) debug_monitor.show();
+		else debug_monitor.hide();
+		keys_up = false;
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num2) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		show_fdd_window = !show_fdd_window;
+		if (show_fdd_window) FDD_monitor.show();
+		else FDD_monitor.hide();
+		keys_up = false;
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		show_hdd_window = !show_hdd_window;
+		if (show_hdd_window) HDD_monitor.show();
+		else HDD_monitor.hide();
+		keys_up = false;
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		show_audio_window = !show_audio_window;
+		if (show_audio_window) Audio_monitor.show();
+		else Audio_monitor.hide();
+		keys_up = false;
+	}
+
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		show_memory_window = !show_memory_window;
+		if (show_memory_window) Mem_monitor.show();
+		else Mem_monitor.hide();
+		keys_up = false;
+	}
+
+
+	//включаем пропуск цикла
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
+	{
+		//cout << "LOOP ON 1" << endl;
+		run_until_CX0 = true;
+		step_mode = false;
+		log_to_console = false;
+		keys_up = false;
+	}
+
+	//проверяем нажатие F10
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) { log_to_console = !log_to_console; keys_up = false; }
+
+	//переход в пошаговый режим при CX=0
+	if ((CX == 0) && run_until_CX0)
+	{
+		//cout << "loop run OFF" << endl;
+		run_until_CX0 = false;
+		step_mode = true;
+		log_to_console = true;
 	}
 }
-
-Dev_mon_device::Dev_mon_device(uint16 w, uint16 h, string title, uint16 x_pos, uint16 y_pos)   // конструктор класса
-{
-	//инициализируем графические константы
-	GAME_WINDOW_X_RES = w;
-	GAME_WINDOW_Y_RES = h;
-
-	//получаем данные о текущем дисплее (пока не нужны)
-	my_display_H = sf::VideoMode::getDesktopMode().size.y;
-	my_display_W = sf::VideoMode::getDesktopMode().size.x;
-
-	cout << "Debug window Init " << (int)h << " x " << (int)w << " display name " << title << endl;
-#ifdef DEBUG
-	//создаем главное окно
-	main_window.create(sf::VideoMode(sf::Vector2u(GAME_WINDOW_X_RES, GAME_WINDOW_Y_RES)), title, sf::Style::Titlebar, sf::State::Windowed);
-	main_window.setPosition({ x_pos, y_pos });
-	main_window.setFramerateLimit(60);
-	main_window.setMouseCursorVisible(1);
-	main_window.setKeyRepeatEnabled(0);
-	main_window.setVerticalSyncEnabled(1);
-	main_window.setActive(true);
-#endif
-}
-
-void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
-{
-	main_window.clear(sf::Color::Black);// очистка экрана
-
-	sf::Text text(font);				//обычный шрифт
-	text.setCharacterSize(30);
-	text.setFillColor(sf::Color::White);
-
-	//вывод регистров и стека
-
-	text.setString("Registers");
-	text.setPosition(sf::Vector2f(10, 10));
-	main_window.draw(text);
-
-	text.setString("----------------");
-	text.setPosition(sf::Vector2f(10, 40));
-	main_window.draw(text);
-
-	text.setString("AX    " + int_to_hex(AX, 4));
-	text.setPosition(sf::Vector2f(10, 70));
-	main_window.draw(text);
-
-	text.setString("BX    " + int_to_hex(BX, 4));
-	text.setPosition(sf::Vector2f(10, 100));
-	main_window.draw(text);
-
-	text.setString("CX    " + int_to_hex(CX, 4));
-	text.setPosition(sf::Vector2f(10, 130));
-	main_window.draw(text);
-
-	text.setString("DX    " + int_to_hex(DX, 4));
-	text.setPosition(sf::Vector2f(10, 160));
-	main_window.draw(text);
-
-	text.setString("----------------");
-	text.setPosition(sf::Vector2f(10, 190));
-	main_window.draw(text);
-
-	text.setString("Segments & ptrs");
-	text.setPosition(sf::Vector2f(10, 220));
-	main_window.draw(text);
-
-	text.setString("----------------");
-	text.setPosition(sf::Vector2f(10, 250));
-	main_window.draw(text);
-
-	text.setString("CS:IP " + int_to_hex(*CS, 4) + ":" + int_to_hex(Instruction_Pointer, 4));
-	text.setPosition(sf::Vector2f(10, 280));
-	main_window.draw(text);
-
-	text.setString("SS:SP " + int_to_hex(*SS, 4) + ":" + int_to_hex(Stack_Pointer, 4));
-	text.setPosition(sf::Vector2f(10, 310));
-	main_window.draw(text);
-
-	text.setString("SS:BP " + int_to_hex(*SS, 4) + ":" + int_to_hex(Base_Pointer, 4));
-	text.setPosition(sf::Vector2f(10, 340));
-	main_window.draw(text);
-
-	text.setString("DS:SI " + int_to_hex(*DS, 4) + ":" + int_to_hex(Source_Index, 4));
-	text.setPosition(sf::Vector2f(10, 370));
-	main_window.draw(text);
-
-	text.setString("DS:DI " + int_to_hex(*DS, 4) + ":" + int_to_hex(Destination_Index, 4));
-	text.setPosition(sf::Vector2f(10, 400));
-	main_window.draw(text);
-
-	text.setString("ES:DI " + int_to_hex(*ES, 4) + ":" + int_to_hex(Destination_Index, 4));
-	text.setPosition(sf::Vector2f(10, 430));
-	main_window.draw(text);
-
-	text.setString("----------------");
-	text.setPosition(sf::Vector2f(10, 460));
-	main_window.draw(text);
-
-	text.setString("Flags");
-	text.setPosition(sf::Vector2f(10, 490));
-	main_window.draw(text);
-
-	text.setString("----------------");
-	text.setPosition(sf::Vector2f(10, 520));
-	main_window.draw(text);
-
-	text.setString("A=" + to_string(Flag_AF) + " C=" + to_string(Flag_CF) + " P=" + to_string(Flag_PF) + " S=" + to_string(Flag_SF));
-	text.setPosition(sf::Vector2f(10, 550));
-	main_window.draw(text);
-
-	text.setString("Z=" + to_string(Flag_ZF) + " D=" + to_string(Flag_DF) + " I=" + to_string(Flag_IF) + " O=" + to_string(Flag_OF));
-	text.setPosition(sf::Vector2f(10, 580));
-	main_window.draw(text);
-
-	text.setString("----------------");
-	text.setPosition(sf::Vector2f(10, 610));
-	main_window.draw(text);
-
-	text.setString("Stack(16)");
-	text.setPosition(sf::Vector2f(10, 640));
-	main_window.draw(text);
-
-	text.setString("----------------");
-	text.setPosition(sf::Vector2f(10, 670));
-	main_window.draw(text);
-
-	for (int s = 0; s < 16; s++)
-	{
-		text.setString("[" + int_to_hex(*SS, 4) + ":" + int_to_hex(Stack_Pointer + s * 2, 4) + "] " + int_to_hex((int)(memory.read_2(uint16(Stack_Pointer + (s * 2)) + SS_data * 16) + memory.read_2(uint16(Stack_Pointer + (s * 2) + 1) + SS_data * 16) * 256), 4));
-		text.setPosition(sf::Vector2f(10, 700 + s * 30));
-		main_window.draw(text);
-	}
-
-	//скорость работы
-	if (!step_mode && elapsed_ms) {
-
-		//обновляем массив времени кадра
-		text.setString(to_string((int)round(op_counter * 1000.0 / (elapsed_ms + 1.0))) + "K op/s");
-		text.setFillColor(sf::Color::White);
-		text.setPosition(sf::Vector2f(10, 1200));
-		main_window.draw(text);
-	}
-
-	
-	if (log_to_console) text.setString("LOG ON");
-	else text.setString("LOG OFF");
-	text.setPosition(sf::Vector2f(180, 1200));
-	text.setFillColor(sf::Color::White);
-	main_window.draw(text);
-
-	if (step_mode) text.setString("STEP ON");
-	else text.setString("STEP OFF");
-	text.setPosition(sf::Vector2f(310, 1200));
-	text.setFillColor(sf::Color::White);
-	main_window.draw(text);
-	
-	//видеорежим
-	text.setString(monitor.get_mode_name());
-	text.setPosition(sf::Vector2f(460, 1200));
-	text.setFillColor(sf::Color::White);
-	main_window.draw(text);
-
-	//данные пищалки
-	if (speaker.beeping && !halt_cpu)
-	{
-		text.setString(to_string(speaker.timer_freq) + " Hz");
-		text.setPosition(sf::Vector2f(730, 1200));
-		text.setFillColor(sf::Color::Yellow);
-		main_window.draw(text);
-	}
-
-	if (halt_cpu)
-	{
-		text.setString("HALT");
-		text.setPosition(sf::Vector2f(730, 1200));
-		text.setFillColor(sf::Color::Yellow);
-		main_window.draw(text);
-	}
-
-
-	string sec = to_string(round(memory.read_2(0x46c) / 1.82) / 10);
-	sec.resize(sec.find_first_of(",") + 2);
-	text.setString("SysT " + sec);
-	text.setPosition(sf::Vector2f(860, 1200));
-	text.setFillColor(sf::Color::Red);
-	main_window.draw(text);
-	text.setFillColor(sf::Color::White);
-
-	//выводим регистры таймера
-
-	text.setString("Timer Count Init Mode BCD RL Signal");
-	text.setPosition(sf::Vector2f(300, 10));
-	main_window.draw(text);
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 40));
-	main_window.draw(text);
-
-	for (int i = 0; i < 3; i++)
-	{
-		text.setString(to_string(i) + " " + pc_timer.get_ch_data(i));
-		text.setPosition(sf::Vector2f(300, 70 + i*30));
-		main_window.draw(text);
-	}
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 160));
-	main_window.draw(text);
-
-	//выводим регистры DMA
-
-	text.setString(dma_ctrl.get_ch_data_3(0));
-	text.setPosition(sf::Vector2f(300, 200));
-	main_window.draw(text);
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 230));
-	main_window.draw(text);
-
-	text.setString("DMA   Req ON Mode Mask AUTO Trans");
-	text.setPosition(sf::Vector2f(300, 260));
-	main_window.draw(text);
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 290));
-	main_window.draw(text);
-
-	//первая таблица
-	for (int i = 0; i < 4; i++)
-	{
-		string name;
-		switch (i)
-		{
-		case 0:
-			name = "ref";
-			break;
-		case 1:
-			name = "mem";
-			break;
-		case 2:
-			name = "FDD";
-			break;
-		case 3:
-			name = "HDD";
-			break;
-		}
-		
-		text.setString(to_string(i) + " " + name + " " + dma_ctrl.get_ch_data(i));
-		text.setPosition(sf::Vector2f(300, 320 + i * 30));
-		main_window.draw(text);
-	}
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 440));
-	main_window.draw(text);
-
-	text.setString("DMA   Page:ADDR Count  BaseA BaseC");
-	text.setPosition(sf::Vector2f(300, 480));
-	main_window.draw(text);
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 510));
-	main_window.draw(text);
-
-	for (int i = 0; i < 4; i++)
-	{
-		string name;
-		switch (i)
-		{
-		case 0:
-			name = "ref";
-			break;
-		case 1:
-			name = "mem";
-			break;
-		case 2:
-			name = "FDD";
-			break;
-		case 3:
-			name = "HDD";
-			break;
-		}
-
-		text.setString(to_string(i) + " " + name + " " + dma_ctrl.get_ch_data_2(i));
-		text.setPosition(sf::Vector2f(300, 540 + i * 30));
-		main_window.draw(text);
-	}
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 660));
-	main_window.draw(text);
-
-	//INT controller
-	text.setString("INT Mask Req Active");
-	text.setPosition(sf::Vector2f(300, 690));
-	main_window.draw(text);
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 720));
-	main_window.draw(text);
-
-	for (int i = 0; i < 8; i++)
-	{
-		text.setString(" " + to_string(i) + "   " + int_ctrl.get_ch_data(i));
-		text.setPosition(sf::Vector2f(300, 750 + i * 30));
-		main_window.draw(text);
-	}
-	
-	//ON or OFF
-	if (int_ctrl.enabled) text.setString("Enabled");
-	else text.setString("Disabled");
-	text.setPosition(sf::Vector2f(620, 690));
-	main_window.draw(text);
-
-	//keyboard buffer size
-	text.setString("KB_buffer = " + to_string(keyboard.get_buf_size()));
-	text.setPosition(sf::Vector2f(620, 750));
-	main_window.draw(text);
-
-	//KB_line status
-	text.setString("KB_line = " + to_string(keyboard.data_line_enabled));
-	text.setPosition(sf::Vector2f(620, 780));
-	main_window.draw(text);
-
-	//cascade mode
-	if (int_ctrl.cascade_mode) text.setString("Cascade ON");
-	else text.setString("Cascade OFF");
-	text.setPosition(sf::Vector2f(620, 810));
-	main_window.draw(text);
-
-	//nested mode
-	if (int_ctrl.nested_mode) text.setString("Nested ON");
-	else text.setString("Nested OFF");
-	text.setPosition(sf::Vector2f(620, 840));
-	main_window.draw(text);
-
-	//ADDR_INTERVAL
-	if (int_ctrl.ADDR_INTERVAL_4) text.setString("ADDR_INTERVAL = 4");
-	else text.setString("ADDR_INTERVAL = 8");
-	text.setPosition(sf::Vector2f(620, 870));
-	main_window.draw(text);
-
-	//AUTO_EOI
-	if (int_ctrl.AUTO_EOI) text.setString("AUTO_EOI ON");
-	else text.setString("AUTO_EOI OFF");
-	text.setPosition(sf::Vector2f(620, 900));
-	main_window.draw(text);
-
-	//mode_8086
-	if (int_ctrl.mode_8086) text.setString("Mode 86/88");
-	else text.setString("Mode 80/85");
-	text.setPosition(sf::Vector2f(620, 930));
-	main_window.draw(text);
-
-	//sleep_timer
-	text.setString("sleep_timer = " + to_string(int_ctrl.sleep_timer));
-	text.setPosition(sf::Vector2f(620, 960));
-	main_window.draw(text);
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 990));
-	main_window.draw(text);
-
-	//заполняем массив по ссылке
-	/*
-	*ptr = CMD_BUSY;
-	*(ptr + 1) = selected_drive;
-	*(ptr + 2) = DMA_enabled;
-	*(ptr + 3) = DMA_ON;
-	*(ptr + 4) = motors_pin_enabled;
-	*(ptr + 5) = FDD_busy_bits;
-	*/
-
-	//FDD controller
-	uint8 raw_data[20];
-	uint8* ptr = raw_data;
-	text.setString("FDD state:" + FDD_A.get_state(ptr));
-	text.setPosition(sf::Vector2f(300, 1020));
-	main_window.draw(text);
-
-	if (raw_data[0])
-	{ 
-		text.setFillColor(sf::Color::Red);
-		text.setString("   BUSY");
-	}
-	else
-	{
-		text.setString("NO BUSY");
-	}
-	text.setPosition(sf::Vector2f(570, 1020));
-	main_window.draw(text);
-
-	text.setFillColor(sf::Color::White);
-	text.setString("SEL DRV:" + to_string(raw_data[1]));
-	text.setPosition(sf::Vector2f(695, 1020));
-	main_window.draw(text);
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 1050));
-	main_window.draw(text);
-
-	if (raw_data[2])
-	{
-		text.setFillColor(sf::Color::Green);
-		text.setString("DMA EN");
-	}
-	else
-	{
-		text.setString("DMA DIS");
-	}
-
-	text.setPosition(sf::Vector2f(300, 1080));
-	main_window.draw(text);
-	text.setFillColor(sf::Color::White);
-
-	if (raw_data[3])
-	{
-		text.setFillColor(sf::Color::Green);
-		text.setString("DMA ON");
-	}
-	else
-	{
-		text.setString("DMA OFF");
-	}
-
-	text.setPosition(sf::Vector2f(414, 1080));
-	main_window.draw(text);
-	
-	text.setString("MOTORS[");
-	text.setFillColor(sf::Color::White);
-	text.setPosition(sf::Vector2f(530, 1080));
-	main_window.draw(text);
-
-	for (int i = 0; i < 4; ++i)
-	{
-		if ((raw_data[4] >> i) & 1)
-		{
-			text.setFillColor(sf::Color::Green);
-			text.setString("0");
-		}
-		else
-		{
-			text.setFillColor(sf::Color::White);
-			text.setString("-");
-		}
-		text.setPosition(sf::Vector2f(635 + i * 15, 1080));
-		main_window.draw(text);
-	}
-	text.setString("]");
-	text.setFillColor(sf::Color::White);
-	text.setPosition(sf::Vector2f(695, 1080));
-	main_window.draw(text);
-
-	text.setString("BUSY[");
-	text.setFillColor(sf::Color::White);
-	text.setPosition(sf::Vector2f(710, 1080));
-	main_window.draw(text);
-
-	for (int i = 0; i < 4; ++i)
-	{
-		if ((raw_data[5] >> i) & 1)
-		{
-			text.setFillColor(sf::Color::Red);
-			text.setString("0");
-		}
-		else
-		{
-			text.setFillColor(sf::Color::White);
-			text.setString("-");
-		}
-		text.setPosition(sf::Vector2f(785 + i * 15, 1080));
-		main_window.draw(text);
-	}
-	text.setString("]");
-	text.setFillColor(sf::Color::White);
-	text.setPosition(sf::Vector2f(840, 1080));
-	main_window.draw(text);
-
-	text.setString("----------------------------------");
-	text.setPosition(sf::Vector2f(300, 1110));
-	main_window.draw(text);
-
-	text.setString("H[" + to_string(raw_data[8]) + "] Cyl[" + to_string(raw_data[6]) + "] Sec[" + to_string(raw_data[7]) + "] MT[" + to_string(raw_data[11]) + "][" + int_to_bin(memory.read_2(0x490)) + "]");
-	text.setPosition(sf::Vector2f(300, 1140));
-	main_window.draw(text);
-
-	//управление головкой
-	/*
-	(ptr + 6) = C_cylinder;	//текущий цилиндр
-	*(ptr + 7) = R_sector;		//текущий сектор
-	*(ptr + 8) = H_head;		//текущая сторона дискеты
-	*(ptr + 9) = DIR_control;	//направление поиска 1 - к центру
-	*(ptr + 10) = MFM_mode;		//0 - одинарная плотность, 1 - двойная
-	*(ptr + 11) = MT;			//multi-track
-	*/
-	main_window.display();
-}
-
-void FDD_mon_device::sync()
-{
-	main_window.clear(sf::Color::Black);// очистка экрана
-
-	sf::Text text(font);				//обычный шрифт
-	text.setCharacterSize(25);
-	text.setFillColor(sf::Color::White);
-	
-	//FDD controller
-
-	int max_s = 60; // 1600 / 25
-	int begin = max(int(0), int(log_strings.size() - max_s));
-	//cout << "for i=" << (int)begin << " to " << (int)log_strings.size() << endl;
-	for (int i = begin; i < log_strings.size(); i++)
-	{
-		text.setFillColor(sf::Color::White);
-		if (log_strings.at(i).find("INT13(READ)") != std::string::npos) text.setFillColor(sf::Color::Green);
-		if (log_strings.at(i).find("INT13")!=std::string::npos) text.setFillColor(sf::Color::Green);
-		if (log_strings.at(i).find("INT13(WRITE)") != std::string::npos) text.setFillColor(sf::Color::Red);
-		if (log_strings.at(i).find("EXEcu") != std::string::npos) text.setFillColor(sf::Color::Cyan);
-		if (log_strings.at(i).find("Result OK") != std::string::npos) text.setFillColor(sf::Color::Green);
-		if (log_strings.at(i).find("ERR") != std::string::npos) text.setFillColor(sf::Color::Red);
-		
-		text.setString(log_strings.at(i));
-		text.setPosition(sf::Vector2f(0, 50 + (i - begin) * 25));
-		main_window.draw(text);
-	}
-#ifdef DEBUG
-	main_window.display();
-#endif
-
-
-}
-
-void FDD_mon_device::log(string log_string)
-{
-	//запоминаем последнюю строку
-	//last_str = "";
-	
-	// пишем в массив строк
-	if (last_str != log_string) log_strings.push_back(log_string);
-	last_str = log_string;
-}
-
 
 
 

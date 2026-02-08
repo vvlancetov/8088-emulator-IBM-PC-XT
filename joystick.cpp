@@ -10,7 +10,7 @@
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 
-extern Video_device monitor;
+extern Monitor monitor;
 
 using namespace std;
 
@@ -33,22 +33,22 @@ game_controller::game_controller()
 
 void game_controller::start_meazure()
 {
-	
 	countdown = 1;
 	counter = 128;
 
 	counter_X = central_point;
 	counter_Y = central_point;
 
-	//sf::Joystick::update(); //обновляем состояние
+	//sf::Joystick::update(); 
+	//обновляем состояние
 
 	if (joystick_active)
 	{
 		//крестовина
-		if (sf::Joystick::getAxisPosition(joystick_id, sf::Joystick::Axis::PovY) == 100) counter_Y = 0;		//UP
+		if (sf::Joystick::getAxisPosition(joystick_id, sf::Joystick::Axis::PovY) == 100) counter_Y = 0;						//UP
 		if (sf::Joystick::getAxisPosition(joystick_id, sf::Joystick::Axis::PovY) == -100) counter_Y = central_point * 2;	//DOWN
-		if (sf::Joystick::getAxisPosition(joystick_id, sf::Joystick::Axis::PovX) == -100) counter_X = 0;	//LEFT
-		if (sf::Joystick::getAxisPosition(joystick_id, sf::Joystick::Axis::PovX) == 100) counter_X = central_point * 2;	//RIGHT
+		if (sf::Joystick::getAxisPosition(joystick_id, sf::Joystick::Axis::PovX) == -100) counter_X = 0;					//LEFT
+		if (sf::Joystick::getAxisPosition(joystick_id, sf::Joystick::Axis::PovX) == 100) counter_X = central_point * 2;		//RIGHT
 	}
 }
 

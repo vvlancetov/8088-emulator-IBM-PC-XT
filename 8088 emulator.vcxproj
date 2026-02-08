@@ -152,18 +152,20 @@
   <ItemGroup>
     <ClCompile Include="8088 emulator.cpp" />
     <ClCompile Include="audio.cpp" />
+    <ClCompile Include="brakepointer.cpp" />
     <ClCompile Include="fdd.cpp" />
     <ClCompile Include="joystick.cpp" />
     <ClCompile Include="keyboard.cpp" />
     <ClCompile Include="loader.cpp" />
     <ClCompile Include="opcode_functions.cpp" />
     <ClCompile Include="hdd.cpp" />
-    <ClCompile Include="Tester.cpp" />
-    <ClCompile Include="Tester2.cpp" />
-    <ClCompile Include="Tester3.cpp" />
+    <ClCompile Include="tester.cpp" />
+    <ClCompile Include="tester2.cpp" />
+    <ClCompile Include="tester3.cpp" />
     <ClCompile Include="video.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="breakpointer.h" />
     <ClInclude Include="custom_classes.h" />
     <ClInclude Include="fdd.h" />
     <ClInclude Include="audio.h" />

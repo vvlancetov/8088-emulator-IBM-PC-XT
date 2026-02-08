@@ -25,6 +25,8 @@ extern sf::Texture font_texture_40;
 extern sf::Sprite font_sprite_40;
 extern sf::Texture font_texture_80;
 extern sf::Sprite font_sprite_80;
+extern sf::Texture font_texture_80_MDA;
+extern sf::Sprite font_sprite_80_MDA;
 
 //текстуры графической палитры
 extern sf::Texture CGA_320_texture;
@@ -32,13 +34,14 @@ extern sf::Sprite CGA_320_palette_sprite;
 
 extern uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
 
-extern Video_device monitor;
-#ifdef DEBUG
+extern Monitor monitor;
+
 extern Dev_mon_device debug_monitor;
 extern FDD_mon_device FDD_monitor;
-extern FDD_mon_device HDD_monitor;
+extern HDD_mon_device HDD_monitor;
 extern Audio_mon_device Audio_monitor;
-#endif
+extern Mem_mon_device Mem_monitor;
+
 string filename_ROM;
 string filename_HDD_ROM;
 string filename_HDD;
@@ -54,6 +57,7 @@ extern uint16 Instruction_Pointer;
 extern uint16* CS;
 
 extern uint8 MB_switches;
+extern enum class videocard_type;
 
 void load_diskette(uint8 drive, std::string filename_FDD)
 {
@@ -96,8 +100,9 @@ void load_diskette(uint8 drive, std::string filename_FDD)
 			break;
 		case 2880:
 			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
-			FDD_A.diskette_sectors[drive - 1] = 18; //8, 9, 15, 18
+			FDD_A.diskette_sectors[drive - 1] = 18; //8, 9, 18
 			FDD_A.diskette_cylinders[drive - 1] = 80;
+			FDD_A.set_MFM(drive - 1, 1); //дискета двойной плотности
 			cout << "3.5\" HEADS = 2 SECTORS = 9 CYL = 80 CAPACITY = 1440" << endl;
 			break;
 		case 1440:
@@ -112,6 +117,7 @@ void load_diskette(uint8 drive, std::string filename_FDD)
 			FDD_A.diskette_heads[drive - 1] = 2;  // 1 or 2
 			FDD_A.diskette_sectors[drive - 1] = 15; //8, 9 or 15
 			FDD_A.diskette_cylinders[drive - 1] = 80;
+			FDD_A.set_MFM(drive - 1, 1); //дискета двойной плотности
 			cout << "5.25\" HEADS = 2 SECTORS = 15 CYL = 80 CAPACITY = 1200" << endl;
 			break;
 		case 720:
@@ -207,7 +213,7 @@ void loader(int argc, char* argv[])
 	path.resize(++l_symb);
 	cout << "Working catalog = " << path << endl;
 	
-	//загружаем ретро-шрифт в виде текстуры
+	//загружаем CGA шрифт в виде текстуры
 	if (font_texture_40.loadFromFile(path + "videorom_CGA_40.png")) cout << "Font ROM(40) loaded" << endl;
 	font_sprite_40.setTexture(font_texture_40);
 	font_texture_40.setSmooth(0);
@@ -222,6 +228,12 @@ void loader(int argc, char* argv[])
 	if (CGA_320_texture.loadFromFile(path + "CGA_320_palette.png")) cout << "CGA 320 palette loaded" << endl;
 	CGA_320_palette_sprite.setTexture(CGA_320_texture);
 	CGA_320_texture.setSmooth(0);
+
+	//загружаем MDA шрифт в виде текстуры
+	if (font_texture_80_MDA.loadFromFile(path + "videorom_MDA.png")) cout << "MDA Font ROM(80) loaded" << endl;
+	font_sprite_80_MDA.setTexture(font_texture_80_MDA);
+	font_texture_80_MDA.setSmooth(0);
+	font_sprite_80_MDA.setScale(sf::Vector2f(1, 1.2));
 
 	//загружаем обычный шрифт для служебных надписей
 	if (!monitor.font.openFromFile(path + "ShareTechMonoRegular.ttf")) cout << "Error loading debug font" << endl;
@@ -238,8 +250,12 @@ void loader(int argc, char* argv[])
 	if (!HDD_monitor.font.openFromFile(path + "arialnarrow.ttf")) cout << "HDD_MON: error loading font" << endl;
 	else cout << "HDD_MON: font " << path + "arialnarrow.ttf" << " loaded" << endl;
 
-	if (!Audio_monitor.font.openFromFile(path + "arialnarrow.ttf")) cout << "FDD_MON: error loading font" << endl;
-	else cout << "FDD_MON: font " << path + "arialnarrow.ttf" << " loaded" << endl;
+	if (!Audio_monitor.font.openFromFile(path + "arialnarrow.ttf")) cout << "Audio_MON: error loading font" << endl;
+	else cout << "Audio_MON: font " << path + "arialnarrow.ttf" << " loaded" << endl;
+
+	if (!Mem_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "MEM_MON: error loading font" << endl;
+	else cout << "MEM_MON: font " << path + "CousineR.ttf" << " loaded" << endl;
+
 #endif
 
 	//обрабатываем файл конфигурации
@@ -399,9 +415,28 @@ void loader(int argc, char* argv[])
 				{
 					//выбираем тип видео
 					cout << "SET video to " << value << endl;
+					if (value == "CGA")
+					{
+						cout << "============CGA===========" <<endl;
+						monitor.set_card_type(videocard_type::CGA);
+						MB_switches = (MB_switches & 0xCF) | (0b00100000); //80 col CGA
+
+					}
+					if (value == "MDA")
+					{
+						cout << "============MDA===========" << endl;
+						monitor.set_card_type(videocard_type::MDA);
+						MB_switches = (MB_switches & 0xCF) | (0b00110000); //MDA
+					}
+					if (value == "EGA")
+					{
+						cout << "============EGA===========" << endl;
+						monitor.set_card_type(videocard_type::EGA);
+						MB_switches = (MB_switches & 0xCF) | (0b00000000); //EGA
+					}
 				}
 				
-				if (parameter == "VIDEO_ROM_FILE") //диск в дисководе 4
+				if (parameter == "EGA_VIDEO_ROM_FILE") //ROM от EGA карты
 				{
 					//выбираем видео BIOS
 					if (value != "") filename_v_rom = value;

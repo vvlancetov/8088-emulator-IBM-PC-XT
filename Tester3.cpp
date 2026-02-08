@@ -92,7 +92,7 @@ extern bool step_mode;
 
 extern string regnames[8];
 extern string pairnames[4];
-extern Video_device monitor;
+extern Monitor monitor;
 
 //признак неопределенности флага
 extern bool OF_undef;

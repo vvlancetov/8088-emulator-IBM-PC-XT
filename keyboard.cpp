@@ -1842,7 +1842,7 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 		else
 		{
 			pressed_time_us[(uint8)(KBD_key::Up)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::Up)] > 100000)
+			if (pressed_time_us[(uint8)(KBD_key::Up)] > 200000)
 			{
 				//out_buffer.push_back(0xE0);
 				//out_buffer.push_back(0xC8);
@@ -1874,7 +1874,7 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 		else
 		{
 			pressed_time_us[(uint8)(KBD_key::Down)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::Down)] > 100000)
+			if (pressed_time_us[(uint8)(KBD_key::Down)] > 200000)
 			{
 				//out_buffer.push_back(0xE0);
 				//out_buffer.push_back(0xD0);
@@ -1906,7 +1906,7 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 		else
 		{
 			pressed_time_us[(uint8)(KBD_key::Left)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::Left)] > 100000)
+			if (pressed_time_us[(uint8)(KBD_key::Left)] > 200000)
 			{
 				//out_buffer.push_back(0xE0);
 				//out_buffer.push_back(0xCB);
@@ -1938,7 +1938,7 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 		else
 		{
 			pressed_time_us[(uint8)(KBD_key::Right)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::Right)] > 100000)
+			if (pressed_time_us[(uint8)(KBD_key::Right)] > 200000)
 			{
 				//out_buffer.push_back(0xE0);
 				//out_buffer.push_back(0xCD);

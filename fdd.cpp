@@ -7,6 +7,7 @@
 #include <conio.h>
 #include <thread>
 #include <string>
+#include <vector>
 #include <algorithm>
 #include <fstream>
 #include <chrono>
@@ -36,17 +37,12 @@ extern IC8237 dma_ctrl;
 
 //данные файла дискеты
 extern string path;
-
+extern Monitor monitor;
 
 FDD_Ctrl::FDD_Ctrl()
 {
 	sector_data = (uint8*)calloc(2880 * 1024 * 4, 1); //максимальный объем дискет
-	//массив с именами образов дискет
-	filename_FDD.push_back("MS-DOS\\tst.img");
-	filename_FDD.push_back("Demos\\8088mph.ima");
-	filename_FDD.push_back("MS-DOS\\DOS33_test_2.img");
-	filename_FDD.push_back("MS-DOS\\DOS33_test_3.img");
-	
+	filename_FDD.resize(4);
 }
 FDD_Ctrl::~FDD_Ctrl()
 {
@@ -77,16 +73,16 @@ bool FDD_Ctrl::write_to_disk(uint32 address, uint8 data)
 
 void FDD_Ctrl::flush_buffer()
 {
-	
+
 	//сбрасываем данные на диск
 	fstream file_FDD(path + filename_FDD.at(selected_drive), ios::binary | ios::out);
-	
+
 	if (!file_FDD.is_open())
 	{
 		if (log_to_console_FDD) cout << "File " << filename_FDD.at(selected_drive) << " not found!" << endl;
 		return;
 	}
-	
+
 	for (int i = 0; i < file_size[selected_drive]; i++)
 	{
 		file_FDD.write((char*)&sector_data[i + selected_drive * 2880 * 1024], 1);
@@ -152,8 +148,6 @@ uint8 FDD_Ctrl::read_port(uint16 port)
 	//FIFO port
 	if (port == 0x3F5)
 	{
-		//data FIFO
-		if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
 
 		//чтение результатов операции
 		if (drv_state == FDD_states::read_result)
@@ -169,13 +163,18 @@ uint8 FDD_Ctrl::read_port(uint16 port)
 					drv_state = FDD_states::idle;
 					DIO = 0; //требуем записи
 					CMD_BUSY = 0; //констроллер свободен
+					//if (log_to_console_FDD) cout << "READ RESULT -> IDLE" << endl;
 				}
+				if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
 				return out;
 			}
 			else
 			{
-				if (log_to_console_FDD) cout << "FDD data buffer READ - EMPTY!" << endl;
-				//sense_int_buffer.push_back(0b11000000 | selected_drive);
+				//if (log_to_console_FDD) cout << "FDD data buffer READ - EMPTY! STATE -> IDLE" << endl;
+				DIO = 0; //требуем записи
+				CMD_BUSY = 0; //констроллер свободен
+				drv_state = FDD_states::idle;
+				if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
 				return 0;
 			}
 		}
@@ -191,6 +190,7 @@ uint8 FDD_Ctrl::read_port(uint16 port)
 				//устанавливаем статус для прерывания
 				sense_int_buffer.push_back(0b00100000);
 				if (log_to_console_FDD) cout << "FIFO read out buffer " << (int)out << endl;
+				if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
 				return out;
 			}
 			else
@@ -198,6 +198,7 @@ uint8 FDD_Ctrl::read_port(uint16 port)
 				//устанавливаем статус ошибки для INT
 				if (log_to_console_FDD) cout << "FIFO EMPTY " << endl;
 				//sense_int_buffer.push_back(0b01100000 | selected_drive);
+				if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
 				return 0;
 			}
 
@@ -217,10 +218,12 @@ uint8 FDD_Ctrl::read_port(uint16 port)
 }
 void FDD_Ctrl::write_port(uint16 port, uint8 data)
 {
+	//cout << "WRITE port " << hex << (int)port << endl;
 	//SetConsoleTextAttribute(hConsole, 12);
 	//if (log_to_console_FDD || 1) FDD_monitor.log("FDD WRITE " + to_string(port));
 	//SetConsoleTextAttribute(hConsole, 7);
 
+	//выбор привода, разрешение DMA, управление моторами, перезагрузка
 	if (port == 0x3F2)
 	{
 		//if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
@@ -232,7 +235,7 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 		selected_drive = data & 3;
 		DMA_enabled = (data >> 3) & 1;
 		motors_pin_enabled = (data >> 4);
-		if (log_to_console_FDD) cout << "FDD: SELECT DRIVE #" << (int)selected_drive << endl;
+		if (log_to_console_FDD) cout << "FDD: SELECT DRIVE #" << (int)selected_drive << " DMA_EN=" << (int)DMA_enabled << " motor_pins=" << (bitset<4>(motors_pin_enabled)) << endl;
 		//переключение в RESET
 		if (drv_state == FDD_states::idle || drv_state == FDD_states::read_result)
 		{
@@ -285,11 +288,13 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 		//любые другие состояния ничего не меняют
 	}
 
+	//Enhanced floppy mode 2. Непонятное назначение.
 	if (port == 0x3F3)
 	{
 		if (drv_state == FDD_states::idle) Tape_drive_register = data;
 	}
 
+	//Data rate + soft reset
 	if (port == 0x3F4)
 	{
 		//if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
@@ -302,6 +307,7 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 		if ((data >> 7) & 1) //програмная перезагрузка
 		{
 			//то же самое, что и перезагрузка, только без смены состояний
+			if (log_to_console_FDD) cout << "Soft reset" << endl;
 			Tape_drive_register = 0;
 			Main_status_register = 0;
 			Data_fifo.clear();
@@ -318,6 +324,9 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 			sense_int_buffer.push_back(0b11000001);
 			sense_int_buffer.push_back(0b11000010);
 			sense_int_buffer.push_back(0b11000011);
+			drv_state = FDD_states::idle;
+			return;
+			//прошлая версия
 			drv_state = FDD_states::command_exec;
 			command = 255; //заглушка для задержки
 			sleep_counter = 3;
@@ -325,12 +334,14 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 		}
 	}
 
+	//FIFO порт для ввода команд
 	if (port == 0x3F5)
 	{
 		//data FIFO
-		if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
+		//if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
 		//if (log_to_console_FDD) cout << "FDD data buffer(FIFO) WRITE " << (int)data << endl;
-		if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
+		//if (log_to_console_FDD) cout << "FDD STATE = " << (int)drv_state << endl;
+		//if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
 
 		if (drv_state == FDD_states::idle)
 		{
@@ -340,7 +351,7 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 				//команда Specify
 				command = 3;
 				drv_state = FDD_states::enter_param;//перекл на выполение
-				//cout << "FDD command 4  -> WAIT PARAMs" << endl;
+				//cout << "FDD command 3(Specify)  -> WAIT PARAMs" << endl;
 				//DMA_ON = false;
 				CMD_BUSY = 1;
 				params_left = 2;
@@ -358,7 +369,7 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 				params_left = 1;
 				return;
 			}
-			
+
 			if ((data & 31) == 5)
 			{
 				//WRITE
@@ -375,6 +386,8 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 			{
 				//READ
 				command = 6;
+				MFM_mode[selected_drive] = (data >> 6) & 1;
+				MT[selected_drive] = (data >> 7) & 1;
 				drv_state = FDD_states::enter_param;//перекл на ввод параметров
 				//cout << "FDD command 15  -> WAIT PARAMs" << endl;
 				CMD_BUSY = 1;
@@ -407,11 +420,12 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 				CMD_BUSY = 1;
 				return;
 			}
-			
+
 			if ((data & 31) == 13)
 			{
 				//FORMAT A TRACK
 				command = 13;
+				MFM_mode[selected_drive] = (data >> 6) & 1;
 				drv_state = FDD_states::enter_param;//перекл на ввод параметров
 				//cout << "FDD command 15  -> WAIT PARAMs" << endl;
 				CMD_BUSY = 1;
@@ -419,7 +433,7 @@ void FDD_Ctrl::write_port(uint16 port, uint8 data)
 				params_left = 5;
 				return;
 			}
-			
+
 			if ((data & 31) == 15)
 			{
 				//Seek
@@ -516,8 +530,6 @@ void FDD_Ctrl::sync()
 		return;
 	}
 
-	//FDD_busy_bits = 0; //снимаем биты занятости
-
 	if (drv_state == FDD_states::command_exec)
 	{
 		//обрабатываем команду
@@ -526,44 +538,40 @@ void FDD_Ctrl::sync()
 
 		if (command == 3)  //Specify
 		{
-			//byte 0 = SRT + HUD
-			//byte 1 = HLT + ND
+			//из нужны параметров задает только использование DMA
+			//фазы отдачи результатов нет
 			if (Data_fifo.at(1) & 1) DMA_ON = false;
 			else DMA_ON = true;
 			Data_fifo.clear();
-			//sleep_counter = 10; //период занятости
-			//command = 255;
-			CMD_BUSY = 0;
+			RQM = 1; //хост может читать или писать
 			DIO = 0; //требуем записи
+			CMD_BUSY = 0;//сразу ставим статус свободен
 			drv_state = FDD_states::idle;
-			//if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
-			//if (log_to_console_FDD) cout << "CMD 3 [Specify] DMA_ON=" << to_string(DMA_ON) << endl;
-			//if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
+			FDD_monitor.log("CMD 3 [Specify] DMA_ON=" + to_string(DMA_ON));
 			return;
 		}
 
 		if (command == 4)    //Sense drive status
 		{
+			//отдает признак запрета записи и признак нулевой дорожки
 			uint8 param = Data_fifo.at(0);
 			//параметры запроса
 			uint8 drv = param & 3;
 			uint8 head = (param >> 2) & 1;
-			if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
-			if (log_to_console_FDD) cout << "CMD 4 (Sns drv stat) drv=" << (int)drv << " head= " << (int)H_head[drv] <<  " WR protect = " << write_protect[drv] << " TRC0 = " << (C_cylinder[drv] == 0) << endl;
-			if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
-			//запись результата
+			//определяем результат
 			bool tr_0 = false;
 			if (C_cylinder[drv] == 0) tr_0 = true; //головка на цилиндре 0 
 			uint8 result = 0 * 128 | write_protect[drv] * 64 | 1 * 32 | tr_0 * 16 | 1 * 8 | H_head[drv] * 4 | drv;  //доделать чтобы отдавались статусы отдельных дисков - DONE
+			FDD_monitor.log("CMD 4 [Sense drv stat] drv=" + to_string(drv) + " head= " + to_string(H_head[drv]) + " WR_protect = " + to_string(write_protect[drv]) + " TRC0 = " + to_string(tr_0));
 			Data_fifo.clear();
 			Data_fifo.push_back(result);
 			drv_state = FDD_states::read_result;
 			results_left = 1;
-			//DMA_enabled = 0;
+			RQM = 1; //хост может читать или писать
 			DIO = 1; //требуем чтения
 			return;
 		}
-		
+
 		if (command == 5)    //WRITE
 		{
 			selected_drive = (Data_fifo.at(0)) & 3;
@@ -580,9 +588,7 @@ void FDD_Ctrl::sync()
 			GPL = Data_fifo.at(6); //гэп 3 между секторами
 			DTL = Data_fifo.at(7); //специальный размер сектора если Sector_size = 128 (факт < 128), иначе игнор
 			if (Sector_size[selected_drive] == 128 && DTL != 0) Sector_size[selected_drive] = DTL;
-#ifdef DEBUG
-			if (log_to_console_FDD) FDD_monitor.log("CMD 5 [WRITE] head=" + to_string(H_head[selected_drive]) + " CYL=" + to_string(C_cylinder[selected_drive]) + " DRV=" + to_string(selected_drive) + " SEC_begin = " + to_string(R_sector[selected_drive]) + " SEC_size = " + to_string(Sector_size[selected_drive]) + " MT = " + to_string(MT[selected_drive]) + " EOT = " + to_string(EOT));
-#endif
+			FDD_monitor.log("CMD 5 [WRITE] head=" + to_string(H_head[selected_drive]) + " CYL=" + to_string(C_cylinder[selected_drive]) + " DRV=" + to_string(selected_drive) + " SEC_begin = " + to_string(R_sector[selected_drive]) + " SEC_size = " + to_string(Sector_size[selected_drive]) + " MT = " + to_string(MT[selected_drive]) + " EOT = " + to_string(EOT));
 			Data_fifo.clear();
 
 			//делаем выгрузку 
@@ -600,34 +606,9 @@ void FDD_Ctrl::sync()
 					if (log_to_console_FDD) cout << "R_sector = 0!!!";
 				}
 
-				if (MT[selected_drive])
-				{
-					//двустороннее чтение - пока не используется
-					/*
-					start = C_cylinder * 9216 + (R_sector - 1) * 512; //вариант 2
-					for (int j = 0; j < Sector_size; j += 2)
-					{
-						int addr = start + j; //адрес байта на диске 512 - размер сектора по умолчанию
-						out_buffer.push_back(sector_data[addr]);
-						addr += 9 * 512 * H_head;
-						out_buffer.push_back(sector_data[addr + 1]);
-					}*/
-					cout << "WRITE: MT subroutine!!! Error";
-				}
-				else
-				{
-					//параметры дискеты
-					// diskette_heads = 1;  // 1 or 2          кол-во головок
-					// diskette_sectors = 8; //8, 9 or 15	  кол-во секторов
-
-					//адреса для записи, head 0 - 1 записаны как отдельные сектора
-					write_ptr = real_address(selected_drive, H_head[selected_drive], C_cylinder[selected_drive], R_sector[selected_drive], Sector_size[selected_drive]); //начало записи
-					write_ptr_end = write_ptr + Sector_size[selected_drive] * (EOT - R_sector[selected_drive] + 1);
-					if (log_to_console_FDD) FDD_monitor.log("write drv#" + to_string(selected_drive) + " addresses from " + to_string(write_ptr % (2880*1024)) + " to " + to_string(write_ptr_end % (2880*1024)));
-				}
-
-				//out_buffer.pop_back();
-				//if (log_to_console_FDD) FDD_monitor.log("DMA buffer ready (size = " + to_string(out_buffer.size())+ ")");
+				write_ptr = real_address(selected_drive, H_head[selected_drive], C_cylinder[selected_drive], R_sector[selected_drive], Sector_size[selected_drive]); //начало записи
+				write_ptr_end = write_ptr + Sector_size[selected_drive] * (EOT - R_sector[selected_drive] + 1);
+				if (log_to_console_FDD) FDD_monitor.log("write drv#" + to_string(selected_drive) + " addresses from " + to_string(write_ptr % (2880 * 1024)) + " to " + to_string(write_ptr_end % (2880 * 1024)));
 
 				//ждем завешения чтения
 				command = 51; //запись с ДМА
@@ -692,7 +673,7 @@ void FDD_Ctrl::sync()
 			{
 				if (EOP)
 				{
-					//if (log_to_console_FDD) FDD_monitor.log("EOP from DMA");
+					if (log_to_console_FDD) cout << "FDD WRITE, EOP from DMA" << endl;
 					//окончание за счет конца слов в DMA
 					EOP = 0; //сброс флага конца процесса
 				}
@@ -703,9 +684,9 @@ void FDD_Ctrl::sync()
 				//if (log_to_console_FDD) FDD_monitor.log("cleared buffer = " + to_string(out_buffer.size() / 512) + " sectors left (" + to_string(out_buffer.size()) + " bytes)");
 				//out_buffer.clear(); //очищаем буфер
 
-#ifdef DEBUG
-				if (log_to_console_FDD) FDD_monitor.log("Writing " + to_string(in_buffer.size()/Sector_size[selected_drive]) +  " sectors from " + to_string((write_ptr - selected_drive * 2880 * 1024)/Sector_size[selected_drive]) + " to " + to_string(((write_ptr - selected_drive * 2880 * 1024) + in_buffer.size() - 1) / Sector_size[selected_drive]));
-#endif
+				if (log_to_console_FDD) cout << "FDD WRITE ptr from " << dec << (int)write_ptr << " to " << (int)write_ptr_end << " buff_size =" << (int)in_buffer.size() << endl;
+				if (log_to_console_FDD) FDD_monitor.log("Writing " + to_string(in_buffer.size() / Sector_size[selected_drive]) + " sectors from " + to_string((write_ptr - selected_drive * 2880 * 1024) / Sector_size[selected_drive]) + " to " + to_string(((write_ptr - selected_drive * 2880 * 1024) + in_buffer.size() - 1) / Sector_size[selected_drive]));
+				
 				//пишем данные из буфера на дискету
 				while ((write_ptr < write_ptr_end) && (in_buffer.size() != 0))
 				{
@@ -764,9 +745,10 @@ void FDD_Ctrl::sync()
 			uint8 DTL = Data_fifo.at(7); //специальный размер сектора если Sector_size = 128 (факт < 128), иначе игнор
 			if (Sector_size[selected_drive] == 128 && DTL != 0) Sector_size[selected_drive] = DTL;
 #ifdef DEBUG
-			if (log_to_console_FDD) FDD_monitor.log("CMD 6 [READ] head=" + to_string(H_head[selected_drive]) + " CYL=" + to_string(C_cylinder[selected_drive]) + " DRV=" + to_string(selected_drive) + " SEC_begin = " + to_string(R_sector[selected_drive]) + " SEC_size = " + to_string(Sector_size[selected_drive]) + " MT = " + to_string(MT[selected_drive]) + " EOT = " + to_string(EOT));
+			if (log_to_console_FDD) FDD_monitor.log("CMD 6 [READ] head=" + to_string(H_head[selected_drive]) + " CYL=" + to_string(C_cylinder[selected_drive]) + " DRV=" + to_string(selected_drive) + " SEC_begin = " + to_string(R_sector[selected_drive]) + " SEC_size = " + to_string(Sector_size[selected_drive]) + " MT = " + to_string(MT[selected_drive]) + " MFM = " + to_string(MFM_mode[selected_drive]) + " EOT = " + to_string(EOT));
+			//if (log_to_console_FDD) cout << ("CMD 6 [READ] head=" + to_string(H_head[selected_drive]) + " CYL=" + to_string(C_cylinder[selected_drive]) + " DRV=" + to_string(selected_drive) + " SEC_begin = " + to_string(R_sector[selected_drive]) + " SEC_size = " + to_string(Sector_size[selected_drive]) + " MT = " + to_string(MT[selected_drive]) + " MFM = " + to_string(MFM_mode[selected_drive]) + " EOT = " + to_string(EOT)) << endl;
 #endif
-
+			//log_to_console = 1;
 			Data_fifo.clear();
 
 			//делаем выгрузку 
@@ -784,59 +766,17 @@ void FDD_Ctrl::sync()
 					if (log_to_console_FDD) cout << "R_sector = 0!!!";
 				}
 
-				uint32 start = 0;
+				//рассчитываем адреса точек начала и конца
+				read_start = real_address(selected_drive, H_head[selected_drive], C_cylinder[selected_drive], R_sector[selected_drive], Sector_size[selected_drive]);
+				read_end = real_address(selected_drive, H_head[selected_drive], C_cylinder[selected_drive], diskette_sectors[selected_drive], Sector_size[selected_drive]) + Sector_size[selected_drive];
+				start_sec = (read_start - 2880 * 1024 * selected_drive) / Sector_size[selected_drive] + 1;
+				end_sec = (read_end - 2880 * 1024 * selected_drive) / Sector_size[selected_drive];
 
-				if (MT[selected_drive])
-				{
-					//двустороннее чтение - пока не используется
-					start = C_cylinder[selected_drive] * 9216 + (R_sector[selected_drive] - 1) * 512; //вариант 2
-					for (int j = 0; j < Sector_size[selected_drive]; j += 2)
-					{
-						int addr = start + j; //адрес байта на диске 512 - размер сектора по умолчанию
-						out_buffer.push_back(sector_data[addr + selected_drive * 2880 * 1024]);
-						addr += 9 * 512 * H_head[selected_drive];
-						out_buffer.push_back(sector_data[addr + 1 + selected_drive * 2880 * 1024]);
-					}
-					cout << "MT subroutine!!! Error";
-				}
-				else
-				{
-					//параметры дискеты
-					// diskette_heads = 1;  // 1 or 2          кол-во головок
-					// diskette_sectors = 8; //8, 9 or 15	  кол-во секторов
-
-
-					//обычное чтение head 0 - 1 записаны как отдельные сектора
-					//start = C_cylinder[selected_drive] * Sector_size[selected_drive] * diskette_sectors[selected_drive] * diskette_heads[selected_drive] + diskette_sectors[selected_drive] * Sector_size[selected_drive] * H_head[selected_drive] * (diskette_heads[selected_drive] - 1) + (R_sector[selected_drive] - 1) * Sector_size[selected_drive]; //вариант 2
-					start = real_address(selected_drive, H_head[selected_drive], C_cylinder[selected_drive], R_sector[selected_drive], Sector_size[selected_drive]);
-					int end = real_address(selected_drive, H_head[selected_drive], C_cylinder[selected_drive], diskette_sectors[selected_drive], Sector_size[selected_drive]) + Sector_size[selected_drive];
-					//start_sec = C_cylinder[selected_drive] * diskette_sectors[selected_drive] * diskette_heads[selected_drive] + H_head[selected_drive] * diskette_sectors[selected_drive] * (diskette_heads[selected_drive] - 1) + R_sector[selected_drive] - 1;
-					start_sec = (start - 2880 * 1024 * selected_drive) / Sector_size[selected_drive] + 1;
-					end_sec = (end - 2880 * 1024 * selected_drive) / Sector_size[selected_drive];
-					//end_sec = C_cylinder[selected_drive] * diskette_sectors[selected_drive] * diskette_heads[selected_drive] + H_head[selected_drive] * diskette_sectors[selected_drive] * (diskette_heads[selected_drive] - 1) + EOT - 1;
-					//end_sec = start_sec + (EOT - R_sector[selected_drive] + 1);
-					//if (log_to_console_FDD) FDD_monitor.log("File sector # " + to_string(C_cylinder * 18 + H_head * 9 + (R_sector - 1)) + " to # " + to_string(C_cylinder * 18 + H_head * 9 + (EOT - 1)));
-					//if (log_to_console_FDD) FDD_monitor.log("Read " + to_string(EOT - R_sector + 1) + " sectors to buffer");
-					
-					//заполняем выходной буфер данными сектора
-					if (log_to_console_FDD) cout << "out_buffer data from " << (int)(start) << " to " << (int)end << " sec(" << (int)start_sec << " to " << (int)end_sec << ")" << endl;
-					//if (log_to_console_FDD) cout << "   start_sec=" << dec << (int)start_sec << " end_sec=" << (int)end_sec << endl;
-					//cout << "load to buff " << endl;
-					//cout << "from start " << (int)start << " to " << (int)(Sector_size[selected_drive] * (EOT - R_sector[selected_drive] + 2)) << " EOT " << (int)EOT << " R_sector " << (int)R_sector[selected_drive] << endl;
-					for (int j = start; j < end; ++j)
-					{
-						int addr = j; //адрес байта на диске 512 - размер сектора по умолчанию
-						//cout << "addr=" << (int)addr << " data=" << (int)sector_data[addr] << endl;
-						out_buffer.push_back(sector_data[addr]);
-					}
-					R_sector[selected_drive] = diskette_sectors[selected_drive]; //указатель текущего трека перемещаем в конец
-				}
-
-				//out_buffer.pop_back();
-				//if (log_to_console_FDD) FDD_monitor.log("DMA buffer ready (size = " + to_string(out_buffer.size())+ ")");
+				if (log_to_console_FDD) cout << "FDD READ: out_buffer data from " << (int)(read_start) << " to " << (int)read_end << " sec(" << (int)start_sec << " to " << (int)end_sec << ")" << endl;
 
 				//ждем завешения чтения
 				command = 61; //чтение с ДМА
+				//if (log_to_console_FDD) cout << " -> command 61" << endl;
 				RQM = 0; //доступ запрещен
 				DIO = 1; //требуем чтения 
 				CMD_BUSY = 1;
@@ -870,7 +810,7 @@ void FDD_Ctrl::sync()
 				DIO = 1; //требуем четения
 				CMD_BUSY = 1;
 				FDD_busy_bits = FDD_busy_bits | (1 << selected_drive); //ставим признак занятости
-				if (log_to_console_FDD) cout << " read BUFFER ready" << endl;
+				//if (log_to_console_FDD) cout << " read BUFFER ready" << endl;
 				step_mode = 1;
 				return;
 			}
@@ -878,40 +818,34 @@ void FDD_Ctrl::sync()
 
 		if (command == 61)    //READ + DMA
 		{
-			if (EOP && out_buffer.size())
+			
+			//monitor.debug_mess_1 = "st=" + to_string(read_start) + " en=" + to_string(read_end) + " EOP " + to_string(EOP);
+			//замедление
+			if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			if ((read_start < read_end) && !EOP)
 			{
-				if (log_to_console_FDD) cout << "FDD EOP, bytes left " << (int)out_buffer.size() << endl;
-			}
-			if (out_buffer.size() && !EOP)
-			{
-				//if (log_to_console_FDD) FDD_monitor.log("DMA Req Ch12(FDD)");
+				//в буфере есть данные и DMA их принимает
 				uint8 dma_res = dma_ctrl.request_hw_dma(2);
-				//если ответ "1", значит ошибка контроллера DMA
-				//if (log_to_console_FDD) FDD_monitor.log("no DMA: out_buffer = " + to_string(out_buffer.size()/512) + " sectors left (" + to_string(out_buffer.size()) + " bytes)");
-				//R_sector -= out_buffer.size() / 512; //откатываем текущий сектор
-				//end_sec -= out_buffer.size() / 512;
-				//int_ctrl.request_IRQ(6);
-				//out_buffer.clear(); //вызываем DMA при отказе очищаем буфер
-				//if (log_to_console_FDD) FDD_monitor.log("DMA ret 0");
-				test_loaded++;
-				//возможно, добавить ошибку при очистке буфера
 			}
 			else
 			{
+				
 				if (EOP)
 				{
-					//if (log_to_console_FDD) FDD_monitor.log("EOP from DMA");
-					//окончание за счет конца слов в DMA
+					//окончание за счет конца передачи DMA
+					//if (log_to_console_FDD) cout << "FDD EOP, bytes left " << (int)(read_end - read_start) << endl;
 					EOP = 0; //сброс флага конца процесса
 				}
+				//else cout << "FDD all bytes read!" << endl;
+				
 				//пересчет секторов
 				R_sector[selected_drive] -= out_buffer.size() / 512; //откатываем текущий сектор
 				end_sec -= out_buffer.size() / 512;
 				//if (log_to_console_FDD) FDD_monitor.log("cleared buffer = " + to_string(out_buffer.size() / 512) + " sectors left (" + to_string(out_buffer.size()) + " bytes)");
-				out_buffer.clear(); //очищаем буфер
-#ifdef DEBUG
+
 				if (log_to_console_FDD) FDD_monitor.log("Finished read sectors from " + to_string(start_sec) + " to " + to_string(end_sec));
-#endif
+				//cout << ("Finished read sectors from " + to_string(start_sec) + " to " + to_string(end_sec)) << endl;
+
 				//if (end_sec == 164) step_mode = 1;
 				//записываем итоги операции в FIFO и запрашиваем чтение
 				Data_fifo.push_back(0b00000000 | (H_head[selected_drive] << 2) | selected_drive); // ST0
@@ -923,14 +857,15 @@ void FDD_Ctrl::sync()
 				Data_fifo.push_back(R_sector[selected_drive]); // R
 				Data_fifo.push_back(SectorSizeCode[selected_drive]); // N заглушка
 				results_left = 7;
-				RQM = 1;
-				DIO = 1; //требуем чтения
+				RQM = 1; //хост может читать или писать
+				DIO = 1; //требуем чтения от хоста
 				CMD_BUSY = 1;
+				DMA_ON = 0; //отключаем DMA для выдачи результатов через  порт
 				FDD_busy_bits = FDD_busy_bits & ~(1 << selected_drive); //снимаем признак занятости
-				int_ctrl.request_IRQ(6);
-				//cout << " INT 6"; step_mode = 1;
 				out_buffer.clear();
-				//cout << "loaded " << (int)test_loaded << " bytes" << endl;
+				//cout << " INT 6 after read" << endl;
+				//step_mode = 1;
+				int_ctrl.request_IRQ(6);
 				drv_state = FDD_states::read_result;
 			}
 			return;
@@ -967,9 +902,7 @@ void FDD_Ctrl::sync()
 			Data_fifo.push_back(C_cylinder[selected_drive]); //PCN - № цилиндра под головкой
 			//if (log_to_console_FDD) FDD_monitor.log("(" + to_string(Data_fifo.at(Data_fifo.size() - 1)) + ") ");
 			//if (log_to_console_FDD) FDD_monitor.log("CMD 8 (Sense INT status) -> " + to_string(Data_fifo.at(Data_fifo.size() - 2)) + " & " + to_string(Data_fifo.at(Data_fifo.size() - 1)));
-			//SetConsoleTextAttribute(hConsole, 11);
-			if (log_to_console_FDD) cout << "CMD 8 (Sense INT status) -> " << hex << (int)Data_fifo.at(Data_fifo.size() - 2) << " & " << (int)Data_fifo.at(Data_fifo.size() - 1) << "drv#" << (int)selected_drive << " left(" << (int)sense_int_buffer.size()<< ")" << endl;
-			//SetConsoleTextAttribute(hConsole, 7);
+			FDD_monitor.log("CMD 8 [Sense INT status] -> " + int_to_bin(Data_fifo.at(Data_fifo.size() - 2)) + " & " + int_to_bin(Data_fifo.at(Data_fifo.size() - 1)) + " drv# " + to_string(selected_drive) + " left(" + to_string(sense_int_buffer.size()) + ")");
 			drv_state = FDD_states::read_result;
 			results_left = 2;
 			//DMA_enabled = 0;
@@ -983,7 +916,7 @@ void FDD_Ctrl::sync()
 			//перемещаемся на дорожку 0 указанного диска
 			selected_drive = Data_fifo.at(0) & 3;
 			if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
-			if (log_to_console_FDD) cout << "CMD 7 (Recalibrate) drv=" << (int)(selected_drive & 3) << " -> ";
+			FDD_monitor.log("CMD 7 [Recalibrate] drv=" + to_string((selected_drive & 3)));
 			if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
 			Data_fifo.clear();
 			C_cylinder[selected_drive] = 0; //перейти на цилиндр 0
@@ -1009,14 +942,13 @@ void FDD_Ctrl::sync()
 			{
 				selected_drive = Data_fifo.at(0) & 3;    //выбор диска
 				H_head[selected_drive] = ((Data_fifo.at(0) >> 2) & 1);   //меняем головку
-
 				SectorSizeCode[selected_drive] = Data_fifo.at(1); //кол-во байт в секторе (см. таблицу)
 				Sector_size[selected_drive] = pow(2, SectorSizeCode[selected_drive]) * 128;
 				if (Sector_size[selected_drive] > 16384) Sector_size[selected_drive] = 16384;
 
 				sectors_to_format = Data_fifo.at(2); //кол-во секторов для форматирования
 				datapattern = Data_fifo.at(4); //шаблон для заполнения
-				
+
 				Data_fifo.erase(Data_fifo.begin());  //затираем данные
 				Data_fifo.erase(Data_fifo.begin());
 				Data_fifo.erase(Data_fifo.begin());
@@ -1025,10 +957,10 @@ void FDD_Ctrl::sync()
 				DIO = 0; //требуем записи
 				CMD_BUSY = 0;
 				RQM = 1;
-				cout << "format begin drive = " << dec << (int)selected_drive << " head = " << (int)H_head[selected_drive] << " s_size = " << (int)Sector_size[selected_drive] << " SC = " << (int)sectors_to_format << " patt = " << (int)datapattern << endl;
-				f_started = 1; 
+				FDD_monitor.log("CMD D [FORMAT] drv = " + to_string(selected_drive) + " head = " + to_string(H_head[selected_drive]) + " sec_size = " + to_string(Sector_size[selected_drive]) + " MFM=" + to_string(MFM_mode[selected_drive]) + " SC = " + to_string(sectors_to_format) + " patt = " + to_string(datapattern));
+				f_started = 1;
 			}
-			
+
 			if (f_started)
 			{
 				//идет процесс форматирования
@@ -1063,7 +995,7 @@ void FDD_Ctrl::sync()
 					in_buffer.erase(in_buffer.begin());
 					in_buffer.erase(in_buffer.begin());
 					in_buffer.erase(in_buffer.begin());
-					
+
 					if (sectors_to_format == 0)
 					{
 						f_started = 0;
@@ -1078,19 +1010,25 @@ void FDD_Ctrl::sync()
 						//Data_fifo.push_back(0b11000000 | selected_drive); //error
 						Data_fifo.push_back(out); // ST1
 						Data_fifo.push_back(0b00000000); // ST2
-						results_left = 3;
+						Data_fifo.push_back(0); // заглушка
+						Data_fifo.push_back(0); // заглушка
+						Data_fifo.push_back(0); // заглушка
+						Data_fifo.push_back(0); // заглушка
+						results_left = 7;
 						RQM = 1;
 						DIO = 1; //требуем чтения
 						CMD_BUSY = 1;
+						DMA_ON = 0; //отключаем DMA
 						FDD_busy_bits = FDD_busy_bits & ~(1 << selected_drive); //снимаем признак занятости
 						int_ctrl.request_IRQ(6);
 						drv_state = FDD_states::read_result;
+						//if (log_to_console_FDD) cout << "FORMAT -> read result" << endl;
 						flush_buffer(); //сбрасываем данные на реальный накопитель
-					} 
+					}
 				}
 				else
 				{
-					if(DMA_enabled && DMA_ON) uint8 dma_res = dma_ctrl.request_hw_dma(2);
+					if (DMA_enabled && DMA_ON) uint8 dma_res = dma_ctrl.request_hw_dma(2);
 				}
 			}
 			return;
@@ -1101,12 +1039,7 @@ void FDD_Ctrl::sync()
 			selected_drive = Data_fifo.at(0) & 3;    //выбор диска
 			C_cylinder[selected_drive] = Data_fifo.at(1);            //переходим на нужный цилиндр
 			H_head[selected_drive] = ((Data_fifo.at(0) >> 2) & 1);   //меняем головку
-			//Data_fifo.pop_back();
-			//if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 11);
-#ifdef DEBUG
-			//if (log_to_console_FDD) FDD_monitor.log("CMD SEEK drv=" + to_string(selected_drive) + " head= " + to_string(H_head) + " cyl=" + to_string(C_cylinder));
-#endif
-			//if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
+			FDD_monitor.log("CMD F [SEEK] drv=" + to_string(selected_drive) + " head= " + to_string((int)H_head) + " cyl=" + to_string((int)C_cylinder));
 			Data_fifo.clear();
 			drv_state = FDD_states::seek;
 			DIO = 0; //требуем записи
@@ -1133,7 +1066,7 @@ void FDD_Ctrl::sync()
 		}
 
 		//появление новой команды
-		if (log_to_console_FDD) cout << "FDD new command! (" << (int)command << ")" << endl;
+		cout << "FDD new command! (" << (int)command << ")" << endl;
 		step_mode = 1; log_to_console = 1;
 	}
 
@@ -1153,7 +1086,7 @@ void FDD_Ctrl::sync()
 			IC = 0; //признак завершения
 			sense_int_buffer.push_back(0b00100000 | selected_drive); //статус прерывания, нужно
 		}
-																 //CMD_BUSY = 0;
+		//CMD_BUSY = 0;
 		FDD_busy_bits = 0; //снимаем признак занятости
 		if (log_to_console_FDD) cout << "FDD#" << (int)selected_drive << " Recalibrate complete" << endl;
 		drv_state = FDD_states::idle;
@@ -1199,9 +1132,21 @@ void FDD_Ctrl::sync()
 		return;
 	}
 
+	if (drv_state == FDD_states::read_result)
+	{
+		//CMD_BUSY = 0; //снимаем бит занятости после выгрузки результатов
+	}
+
+	if (drv_state == FDD_states::idle)
+	{
+		RQM = 1; //хост может читать или писать
+		DIO = 0; //требуем запись от хоста
+		CMD_BUSY = 0;
+		//DMA_ON = 0; //отключаем DMA
+	}
 
 }
-void FDD_Ctrl::load_diskette(uint32 address, uint8 data) 
+void FDD_Ctrl::load_diskette(uint32 address, uint8 data)
 {
 	//загружаем данные в массив
 	sector_data[address] = data;
@@ -1234,7 +1179,7 @@ string FDD_Ctrl::get_state(uint8* ptr)
 	case FDD_states::enter_param:
 		return "PAR_ENT";
 	case FDD_states::command_exec:
-		return "CMD_EXE";
+		return "CMD[" + to_string(command) + "]";
 	case FDD_states::read_result:
 		return "RD_RES ";
 	case FDD_states::seek:
@@ -1245,41 +1190,29 @@ string FDD_Ctrl::get_state(uint8* ptr)
 		return "";
 	}
 }
-/*
-string FDD_Ctrl::get_command()
-{
-	switch (command)
-	{
-	case 3:
-		return "[3]Specify";
-	case 4:
-		return "[4]Sense drive status";
-	case 6:
-		return "[6]Read";
-	case 7:
-		return "[7]Recalibrate";
-	case 8:
-		return "[8]Sense interrupt status";
-	case 15:
-		return "[15]Seek";
-	default:
-		return "Unknown";
-	}
-	return "";
-}*/
-uint8 FDD_Ctrl::get_DMA_data()
+
+uint8 FDD_Ctrl::read_DMA_data()
 {
 	//выдаем число из буфера контроллеру DMA
 	uint8 out = 0;
-	if (out_buffer.size())
+	if (drv_state == FDD_states::command_exec && command == 61)
 	{
-		out = out_buffer.at(0);
-		out_buffer.erase(out_buffer.begin());
-		//cout << "BUFF out(left " << out_buffer.size() <<") = " << hex << (int)out << endl;
+		//если идет чтение с дискеты
+		out = sector_data[read_start];
+		read_start++;
+	}
+	else
+	{
+	
+		if (out_buffer.size())
+		{
+			out = out_buffer.at(0);
+			out_buffer.erase(out_buffer.begin());
+		}
 	}
 	return out;
 }
-void FDD_Ctrl::put_DMA_data(uint8 data)
+void FDD_Ctrl::write_DMA_data(uint8 data)
 {
 	//записываем данные в буфер FDD
 	if (drv_state == FDD_states::command_exec && command == 13) //данные для форматирования
@@ -1298,4 +1231,9 @@ void FDD_Ctrl::set_active_drives(uint8 d)
 uint8 FDD_Ctrl::get_active_drives()
 {
 	return active_drives;
+}
+
+void FDD_Ctrl::set_MFM(uint8 drive, bool MFM)
+{
+	MFM_mode[drive] = MFM;
 }

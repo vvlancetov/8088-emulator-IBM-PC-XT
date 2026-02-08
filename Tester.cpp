@@ -92,7 +92,7 @@ extern bool step_mode;
 
 extern string regnames[8];
 extern string pairnames[4];
-extern Video_device monitor;
+extern Monitor monitor;
 extern Dev_mon_device debug_monitor;
 extern void (*op_code_table[256])();
 
@@ -354,7 +354,7 @@ void tester()
 	// тест графики
 	// переключаем адаптер
 	
-	monitor.set_CGA_mode(4); // 6 - 640*200
+	//monitor.set_CGA_mode(4); // 6 - 640*200
 
 	for (int y = 0; y < 64; ++y)
 	{
@@ -364,21 +364,6 @@ void tester()
 	}
 	
 	while (1) monitor.sync(1);
-	
-	/* 
-	скорость видекарты
-	
-	while (1) {
-		start = std::chrono::system_clock::now();
-		monitor.sync(1);
-		end = std::chrono::system_clock::now();
-		elapsed_seconds = end - start;
-		op_sec = cycles / elapsed_seconds.count();
-
-		cout << setw(10) << left << "Speed " << 1/elapsed_seconds.count() << " fps " << endl;
-		//debug_monitor.sync(1);
-	}
-	*/
 }
 
 

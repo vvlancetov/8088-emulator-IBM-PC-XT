@@ -57,8 +57,10 @@ private:
 	std::vector<uint8> sense_int_buffer;
 
 	//вспомогательные данные
-	int start_sec = 0;
-	int end_sec = 0;
+	uint32 start_sec = 0;
+	uint32 end_sec = 0;
+	uint32 read_start = 0;
+	uint32 read_end = 0;
 	uint32 write_ptr = 0; //указатели для записи
 	uint32 write_ptr_end = 0;
 	uint8 EOT = 0; //номер последнего сектора на дорожке
@@ -99,10 +101,10 @@ public:
 	void load_diskette(uint32 address, uint8 data);
 	bool diskette_in[4] = { 0 }; //флаг наличия дискеты в устройстве
 	//uint8 read_sector(uint8 track, uint8 sector, bool head);
-	uint8 get_DMA_data();
-	void put_DMA_data(uint8 data);
+	uint8 read_DMA_data();
+	void write_DMA_data(uint8 data);
 	void set_active_drives(uint8 d);
 	uint8 get_active_drives();
-
+	void set_MFM(uint8 drive, bool MFM);
 };
 

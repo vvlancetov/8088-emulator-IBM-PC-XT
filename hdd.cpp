@@ -6,8 +6,9 @@
 #include <conio.h>
 #include <string>
 #include "custom_classes.h"
-#include "hdd.h"
 #include "video.h"
+#include "hdd.h"
+
 
 //#define DEBUG
 
@@ -25,14 +26,11 @@ extern bool log_to_console;
 extern bool log_to_console_HDD;
 
 //консоль отладки
-#ifdef DEBUG 
-extern FDD_mon_device HDD_monitor;
-#endif
+extern HDD_mon_device HDD_monitor;
 
 //путь к файлу диска
 extern string filename_HDD;
 extern string path; //текущий каталог
-
 
 #ifdef DEBUG 
 //extern FDD_mon_device FDD_monitor;
@@ -599,7 +597,7 @@ void HDD_Ctrl::sync()
 			if (log_to_console_HDD) HDD_monitor.log("READ DRV=" + to_string(selected_drive) + " head=" + to_string(head) + " cyl=" + to_string(cylinder) + " sector = " + to_string(sector) + " prt=" + to_string(data_ptr_current) + " buffer=" + to_string(data_left) + " bytes");
 			return;
 		}	
-		
+			
 		//WRITE SECTORS
 		if (command == 0xA)
 		{
@@ -872,4 +870,49 @@ void HDD_Ctrl::sync()
 void HDD_Ctrl::load_disk_data(uint32 address, uint8 data)
 {
 	if (address < MAX_Heads * MAX_Cylinders * MAX_Sectors * 512) sector_data[address] = data;
+}
+
+int HDD_Ctrl::get_drv() { return selected_drive; }
+string HDD_Ctrl::get_CSH()
+{ 
+	return to_string(cylinder) + "/" + to_string(sector) + "/" + to_string(head);
+}
+
+string HDD_Ctrl::get_state()
+{
+	switch (drv_state)
+	{
+	case HDD_states::idle:
+		return "idle";
+		break;
+	case HDD_states::receive_command:
+		return "rec_cmd";
+		break;
+	case HDD_states::command_exec:
+		return "exec " + to_string(command);
+		break;
+	case HDD_states::read_result:
+		return "result";
+		break;
+	case HDD_states::seek:
+		return "seek";
+		break;
+	case HDD_states::recalibrate:
+		return "recal";
+		break;
+	case HDD_states::enter_drive_params:
+		return "param";
+		break;
+	case HDD_states::write_buffer:
+		return "WR_buf";
+		break;
+	case HDD_states::read_sectors:
+		return "RD_sec";
+		break;	
+	case HDD_states::write_sectors:
+		return "WR_sec";
+		break;
+
+	}
+	return "unknown";
 }

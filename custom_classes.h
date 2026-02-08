@@ -3,6 +3,10 @@
 #include <SFML/Audio.hpp>
 #include <SFML/System.hpp>
 #include <vector>
+#include <bitset>
+#include <chrono>
+#include <string>
+#include <sstream>
 #include "json.hpp"
 
 #define DEBUG
@@ -10,6 +14,26 @@
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 typedef unsigned __int32 uint32;
+
+template< typename T >
+std::string int_to_hex(T i, int w)
+{
+	std::stringstream stream;
+	stream << ""
+		<< std::setfill('0') << std::setw(w)
+		<< std::hex << (int)i;
+	return stream.str();
+}
+
+template< typename T >
+std::string int_to_bin(T i)
+{
+	std::stringstream stream;
+	stream << ""
+		<< (std::bitset<8>)i;
+	return stream.str();
+}
+
 
 class Mem_Ctrl // контроллер памяти
 {
@@ -129,3 +153,54 @@ public:
 	uint8 request_hw_dma(int channel); //запрос DMA от устройства
 };
 
+
+//внутренние счетчики таймера
+struct t_counter
+{
+	uint16 count = 0;
+	uint16 initial_count = 0;
+	bool latch_on = false;
+	uint16 latch_value = 0;
+	uint8 mode = 0; // 0 - int on TC, 1 - one-shot, 2 - Rate Gen, 3 - Square wave, 4 - Soft Trigg, 5 - HW trigg
+	bool BCD_mode = false;
+	uint8 RL_mode = 0;
+	bool second_byte = false; //нужно считать/записать второй байт
+	bool enabled = false;     // ON/OFF
+	bool wait_for_data = false; //ожидание загрузки данных
+	bool signal_high = false;  //сигнал на выходе
+	bool one_shot_fired = false; //триггер для режима 0
+};
+
+//таймер
+class IC8253
+{
+private:
+	t_counter counters[4];
+	std::chrono::steady_clock::time_point timer_start; //для отслеживания времени выполнения
+	std::chrono::steady_clock::time_point timer_end;
+	uint32 duration = 0;
+public:
+
+	void write_port(uint16 port, uint8 data);
+	uint8 read_port(uint16 port);
+	void sync();
+	void enable_timer(uint8 n);
+	void disable_timer(uint8 n);
+	bool is_count_enabled(uint8 n);
+	uint16 get_time(uint8 number);
+	std::string get_ch_data(int channel);
+};
+
+//контроллер PPI
+class IC8255
+{
+private:
+	bool switches_hign = false;
+	uint8 port_B_out = 0;
+	bool port_B_6 = false; //уровень вывода 6 порта B
+	bool port_B_7 = false; //уровень вывода 7 порта B
+
+public:
+	void write_port(uint16 port, uint8 data);
+	uint8 read_port(uint16 port);
+};
