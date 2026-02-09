@@ -289,6 +289,7 @@ void Audio_mon_device::sync()
 		
 	
 	main_window.display();
+	while (main_window.pollEvent()) {};
 }
 void Audio_mon_device::get_sample(int16_t sample)
 {

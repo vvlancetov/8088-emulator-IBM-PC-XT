@@ -1236,6 +1236,7 @@ void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
 	*/
 	if (show_debug_window) main_window.display();
 	//else main_window
+	while (main_window.pollEvent()) {};
 }
 void Dev_mon_device::show()
 {
@@ -1292,7 +1293,7 @@ void FDD_mon_device::sync()
 	main_window.display();
 #endif
 
-
+	while (main_window.pollEvent()) {};
 }
 void FDD_mon_device::log(string log_string)
 {
@@ -1335,7 +1336,7 @@ void HDD_mon_device::sync()
 	main_window.display();
 #endif
 
-
+	while (main_window.pollEvent()) {};
 }
 void HDD_mon_device::log(string log_string)
 {
@@ -1480,6 +1481,7 @@ void Mem_mon_device::sync()
 	}
 
 	main_window.display();
+	while (main_window.pollEvent()) {};
 }
 
 //==================== MDA videocard =============
