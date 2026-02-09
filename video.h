@@ -210,24 +210,52 @@ private:
 	bool visible = 0;		//наличие окна
 	int my_display_H;
 	int my_display_W;
-	__int16 GAME_WINDOW_X_RES;
-	__int16 GAME_WINDOW_Y_RES;
+	uint16 GAME_WINDOW_X_RES;
+	uint16 GAME_WINDOW_Y_RES;
 	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
 	uint8 joy_sence_value = 0; //центральная точка джойстика
 	sf::Clock cursor_clock;				//таймер мигания курсора
 	bool cursor_flipflop = false;		//переменная для мигания
-	uint8 sel_reg = 0; //выбранный регистр для записи
-	uint8 registers[18] = { 0 }; // массив регистров
-	uint8 EGA_Mode_Select_Register = 0;
+
 	std::string window_title;		//заголовок окна
 	int window_pos_x;				//позиция окна
 	int window_pos_y;				//позиция окна
 	int window_size_x;				//размер окна
 	int window_size_y;				//размер окна
 
-	//отладка
+	//регистры
+	bool IOAddrSel = 0;
+	bool EnRAM = 0;
+	bool PageBit = 0;
+	bool DisplayEN = 0;
+	bool Lines_350 = 0;				//кол-во горизонтальных линий
+	bool ac_flipflop = 0;			//Attribute	Controller flip_flop 0 - address, 1 - value
+	uint8 On_board_switch_sel = 0;	//выбор считываемого переключателя на плате
+	bool use_2_char_gen = 0;		//использовать две таблицы знакогенератора
+
+	uint8 CRT_sel_reg = 0;			 //селектор для CRT Controller Registers
+	uint8 SEQ_sel_reg = 0;			 //выбранный регистр для записи
+	uint8 GC_sel_reg = 0;			 //селектор для Graphics Controller Registers
+	uint8 GP1_reg = 0;				 //Graphics 1 Position Register
+	uint8 GP2_reg = 0;				 //Graphics 2 Position Register
+	uint8 AC_sel_reg = 0;			 //селектор для Attribute Controller Registers
+
+	uint8 seq_registers[32] = { 0 }; // массив регистров
+	uint8 crt_registers[32] = { 0 }; // CRT Controller Registers
+	uint8 gc_registers[32] = { 0 };  // Graphics Controller Registers
+	uint8 ac_registers[32] = { 0 };  // Attribute Controller Registers
+
+	uint32 video_mem_base = 0;
+		
+	//палитра
+	sf::Color EGA_colors[16]; //массив цветов EGA для текста
+
+	
+
+	//отладка DELETE
 	uint8 CGA_Mode_Select_Register = 0;
 	uint8 CGA_Color_Select_Register = 0;
+	uint8 EGA_Mode_Select_Register = 0;
 
 public:
 

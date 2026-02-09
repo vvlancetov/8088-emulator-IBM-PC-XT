@@ -17,6 +17,7 @@
 
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
+typedef unsigned __int32 uint32;
 
 using namespace std;
 
@@ -94,6 +95,7 @@ extern uint16 ES_data;			//Extra Segment
 // флаги для изменения работы эмулятора
 extern bool step_mode;		//ждать ли нажатия пробела для выполнения команд
 extern bool log_to_console; //логирование команд на консоль
+extern bool log_to_console_EGA;
 
 extern string deferred_msg; //отладочные сообщения
 
@@ -643,7 +645,7 @@ string CGA_videocard::get_mode_name()
 	string mode_name;
 	if ((CGA_Mode_Select_Register & 0x2) == 0)
 	{
-		mode_name = "text ";
+		mode_name = "[CGA] TXT ";
 		if ((CGA_Mode_Select_Register & 1) == 1) mode_name += "80x25 ";
 		else  mode_name += "40x25 ";
 		if ((CGA_Mode_Select_Register & 4) == 4) mode_name += "BW ";
@@ -651,7 +653,7 @@ string CGA_videocard::get_mode_name()
 	}
 	else
 	{
-		mode_name = "graf ";
+		mode_name = "[CGA] GRF ";
 		if ((CGA_Mode_Select_Register & 16) == 0) mode_name += "320x200 ";
 		else  mode_name += "640x200 ";
 		if ((CGA_Mode_Select_Register & 4) == 4) mode_name += "BW ";
@@ -851,7 +853,9 @@ void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
 	text.setString(monitor.get_mode_name());
 	text.setPosition(sf::Vector2f(460, 1200));
 	text.setFillColor(sf::Color::White);
+	text.setScale({0.7,1.0});
 	main_window.draw(text);
+	text.setScale({ 1.0,1.0 });
 
 	//данные пищалки
 	if (speaker.beeping && !halt_cpu)
@@ -1542,7 +1546,7 @@ uint8 MDA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 }
 std::string MDA_videocard::get_mode_name()				//получить название режима для отладки
 {
-	return "text 80x25 BW";
+	return "[MDA] text 80x25 BW";
 }
 void MDA_videocard::show_joy_sence(uint8 central_point)	//отобразить информацию джойстика
 {
@@ -1613,7 +1617,7 @@ void MDA_videocard::sync(int elapsed_ms)					//синхронизация
 			sf::Color bg_color = sf::Color::Black;
 			sf::Color bg_color_inverse = sf::Color::Green;
 
-			addr = 0xb8000 + start_address * 2 * 0 + (y * width * 2) + x * 2;
+			addr = 0xb0000 + (y * width * 2) + x * 2;
 
 			font_t_y = memory_2[addr] >> 5;
 			font_t_x = memory_2[addr] - (font_t_y << 5);
@@ -1641,6 +1645,8 @@ void MDA_videocard::sync(int elapsed_ms)					//синхронизация
 			if (!blink || cursor_flipflop)
 				
 			{
+				//font_t_x = 1;
+				//font_t_y = 0;
 				font_sprite_80_MDA.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 40, font_t_y * 96), sf::Vector2i(40 , 96)));
 				font_sprite_80_MDA.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
 				font_sprite_80_MDA.setScale(sf::Vector2f(0.5, 0.5));
@@ -1680,8 +1686,6 @@ void MDA_videocard::sync(int elapsed_ms)					//синхронизация
 
 		}
 	}
-
-
 
 	// вывод технической информации
 	attr_blink = false;
@@ -1826,71 +1830,167 @@ EGA_videocard::EGA_videocard()							//конструктор
 	window_size_x = GAME_WINDOW_X_RES;							//размер окна
 	window_size_y = GAME_WINDOW_Y_RES;							//размер окна
 	cursor_clock.restart();										//запускаем таймер мигания
+
+	EGA_colors[0] = sf::Color(0, 0, 0);
+	EGA_colors[1] = sf::Color(0, 0, 0xAA);
+	EGA_colors[2] = sf::Color(0, 0xAA, 0);
+	EGA_colors[3] = sf::Color(0, 0xAA, 0xAA);
+	EGA_colors[4] = sf::Color(0xAA, 0, 0);
+	EGA_colors[5] = sf::Color(0xAA, 0, 0xAA);
+	EGA_colors[6] = sf::Color(0xAA, 0x55, 0);
+	EGA_colors[7] = sf::Color(0xAA, 0xAA, 0xAA);
+	EGA_colors[8] = sf::Color(0x55, 0x55, 0x55);
+	EGA_colors[9] = sf::Color(0x55, 0x55, 0xFF);
+	EGA_colors[10] = sf::Color(0x55, 0xFF, 0x55);
+	EGA_colors[11] = sf::Color(0x55, 0xFF, 0xFF);
+	EGA_colors[12] = sf::Color(0xFF, 0x55, 0x55);
+	EGA_colors[13] = sf::Color(0xFF, 0x55, 0xFF);
+	EGA_colors[14] = sf::Color(0xFF, 0xFF, 0x55);
+	EGA_colors[15] = sf::Color(0xFF, 0xFF, 0xFF);
 }
 void EGA_videocard::write_port(uint16 port, uint8 data)	//запись в порт адаптера
 {
-	if (log_to_console) cout << "MDA write port " << (int)port << " data " << (bitset<8>)data << endl;
-	if (port == 0x3b4)
+	//if (log_to_console_EGA) cout << "EGA write port " << (int)port << " data " << (bitset<8>)data << endl;
+	
+	if (port == 0x3c2)  //Miscelaneous Output Register
 	{
-		//выбор регистра для записи
-		if (data < 18) sel_reg = data;
-		//deferred_msg += "CGA select REG = " + to_string(data);
-		if (sel_reg == 1 && log_to_console) cout << "MDA select REG -> CGA columns ";
-		if (sel_reg == 6 && log_to_console) cout << "MDA select REG -> CGA lines ";
-		if (sel_reg == 0x0C && log_to_console) cout << "MDA select REG -> CGA mem: high byte ";
-		if (sel_reg == 0x0D && log_to_console) cout << "MDA select REG -> CGA mem: low byte ";
+		IOAddrSel = data & 1;
+		EnRAM = (data >> 1) & 1;
+		On_board_switch_sel = (data >> 2) & 3; //выбор номера переключателя
+		PageBit = (data >> 5) & 1;
+		Lines_350 = (data >> 6) & 1;
+		if (log_to_console_EGA) cout << "EGA IOAddrSel=" << (int)IOAddrSel << " EnRAM=" << (int)EnRAM << " PageBit=" << (int)PageBit << endl;
 	}
-	if (port == 0x3b5)
+	
+	if ((port == 0x3ba && !IOAddrSel) || (port == 0x3da && IOAddrSel)) //Feature Control Register
+	{
+		//управление доп разъемом
+		ac_flipflop = 0; //
+	}
+		
+	if (port == 0x3C4) //Sequencer Address Register
+	{
+		SEQ_sel_reg = data & 31;
+		if (log_to_console_EGA) cout << "EGA set Seq_addr_reg = " << (int)SEQ_sel_reg << endl;
+	}
+	if (port == 0x3c5)
 	{
 		//запись в выбранный регистр
-		registers[sel_reg] = data;
-		if (sel_reg == 1 && log_to_console) cout << "MDA columns = " << int(data) << " ";
-		if (sel_reg == 6 && log_to_console) cout << "MDA lines = " << int(data) << " ";
-		if (sel_reg == 0x0C && log_to_console) cout << "MDA mem: high byte = " << int(data) << " ";
-		if (sel_reg == 0x0D && log_to_console) cout << "MDA mem: low byte = " << int(data) << " ";
+		seq_registers[SEQ_sel_reg] = data;
+		if (SEQ_sel_reg == 0 && log_to_console_EGA) cout << "EGA Reset Sequencer" << endl;  //добавить сброс регистров
+		if (SEQ_sel_reg == 1 && log_to_console_EGA) cout << "EGA Clocking Mode Register" << (bitset<8>)data << endl;
+		if (SEQ_sel_reg == 2 && log_to_console_EGA) cout << "EGA Map Mask Register" << (bitset<8>)data << endl;
+		if (SEQ_sel_reg == 3 && log_to_console_EGA) cout << "EGA Character Map Select Register" << (bitset<8>)data << endl;
+		
+		use_2_char_gen = ((seq_registers[3] & 0b00010011) != ((seq_registers[3] >> 1) & 0b00010011)); //если таблицы разные - используем две
+
+		if (SEQ_sel_reg == 4 && log_to_console_EGA) cout << "EGA Memory Mode Register" << (bitset<8>)data << endl;
+		return;
 	}
-	if (port == 0x3b8)
+	if (port == 0x3b4 || port == 0x3d4) //CRT Controller Address Register
 	{
-		//установка режимов работы
-		if (log_to_console) cout << "MDA set MODE = " << (bitset<5>)(data & 31) << endl;
-		EGA_Mode_Select_Register = data;
+		CRT_sel_reg = data & 31;
+		//if (log_to_console_EGA) cout << "EGA set CRT_sel_reg = " << (int)CRT_sel_reg << endl;
 	}
-	if (port == 0x3b9)
+	if (port == 0x3b5 || port == 0x3d5)
 	{
-		//выбор режимов цвета
-		if (log_to_console) cout << "MDA set COLOUR = " << (bitset<5>)(data) << " ";
-		//CGA_Color_Select_Register = data;
+		//запись в выбранный регистр
+		crt_registers[CRT_sel_reg] = data;
+		if (CRT_sel_reg == 0 && log_to_console_EGA) cout << "EGA Horizontal Total Register = " << (int)(data) << endl;
 	}
+	if (port == 0x3cc)  //Graphics 1 Position Register
+	{
+		GP1_reg = data;
+	}
+	if (port == 0x3ca)  //Graphics 2 Position Register
+	{
+		GP2_reg = data;
+	}
+	if (port == 0x3ce)  //Graphics 1 and 2 Address Register
+	{
+		GC_sel_reg = data & 15;
+		//if (log_to_console_EGA) cout << "EGA GC select = " << (int)GC_sel_reg << endl;
+	}
+	if (port == 0x3cf)  //Graphics controller registers
+	{
+		gc_registers[GC_sel_reg] = data;
+		if (log_to_console_EGA) cout << "EGA GC[" << (int)GC_sel_reg << "] set = " << (int)data << endl;
+	}
+	
+	if (port == 0x3c0)  //Attribute controller register
+	{
+		if (ac_flipflop) AC_sel_reg = data & 31; //выбор номера регистра
+		else
+		{
+			//запись в регистр
+			ac_registers[AC_sel_reg] = data;
+		}
+		ac_flipflop = !ac_flipflop;  //переключаем тип ввода
+	}
+
 }
 uint8 EGA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 {
-	if (port == 0x3B5)
+	if (port == 0x3c2) //Input Status Register Zero
 	{
-		//if (log_to_console) cout << "MDA: read PORT 0x3B5 (read registers) ";
-		//считывание регистра
-		if (sel_reg == 0x0C) return registers[sel_reg]; //старший байт начального адреса (Start Address Register - SAR, high byte)
-		if (sel_reg == 0x0D) return registers[sel_reg]; //младший байт начального адреса (Start address Register - SAR, low byte)
-		if (sel_reg == 0x0E) return registers[sel_reg]; //старший байт позиции курсора (Cursor Location Register - CLR, high byte)
-		if (sel_reg == 0x0F) return registers[sel_reg]; //младший байт позиции курсора (Cursor Location Register - CLR, low byte)
+		static uint8 clock = 0;
+		clock++;
+		uint8 out = 0;
+		switch (On_board_switch_sel)
+		{
+		case 0:
+			out = 0b00010000; //переключатель 1 = ON
+			break;
+		case 1:
+			out = 0b00010000; //переключатель 2 = ON
+			break;
+		case 2:
+			out = 0b00010000; //переключатель 3 = ON
+			break;
+		case 3:
+			out = 0b00000000; //переключатель 4 = OFF
+			break;
+		}
+		
+		if (clock) out = out | 0b10000000;		//идет показ изображения
+		else out = out | 0b00010000;			//можно читать свитчи + экран погашен
 
+		return out;
 	}
-	if (port == 0x3BA)
+	
+	if ((port == 0x3ba && !IOAddrSel) || (port == 0x3da && !IOAddrSel)) //Input Status Register One
 	{
-		//if (log_to_console) cout << "MDA: read PORT 0x3BA (CRT ray) -> ";
-		//считывание регистра состояния
-		//меняем для симуляции обратного хода луча
-		static uint8 CRT_flip_flop = 0;
-		CRT_flip_flop++;
-		//if (CRT_flip_flop && log_to_console) cout << "0000 ";
-		//if (!CRT_flip_flop && log_to_console) cout << "1001 ";
-		if (!CRT_flip_flop) return 0b00000000; // бит 3 - обратный ход луча, бит 0 - разрешение записи в видеопамять
-		else return 0b00001001;
+		static uint8 VertRetrace = 0;  // 1 - обратный ход луча
+		VertRetrace++;
+		return DisplayEN || ((VertRetrace != 0) << 4);
 	}
 	return 0;
 }
 std::string EGA_videocard::get_mode_name()				//получить название режима для отладки
 {
-	return "text 80x25 BW";
+	string mode_name;
+	bool color_enable = ~((ac_registers[16] >> 2) & 1);  //наличие цвета
+	if (!(gc_registers[6] & 1))
+	{
+		mode_name = "EGA TXT";
+		if ((seq_registers[1] >> 3) & 1) mode_name = mode_name + " 40x25";
+		else mode_name = mode_name + " 80x25";
+		if (Lines_350) mode_name = mode_name + "[H]";
+		if (color_enable) mode_name = mode_name + " Col";
+		else mode_name = mode_name + " BW";
+	}
+	else
+	{
+		mode_name = "EGA GFX";
+		if ((seq_registers[1] >> 3) & 1) mode_name = mode_name + " 320";
+		else mode_name = mode_name + " 640";
+		if (Lines_350) mode_name = mode_name + "x200";
+		else mode_name = mode_name + "x200";
+		if (color_enable) mode_name = mode_name + " Col";
+		else mode_name = mode_name + " BW";
+	}
+
+	return mode_name;
 }
 void EGA_videocard::show_joy_sence(uint8 central_point)	//отобразить информацию джойстика
 {
@@ -1903,6 +2003,42 @@ bool EGA_videocard::has_focus()							//проверить наличие фокуса
 }
 void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 {
+	
+	/*
+		Режимы работы
+
+		Текстовые
+		0   - 40 x 25 символов (8х8),  16 цветов,    320х200 пикселей, адрес B8000, 8 страниц
+		0*  - 40 x 25 символов (8х14), 16/64 цветов, 320х350 пикселей, адрес B8000, 8 страниц
+		1   - 40 x 25 символов (8х8),  16 цветов,    320х200 пикселей, адрес B8000, 8 страниц
+		1*  - 40 x 25 символов (8х14), 16/64 цветов, 320х350 пикселей, адрес B8000, 8 страниц
+		2   - 80 х 25 символов (8х8),  16 цветов,    640х200 пикселей, адрес B8000, 8 страниц
+		2*  - 80 х 25 символов (8х14), 16/64 цветов, 640х350 пикселей, адрес B8000, 8 страниц
+		3   - 80 х 25 символов (8х8),  16 цветов,    640х200 пикселей, адрес B8000, 8 страниц
+		3*  - 80 х 25 символов (8х14), 16/64 цветов, 640х350 пикселей, адрес B8000, 8 страниц
+		7   - 80 х 25 символов (9х14), 4 цвета,      720х350 пикселей, адрес B0000, 8 страниц (аналог MDA)
+		
+		Графические	
+		4   - 40 x 25 символов (8х8),  4 цвета,      320х200 пикселей, адрес B8000, 1 страница
+		5   - 40 x 25 символов (8х8),  4 цвета,      320х200 пикселей, адрес B8000, 1 страница
+		6   - 80 х 25 символов (8х8),  2 цвета,      640х200 пикселей, адрес B8000, 1 страница
+		D   - 40 x 25 символов (8х8), 16 цветов,     320х200 пикселей, адрес A8000, 8 страниц
+		E   - 80 х 25 символов (8х8), 16 цветов,     640х200 пикселей, адрес A0000, 8 страниц
+		F   - 80 х 25 символов (8х14), 4 цвета,      640х350 пикселей, адрес A0000, 2 страницы (монохромный графический)
+		10* - 80 х 25 символов (8х14), 4/16 цвета,   640х350 пикселей, адрес A0000, 2 страницы
+
+		* - улучшеный дисплей
+
+		gc_registers[4] - выбор страницы памяти
+		gc_registers[5] - режим работы, использование регистров-защелок для копирования/вставки данных,  бит 4 - четный/нечетный режим (для текста), бит5 - для режимов 4 и 5 (граф)
+		ac_registers [0 - 15] палитры
+		ac_registers[16] - режимы
+		ac_registers[17] - цвет рамки
+		ac_registers[18] - отключение цветовых слоев
+		ac_registers[19] - сдвиг влево попиксельно (0 - 7 пикселей)
+	*/
+	
+	
 	if (!visible) return;
 	main_window.clear();// очистка экрана
 
@@ -1916,8 +2052,8 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 		cursor_flipflop = !cursor_flipflop;
 	}
 
-	sf::Text text(font);		//обычный шрифт
-	text.setCharacterSize(40);
+	sf::Text text(monitor.font);		//обычный шрифт
+	text.setCharacterSize(30);
 	text.setFillColor(sf::Color::White);
 
 	uint16 font_t_x, font_t_y;
@@ -1926,16 +2062,31 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 	bool attr_blink = false;       //атрибут мигания
 	bool attr_highlight = false;   //атрибут подсветки
 
-	sf::Color border = sf::Color::Yellow; // CGA_colors[CGA_Color_Select_Register & 15];
+	sf::Color border = sf::Color((((ac_registers[17] >> 2) & 1) + ((ac_registers[17] >> 5) & 1) * 2) * 85, (((ac_registers[17] >> 1) & 1) + ((ac_registers[17] >> 4) & 1) * 2) * 85, (((ac_registers[17] >> 0) & 1) + ((ac_registers[17] >> 3) & 1) * 2) * 85); // ac_registers[17]
 
 	//начальный адрес экрана в памяти
-	uint16 start_address = (registers[0xC] & 0b00111111) * 256 + registers[0xD];
+	uint16 start_address = (crt_registers[0xC]) * 256 + crt_registers[0xD];
 
 	//адрес курсора
-	uint16 cursor_pos = registers[0xE] * 256 + registers[0xF];
+	uint16 cursor_pos = crt_registers[0xE] * 256 + crt_registers[0xF];
 
-	//делим режимы на текст и графику
-	if ((CGA_Mode_Select_Register & 2) == 0)
+	//используемые адреса видеопамяти
+	switch ((gc_registers[6] >> 2) & 3)
+	{
+	case 0:
+	case 1:
+		video_mem_base = 0xA0000;
+		break;
+	case 2:
+		video_mem_base = 0xB0000;
+		break;
+	case 3:
+		video_mem_base = 0xB8000; //дефолт
+		break;
+	}
+	
+	//определяем графический/текстовый режимы
+	if (!(ac_registers[16] & 1))
 	{
 		//текстовые режимы
 
@@ -1954,16 +2105,8 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 		main_window.draw(rectangle);
 
 		uint8 width;
-		if (CGA_Mode_Select_Register & 1)
-		{
-			width = 80;
-			//if (start_address > (0x4000 - (25 * 80 * 2))) start_address = 0x4000 - (25 * 80 * 2);
-		}
-		else
-		{
-			width = 40;
-			//if (start_address > (0x4000 - (25 * 40 * 2))) start_address = 0x4000 - (25 * 40 * 2);
-		}
+		if (!((seq_registers[1] >> 3) & 1)) width = 80;
+		else width = 40;
 
 		//настройка масштаба символов для разных режимов
 		if (width == 40) rectangle.setSize(sf::Vector2f(5 * 8, 1.2 * 5 * 8));
@@ -1975,8 +2118,7 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 		sf::Color bg_color;
 
 		//управление цветом
-		bool color_enable = 0;  //наличие цвета
-		if ((CGA_Mode_Select_Register & 4) == 0) color_enable = 1;
+		bool color_enable = ~((ac_registers[16] >> 2) & 1);  //наличие цвета
 
 		//debug_mess_1 = to_string(start_address);
 
@@ -1985,22 +2127,47 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 		{
 			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
 			{
-				addr = 0xb8000 + start_address * 2 + (y * width * 2) + x * 2;
+				addr = video_mem_base + start_address * 2 + (y * width * 2) + x * 2;
 
 				font_t_y = memory_2[addr] >> 5;
 				font_t_x = memory_2[addr] - (font_t_y << 5);
 				attrib = memory_2[addr + 1];
+				
 				if (color_enable)
 				{
-					fg_color = sf::Color::White;
-					bg_color = sf::Color::Black;
+					//цветной режим
+					fg_color = EGA_colors[attrib & 15];
+					if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = EGA_colors[attrib & 31];  //повышенная интенсивность
+					bg_color = EGA_colors[(attrib >> 4) & 15];
+					if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = EGA_colors[(attrib >> 4) & 31];//повышенная интенсивность
 				}
 				else
 				{
-					fg_color = sf::Color::White;
-					bg_color = sf::Color::Black;
+					//монохромный режим
+					fg_color = EGA_colors[8];
+					bg_color = EGA_colors[0];
+
+					if (!use_2_char_gen && ((attrib >> 3) & 1))
+					{
+						//повышенная интенсивность
+						fg_color = EGA_colors[15];
+					}
+
+					if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1))
+					{
+						//повышенная интенсивность
+						//fg_color = EGA_colors[15];
+					}
+
+					if (((attrib >> 4) & 7) == 7)
+					{
+						//инверсия
+						sf::Color t = fg_color;
+						fg_color = bg_color;
+						bg_color = t;
+					}
 				}
-				bool blink = ((attrib >> 7) & 1) & ((CGA_Mode_Select_Register >> 5) & 1);
+				bool blink = ((attrib >> 7) & 1) & ((ac_registers[16] >> 3) & 1);
 
 				//рисуем фон символа
 				rectangle.setFillColor(bg_color);
@@ -2010,7 +2177,6 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 
 				//рисуем сам символ
 				if (!blink || cursor_flipflop)
-					//if (!blink)
 				{
 					if (width == 40)
 					{
@@ -2028,19 +2194,37 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 					}
 				}
 
+				//подчеркивание в монохромном режиме
+				if (!color_enable && ((attrib & 7) == 1))
+				{
+					sf::RectangleShape ul; //прямоугольник курсора
+					if (width == 40)
+					{
+						ul.setSize(sf::Vector2f(40, 2));
+						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5, font_t_y * 8 * 5));
+					}
+					else
+					{
+						ul.setSize(sf::Vector2f(20, 2));
+						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5));
+					}
+					ul.setFillColor(fg_color);
+					main_window.draw(ul);
+				}
+
 				bool draw_cursor = false;
-				if ((width == 40) && !(y * 40 + x - registers[0xe] * 256 - registers[0xf])) draw_cursor = true;
-				if ((width == 80) && !(y * 80 + x - registers[0xe] * 256 - registers[0xf])) draw_cursor = true;
+				if ((width == 40) && !(y * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+				if ((width == 80) && !(y * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
 
 				//рисуем курсор
-				if (draw_cursor && cursor_flipflop && ((registers[0xb] & 31) >= (registers[0xa] & 31)))
+				if (draw_cursor && cursor_flipflop && ((crt_registers[0xb] & 31) >= (crt_registers[0xa] & 31)))
 				{
 					if (width == 40)
 					{
 						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
 						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(40, (registers[0xb] - registers[0xa] + 1) * 6));
-						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, (y * 8 + registers[0xa]) * 5 * 1.2 + 20));
+						cursor_rectangle.setSize(sf::Vector2f(40, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
+						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
 						cursor_rectangle.setFillColor(fg_color);
 						//rectangle.setFillColor(sf::Color(0,0,60));
 						//font_sprite_40.setTextureRect(sf::IntRect(sf::Vector2i(31 * 8 * 5, 2 * 8 * 5), sf::Vector2i(8 * 5, 8 * 5)));
@@ -2056,8 +2240,8 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 						//main_window.draw(font_sprite_80);
 						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
 						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(20, (registers[0xb] - registers[0xa] + 1) * 6));
-						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + registers[0xa]) * 5 * 1.2 + 20));
+						cursor_rectangle.setSize(sf::Vector2f(20, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
+						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
 						cursor_rectangle.setFillColor(fg_color);
 						main_window.draw(cursor_rectangle);
 					}
@@ -2068,7 +2252,12 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 	else
 	{
 		//графические режимы
-		if ((CGA_Mode_Select_Register & 16) == 0)
+
+		uint8 width;
+		if (!((seq_registers[1] >> 3) & 1)) width = 80;
+		else width = 40;
+
+		if (width == 40)
 		{
 			//режим 320х200
 
@@ -2098,34 +2287,22 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 			CGA_320_palette_sprite.setScale({ 1,1 });
 			//cout << "colorEN " << (int)color_enable << " intens " << (int)intensity << " palette " << (int)((CGA_Mode_Select_Register >> 5) & 1) << " p_shift " << (int)palette_shift <<  endl;
 			//четные строки
-			for (int y = 0; y < 100; ++y)
+			for (int y = 0; y < 200; ++y)
 			{
-				for (int x = 0; x < 80; ++x)
+				for (int x = 0; x < 320; ++x)
 				{
-					uint32 dot_addr = start_address * 2 + 80 * y + x;
-					dot_addr = dot_addr % 0x2000 + 0xB8000;
-					CGA_320_palette_sprite.setTextureRect(sf::IntRect(sf::Vector2i(palette_shift, memory_2[dot_addr] * 6), sf::Vector2i(20, 6)));
-					CGA_320_palette_sprite.setPosition(sf::Vector2f(x * 4 * 5 + 20, y * 2 * 6 + 20));
-					main_window.draw(CGA_320_palette_sprite);
-				}
-			}
-
-			//нечетные строки
-			for (int y = 0; y < 100; ++y)
-			{
-				for (int x = 0; x < 80; ++x)
-				{
-					uint32 dot_addr = start_address * 2 + 80 * y + x;
-					dot_addr = dot_addr % 0x2000 + 0xBA000;
-					CGA_320_palette_sprite.setTextureRect(sf::IntRect(sf::Vector2i(palette_shift, memory_2[dot_addr] * 6), sf::Vector2i(20, 6)));
-					CGA_320_palette_sprite.setPosition(sf::Vector2f(x * 4 * 5 + 20, (y * 2 + 1) * 6 + 20));
-					main_window.draw(CGA_320_palette_sprite);
+					uint32 dot_addr = video_mem_base + start_address + 320 * y + x;
+					sf::RectangleShape dot;
+					dot.setSize(sf::Vector2f(1, 1));
+					dot.setOutlineThickness(0);
+					dot.setPosition(sf::Vector2f(x * 5, y * 6));
+					main_window.draw(dot);
 				}
 			}
 		}
 		else
 		{
-			//режим 640х200 BW
+			//режим 640х200
 
 			sf::RectangleShape dot;
 			dot.setSize(sf::Vector2f(1, 1));
@@ -2210,15 +2387,14 @@ void EGA_videocard::sync(int elapsed_ms)					//синхронизация
 	if (debug_mess_1 != "") main_window.draw(text);
 
 
-	/*
-	uint16 offset_x = ((registers[12] * 256 + registers[13]) & 0x3FFF) % 40;
-	uint16 offset_y = floor((registers[12] * 256 + registers[13]) / 40);
-	text.setString("offset_x " + to_string(offset_x) + " offset_y " + to_string(offset_y));
-	text.setPosition(sf::Vector2f(300, 520));
-	text.setOutlineThickness(6.1);
-
-	main_window.draw(text);
-	*/
+	for (int i = 0; i < 32; i++)
+	{
+		text.setFillColor(sf::Color::Yellow);
+		text.setString(to_string(i) + " seq = " + int_to_hex(seq_registers[i],2) + " crt = " + int_to_hex(crt_registers[i], 2) + " gc = " + int_to_hex(gc_registers[i], 2) + " ac = " + int_to_hex(ac_registers[i], 2));
+		text.setPosition(sf::Vector2f(20, 100 + i * 33));
+		text.setOutlineThickness(10.1);
+		//main_window.draw(text);
+	}
 
 	main_window.display();
 	//int_request = true;//устанавливаем флаг в конце кадра
@@ -2292,7 +2468,6 @@ void Monitor::sync(int elapsed_ms)
 	case videocard_type::EGA:
 		EGA_card.sync(elapsed_ms);
 		break;
-
 	}
 }
 void Monitor::write_port(uint16 port, uint8 data)

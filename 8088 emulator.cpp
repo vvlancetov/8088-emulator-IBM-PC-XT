@@ -210,6 +210,7 @@ bool log_to_console_DMA = 0; //логирование команд DMA на ко
 bool log_to_console_INT = 0; //логирование команд INT на консоль
 bool log_to_console_DOS = 0; //логирование команд DOS на консоль
 bool log_to_console_8087 = 0; //логирование команд 8087 на консоль
+bool log_to_console_EGA = 0; //логирование команд EGA на консоль
 bool run_until_CX0 = false; //останов при окончании цикла
 
 //флаги дополнительных окон
@@ -932,9 +933,9 @@ void IC8253::sync()
 		duration = chrono::duration_cast<chrono::microseconds>(timer_end - timer_start).count();
 		timer_start = chrono::steady_clock::now(); //засекаем заново
 		if (duration > 65000) empty_cycles -= 50;
-		if (duration > 55000) empty_cycles -= 5;
+		if (duration > 56000) empty_cycles -= 5;
 		if (duration < 44000) empty_cycles += 50;
-		if (duration < 54000) empty_cycles += 5;
+		if (duration < 55000) empty_cycles += 5;
 		//cout << (int)empty_cycles << "  ";
 	}
 }

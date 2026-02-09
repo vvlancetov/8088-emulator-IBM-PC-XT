@@ -214,12 +214,12 @@ void loader(int argc, char* argv[])
 	cout << "Working catalog = " << path << endl;
 	
 	//загружаем CGA шрифт в виде текстуры
-	if (font_texture_40.loadFromFile(path + "videorom_CGA_40.png")) cout << "Font ROM(40) loaded" << endl;
+	if (font_texture_40.loadFromFile(path + "videorom_CGA_40.png")) cout << "CGA font ROM(40) loaded" << endl;
 	font_sprite_40.setTexture(font_texture_40);
 	font_texture_40.setSmooth(0);
 	font_sprite_40.setScale(sf::Vector2f(1, 1.2));
 
-	if (font_texture_80.loadFromFile(path + "videorom_CGA_80.png")) cout << "Font ROM(80) loaded" << endl;
+	if (font_texture_80.loadFromFile(path + "videorom_CGA_80.png")) cout << "CGA font ROM(80) loaded" << endl;
 	font_sprite_80.setTexture(font_texture_80);
 	font_texture_80.setSmooth(0);
 	font_sprite_80.setScale(sf::Vector2f(1, 1.2));
@@ -233,11 +233,11 @@ void loader(int argc, char* argv[])
 	if (font_texture_80_MDA.loadFromFile(path + "videorom_MDA.png")) cout << "MDA Font ROM(80) loaded" << endl;
 	font_sprite_80_MDA.setTexture(font_texture_80_MDA);
 	font_texture_80_MDA.setSmooth(0);
-	font_sprite_80_MDA.setScale(sf::Vector2f(1, 1.2));
+	font_sprite_80_MDA.setScale(sf::Vector2f(1.0, 1.0));
 
 	//загружаем обычный шрифт для служебных надписей
-	if (!monitor.font.openFromFile(path + "ShareTechMonoRegular.ttf")) cout << "Error loading debug font" << endl;
-	else cout << "font " << path + "ShareTechMonoRegular.ttf" << " loaded" << endl;
+	if (!monitor.font.openFromFile(path + "CousineR.ttf")) cout << "Error loading debug font" << endl;
+	else cout << "font " << path + "CousineR.ttf" << " loaded" << endl;
 
 	//загружаем шрифты для окон отладки
 #ifdef DEBUG
@@ -480,7 +480,7 @@ void loader(int argc, char* argv[])
 				a++;
 			};
 			file_v_rom.close();
-			cout << "Загружено " << (int)(a) << " байт данных в видео ПЗУ" << endl;
+			cout << "Загружено " << (int)(a) << " байт данных в видео ПЗУ с адреса 0xC0000" << endl;
 		}
 	}
 }
