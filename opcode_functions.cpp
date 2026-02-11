@@ -22,11 +22,11 @@ extern std::string int_to_hex(T i, int w);
 using namespace std;
 extern HANDLE hConsole;
 
-extern uint8 exeption;
-#ifdef DEBUG
+extern bool exeption_0;
+extern bool exeption_1;
+
 extern FDD_mon_device FDD_monitor;
 extern HDD_mon_device HDD_monitor;
-#endif
 
 //регистры процессора
 extern uint16 AX; // AX
@@ -94,7 +94,6 @@ extern uint16 ES_data;			//Extra Segment
 uint16* ptr_segreg[4];			//указатели
 std::string segreg_name[4];		//имена сегментов
 
-extern bool Interrupts_enabled; //разрешение прерываний
 extern bool halt_cpu;
 extern bool log_to_console_FDD;
 extern bool log_to_console_HDD;
@@ -727,38 +726,7 @@ void segment_override_prefix()
 	if (log_to_console) cout << endl;
 #endif
 	Instruction_Pointer++;
-	/*
-cmd_rep:
-	//выполняем следующую команду
-#ifdef DEBUG
-	if (log_to_console)
-	{
-		cout << hex;
-		//cout << int_to_hex(memory.read_2(0x441, 0), 2) << "  " << int_to_hex(memory.read_2(0x442, 0), 2) << " ";
-		cout << std::setw(4) << *CS << ":" << std::setfill('0') << std::setw(4) << Instruction_Pointer << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 2 + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 3 + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 4 + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 5 + *CS * 16) << "\t";
-	}
-#endif
-	if (command_counter_ON) command_counter[memory_2[Instruction_Pointer + *CS * 16]]++;
-	op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
-	//если установлен флаг negate_IDIV - выполняем еще одну команду
 
-	if (keep_segment_override) {keep_segment_override = false; } //сбрасываем флаг сохранения
-	else { Flag_segment_override = 0; } //сбрасываем флаг смены сегмента
-	
-	if (negate_IDIV)
-	{
-		if (log_to_console) cout << endl;
-		goto cmd_rep;
-	}
-	//DS = &DS_data; //возвращаем назад сегмент
-	//SS = &SS_data;
-	*/
 }
 uint16 mod_RM_Old(uint8 byte2)		//расчет адреса операнда по биту 2
 {
@@ -1117,7 +1085,7 @@ void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
 	{
 		cout << "Bus lock exeption (RM)" << endl;
 		bus_lock = 0;		//сбрасываем флаг блокировки шины
-		exeption = 0x14;	//бросаем исключение
+		//exeption = 0x14;	//бросаем исключение
 	}
 	if ((byte2 >> 6) == 0) //no displacement
 	{
@@ -2525,7 +2493,7 @@ void ACC_8_to_M()		//Accumulator to Memory 8
 }
 void ACC_16_to_M()		//Accumulator to Memory 16
 {
-	New_Addr_32 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	operand_RM_offset = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
 	switch (Flag_segment_override)
 	{
 	case 0:
@@ -2549,15 +2517,18 @@ void ACC_16_to_M()		//Accumulator to Memory 16
 		operand_RM_seg = *DS;
 		break;
 	}
-	memory_2[(New_Addr_32 + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AL;
-	memory_2[(New_Addr_32 + 1 + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AH;
+	memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AL;
+	operand_RM_offset++;
+	memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AH;
 	Instruction_Pointer += 3;
 	if (log_to_console) cout << "AX(" << (int)AX << ") to M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "]";
 }
 
 void RM_to_Segment_Reg()	//Register/Memory to Segment Register
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	operand_RM_offset = Instruction_Pointer;
+	operand_RM_offset++;
+	byte2 = memory_2[(*CS * 16 + operand_RM_offset) & 0xFFFFF]; //mod / reg / rm
 
 	//определяем источник
 	if((byte2 >> 6) == 3)
@@ -2743,9 +2714,12 @@ void XCHG_16()			//Exchange Register/Memory with Register 16bit
 	{
 		*ptr_Src = *ptr_r16[(byte2 >> 3) & 7]; //временное значение
 		mod_RM_3(byte2);
-		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] + memory_2[(operand_RM_seg * 16 + operand_RM_offset + 1) & 0xFFFFF] * 256;
+		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		operand_RM_offset++;
+		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_H;
+		operand_RM_offset--;
 		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset + 1) & 0xFFFFF] = *ptr_Src_H;
 
 		if (log_to_console) cout << "Exchange " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") with M" << OPCODE_comment;
 		Instruction_Pointer += 2 + additional_IPs;
@@ -2973,11 +2947,11 @@ void SAHF()			// Store AH with Flags
 void PUSHF()		// Push Flags
 {
 	Stack_Pointer--;
-	//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x00 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
+	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
+	//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x00 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
 	Stack_Pointer--;
-	//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x0 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
+	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
+	//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x0 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
 	if (log_to_console) cout << "Push Flags";
 	Instruction_Pointer++;
 }
@@ -3634,8 +3608,11 @@ void ADD_IMM_to_ACC_8()	// ADD IMM -> ACC 8bit
 void ADD_IMM_to_ACC_16()	// ADD IMM -> ACC 16bit 
 {
 	uint32 Result = 0;
-	
-	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	operand_RM_offset = Instruction_Pointer;
+	operand_RM_offset++;
+	uint16 imm = memory_2[(operand_RM_offset + *CS * 16) & 0xFFFFF];
+	operand_RM_offset++;
+	imm += memory.read_2(operand_RM_offset + *CS * 16) * 256;
 	if (log_to_console) cout << "ADD IMM (" << (int)imm << ") to AX(" << (int)(AX) << ") = ";
 	
 	Result = imm + AX;
@@ -4401,7 +4378,11 @@ void SUB_IMM_from_ACC_16()		// SUB ACC 16bit - IMM -> ACC
 {
 	uint32 Result = 0;
 	bool OF_Carry = 0;
-	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	operand_RM_offset = Instruction_Pointer;
+	operand_RM_offset++;
+	uint16 imm = memory_2[(operand_RM_offset + *CS * 16) & 0xFFFFF];
+	operand_RM_offset++;
+	imm += memory.read_2(operand_RM_offset + *CS * 16) * 256;
 	if (log_to_console) cout << "SUB IMM (" << (int)imm << ") from AX(" << (int)AX << ") = ";
 	Result = AX - imm;
 	OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF)) >> 15;
@@ -4945,11 +4926,13 @@ void AAM() //AAM = ASCII Adjust for Multiply
 	if (base == 0)
 	{
 		//DIV 0
-		exeption = 0x10;
+		exeption_0 = 1;
 		Flag_ZF = true;  //недокументированное поведение
 		Flag_SF = false; //недокументированное поведение
 		Flag_PF = true;  //недокументированное поведение
-		//Instruction_Pointer += 2;
+		Flag_CF = 0;  //недокументированное поведение
+		Flag_OF = 0;  //недокументированное поведение
+		Instruction_Pointer += 2;
 		if (log_to_console) cout << " [DIV0] ";
 		return;
 	}
@@ -5213,8 +5196,8 @@ void Invert_RM_8()
 
 		//бросаем исключение при делении на 0
 		if (Src == 0) {
-			exeption = 0x10;
-			//Instruction_Pointer += (2 + additional_IPs);
+			exeption_0 = 1;
+			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [DIV0] ";
 			return;
 		}
@@ -5224,7 +5207,7 @@ void Invert_RM_8()
 
 		//бросаем исключение при переполнении
 		if (Result_16 > 0xFF) {
-			exeption = 0x14;
+			exeption_0 = 1;
 			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [OVERFLOW] ";
 			return;
@@ -5258,8 +5241,8 @@ void Invert_RM_8()
 
 		//бросаем исключение при делении на 0
 		if (Src == 0) {
-			exeption = 0x10;
-			//Instruction_Pointer += (2 + additional_IPs);
+			exeption_0 = 1;
+			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [DIV0] ";
 			negate_IDIV = 0; //убираем флаг инверсии знака
 			return;
@@ -5275,8 +5258,8 @@ void Invert_RM_8()
 		}
 		
 		//бросаем исключение при переполнении
-		if (abs(quotient) > 0x7F) {
-			exeption = 0x14;
+		if (quotient > 127 || quotient < -128) {
+			exeption_0 = 1;
 			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [OVERFLOW] ";
 			return;
@@ -5309,8 +5292,12 @@ void Invert_RM_16()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			operand_RM_offset = Instruction_Pointer;
+			operand_RM_offset++;
+			operand_RM_offset++;
+			*ptr_Src_L = memory_2[(operand_RM_offset + *CS * 16) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_offset + *CS * 16) & 0xFFFFF];
 			if (log_to_console) cout << "TEST IMM[" << (int)*ptr_Src << "] AND ";
 			Result = *ptr_r16[byte2 & 7] & Src;
 			Flag_CF = 0;
@@ -5327,8 +5314,12 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			operand_RM_offset = Instruction_Pointer;
+			operand_RM_offset++;
+			operand_RM_offset++;
+			*ptr_Src_L = memory_2[(operand_RM_offset + additional_IPs + *CS * 16) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_offset + additional_IPs + *CS * 16) & 0xFFFFF];
 			if (log_to_console) cout << "TEST IMM[" << (int)*ptr_Src << "] AND ";
 			Result = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & *ptr_Src;
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
@@ -5357,8 +5348,9 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			memory_2[New_Addr_32] = ~memory_2[New_Addr_32];
-			memory_2[New_Addr_32 + 1] = ~memory_2[New_Addr_32 + 1];
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = ~memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = ~memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
 			if (log_to_console) cout << "Invert M" << OPCODE_comment << " = " << (int)(memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256);
 			Instruction_Pointer += 2 + additional_IPs;
 		}
@@ -5389,16 +5381,18 @@ void Invert_RM_16()
 		else
 		{
 			mod_RM_3(byte2);
-			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			//New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
 			if (*ptr_Src) Flag_CF = 1;
 			else Flag_CF = 0;
 			if (*ptr_Src == 0x8000) Flag_OF = 1;
 			else Flag_OF = 0;
 			*ptr_Src = ~(*ptr_Src) + 1;
-			memory_2[New_Addr_32] = *ptr_Src_L;
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_H;
+			operand_RM_offset--;
+			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
 			Flag_SF = (*ptr_Src_H) >> 7;
 			if (*ptr_Src) Flag_ZF = false;
 			else Flag_ZF = true;
@@ -5424,9 +5418,10 @@ void Invert_RM_16()
 		else
 		{
 			mod_RM_3(byte2);
-			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			//New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
 			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
 			Result_32 = AX * (*ptr_Src);
 		}
@@ -5462,9 +5457,10 @@ void Invert_RM_16()
 		else
 		{
 			mod_RM_3(byte2);
-			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			//New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
 			Result_32 = ((__int16)AX * (__int16)*ptr_Src);
 			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
 			Instruction_Pointer += 2 + additional_IPs;
@@ -5504,8 +5500,9 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
 			Src = *ptr_Src;
 			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
 			Instruction_Pointer += 2 + additional_IPs;
@@ -5513,16 +5510,16 @@ void Invert_RM_16()
 
 		//бросаем исключение при делении на 0
 		if (Src == 0) {
-			exeption = 0x10;
+			exeption_0 = 1;
 			if (log_to_console) cout << " [DIV 0] ";
-			//Instruction_Pointer += 2 + additional_IPs;
+			Instruction_Pointer += 2 + additional_IPs;
 			return;
 		}
 
 		Result_32 = ((uint32)(DX * 256 * 256 + AX) / Src);
 		//бросаем исключение при переполнении
 		if (Result_32 > 0xFFFF) {
-			exeption = 0x14;
+			exeption_0 = 1;
 			if (log_to_console) cout << " [OVERFLOW] ";
 			Instruction_Pointer += 2 + additional_IPs;
 			return;
@@ -5550,16 +5547,17 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			operand_RM_offset++;
+			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
 			Src = *ptr_Src;
 			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
 		}
 
 		//бросаем исключение при делении на 0
 		if (Src == 0) {
-			exeption = 0x10;
-			//Instruction_Pointer += (2 + additional_IPs);
+			exeption_0 = 1;
+			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [DIV0] ";
 			negate_IDIV = 0; //убираем флаг инверсии знака
 			return;
@@ -5575,8 +5573,8 @@ void Invert_RM_16()
 		}
 		
 		//бросаем исключение при переполнении
-		if (abs(quotient) > 0x7FFF) {
-			exeption = 0x14;
+		if (quotient > 32767 || quotient < -32768) {
+			exeption_0 = 1;
 			Instruction_Pointer += (2 + additional_IPs);
 			if (log_to_console) cout << " [OVERFLOW] ";
 			return;
@@ -6074,7 +6072,9 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint16 Src = 0;
 	uint16 Result = 0;
-	uint8 repeats = CX & 255;
+	uint8 repeats = *ptr_CL;
+	
+
 	uint8 MSB = 0;
 	additional_IPs = 0;
 
@@ -6353,7 +6353,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
 	uint32 Src = 0;
 	uint32 Result = 0;
-	uint8 repeats = CX & 255;
+	uint8 repeats = *ptr_CL;
 	uint16 MSB = 0;
 	additional_IPs = 0;
 
@@ -10007,7 +10007,7 @@ void INT_N()			//INT = Interrupt
 		//if (*ptr_AH == 0x25) step_mode = 1;
 		//if (!log_to_console) cout << endl;
 	}
-		
+	
 	if (int_type == 0x10 && !test_mode && log_to_console_DOS)
 	{
 		if (*ptr_AH == 0 || *ptr_AH == 0xb) cout << "INT 10H from [" << (int)*CS << ":" << (int)Instruction_Pointer << "]" << " (AX=" << (int)AX << ") -> ";
@@ -10032,13 +10032,13 @@ void INT_3()			//INT = Interrupt Type 3
 	memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 	Stack_Pointer--;
 	memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
-	
+
 	//помещаем в стек сегмент
 	Stack_Pointer--;
 	memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
 	Stack_Pointer--;
 	memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
-	
+
 	//помещаем в стек IP
 	Stack_Pointer--;
 	memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) >> 8);
@@ -10051,28 +10051,29 @@ void INT_3()			//INT = Interrupt Type 3
 	*CS = new_CS;
 	
 	Instruction_Pointer = new_IP;
-	if (log_to_console)cout << "INT " << (int)int_type << " -> " << (int)new_CS << ":" << (int)Instruction_Pointer;
+	if (log_to_console)cout << "INT_3 " << (int)int_type << " -> " << (int)new_CS << ":" << (int)Instruction_Pointer;
 }
 void INT_O()			//INTO = Interrupt on Overflow
 {
 	if (Flag_OF)
 	{
+		uint8 int_type = 4;
 		//определяем новый IP и CS
-		uint16 new_IP = memory.read_2(0x10) + memory.read_2(0x11) * 256;
-		uint16 new_CS = memory.read_2(0x12) + memory.read_2(0x13) * 256;
+		uint16 new_IP = memory.read_2(int_type * 4) + memory.read_2(int_type * 4 + 1) * 256;
+		uint16 new_CS = memory.read_2(int_type * 4 + 2) + memory.read_2(int_type * 4 + 3) * 256;
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
 		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
-		Stack_Pointer--; 
+		Stack_Pointer--;
 		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
-		
+
 		//помещаем в стек сегмент
 		Stack_Pointer--;
 		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
 		Stack_Pointer--;
 		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
-		
+
 		//помещаем в стек IP
 		Stack_Pointer--;
 		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) >> 8);
@@ -10084,7 +10085,7 @@ void INT_O()			//INTO = Interrupt on Overflow
 		Flag_TF = false;
 		*CS = new_CS;
 		Instruction_Pointer = new_IP;
-		if (log_to_console) cout << "INT_0 " << " -> " << (int)new_CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) cout << "INT_0F " << " -> " << (int)new_CS << ":" << (int)Instruction_Pointer;
 	}
 	else
 	{
@@ -10095,22 +10096,22 @@ void I_RET()			//Interrupt Return
 {
 	//POP IP
 	Instruction_Pointer = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
-	Stack_Pointer ++;
+	Stack_Pointer++;
 	Instruction_Pointer += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
-	Stack_Pointer ++;
+	Stack_Pointer++;
 
 	//POP CS
 	*CS = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
 	Stack_Pointer++;
 	*CS += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
 	Stack_Pointer++;
-	
+
 	//POP Flags
 	uint16 Flags = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
 	Stack_Pointer++;
 	Flags += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
 	Stack_Pointer++;
-	
+
 	Flag_OF = (Flags >> 11) & 1;
 	Flag_DF = (Flags >> 10) & 1;
 	Flag_IF = (Flags >> 9) & 1;
@@ -10120,6 +10121,8 @@ void I_RET()			//Interrupt Return
 	Flag_AF = (Flags >> 4) & 1;
 	Flag_PF = (Flags >> 2) & 1;
 	Flag_CF = (Flags) & 1;
+
+	//if (Flag_TF) step_mode = 1;
 
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "I_RET to " << *CS << ":" << Instruction_Pointer << " AX(" << (int)AX << ") CF=" << (int)Flag_CF;

@@ -62,8 +62,9 @@ sf::Sprite CGA_320_palette_sprite(CGA_320_texture);
 uint32 op_counter = 0;
 uint8 service_counter = 0;
 
-//флаг исключений
-uint8 exeption = 0;
+//флаги исключений
+bool exeption_0 = 0;	//DIV 0
+bool exeption_1 = 0;	//Trap
 
 Mem_Ctrl memory; //создаем контроллер памяти
 
@@ -183,8 +184,6 @@ uint16* DS = &DS_data;		//Data Segment
 uint16* SS = &SS_data;		//Stack Segment
 uint16* ES = &ES_data;		//Extra Segment
 
-bool Interrupts_enabled = true;//разрешение прерываний
-
 //префикс замены сегмента
 uint8 Flag_segment_override = 0;
 bool keep_segment_override = false; //сохранить флаг между командами
@@ -201,9 +200,9 @@ uint8 temp_ACC_8 = 0;
 uint16 temp_Addr = 0;
 
 // флаги для изменения работы эмулятора
-bool step_mode = false;		//ждать ли нажатия пробела для выполнения команд
+bool step_mode = 0;		//ждать ли нажатия пробела для выполнения команд
 bool go_forward;			//переменная для выхода из цикла обработки нажатий
-bool log_to_console = false; //логирование команд на консоль
+bool log_to_console = 0; //логирование команд на консоль
 bool log_to_console_FDD = 0; //логирование команд FDD на консоль
 bool log_to_console_HDD = 0; //логирование команд HDD на консоль
 bool log_to_console_DMA = 0; //логирование команд DMA на консоль
@@ -220,7 +219,7 @@ bool show_hdd_window = true; //отладочное окно HDD
 bool show_audio_window = true; //отладочное окно звука
 bool show_memory_window = true; //отладочное окно памяти
 
-bool test_mode = 0; //влияет на память
+bool test_mode = 0; //влияет на память, режим тестов
 
 //string get_sym(int code);
 
@@ -228,10 +227,6 @@ bool test_mode = 0; //влияет на память
 void (*op_code_table[256])() = { 0 };
 void (*backup_table[256])() = { 0 };
 void (*op_code_table_8087[64])() = { 0 };
-//счетчик команд для статистики
-int command_counter[256] = { 0 };
-bool command_counter_ON = false;
-
 
 bool debug_key_1 = false;
 vector <uint16> command_history = { 0 };
@@ -284,11 +279,10 @@ int main(int argc, char* argv[]) {
 	{
 		op_counter++;			//счетчик операций
 		service_counter++;		//счетчик для вызова служебных процедур
-		bp_mgr.check_points();	//проверка точек останова и печать комментариев к точкам
-		//bp_mgr.set_comments_EN(1); //включение комментов к коду
+		//bp_mgr.check_points();	//проверка точек останова и печать комментариев к точкам
+		bp_mgr.set_comments_EN(1); //включение комментов к коду
 
 		//служебные подпрограммы
-
 		if (!service_counter || step_mode || log_to_console)
 		{
 			timer_end = steady_clock::now(); //останавливаем таймер
@@ -325,7 +319,7 @@ int main(int argc, char* argv[]) {
 			process_debug_keys();		//обработка нажатий кнопок
 
 			//задержка вывода по нажатию кнопки в пошаговом режиме
-			while (!go_forward && step_mode)
+			while ((!go_forward) && step_mode)
 			{
 				
 				process_debug_keys();	//обработка нажатий кнопок
@@ -369,9 +363,6 @@ int main(int argc, char* argv[]) {
 		}
 
 		pc_timer.sync();	//синхронизация таймера
-		//dma_ctrl.sync();
-		pc_timer.sync();
-		pc_timer.sync();
 		//pc_timer.sync();
 		//pc_timer.sync();
 
@@ -445,10 +436,6 @@ int main(int argc, char* argv[]) {
 				std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 5) + *CS * 16] << "\t";
 		}
 #endif
-		//uint8 l_code_1 = memory_2[Instruction_Pointer + *CS * 16];
-		//uint8 l_code_2 = memory_2[Instruction_Pointer + 1 + *CS * 16];
-		//uint16 IP_backup = Instruction_Pointer;
-		if (command_counter_ON) command_counter[memory_2[Instruction_Pointer + *CS * 16]]++;
 		//исполнение команды
 		op_code_table[memory_2[Instruction_Pointer + *CS * 16]]();
 
@@ -483,24 +470,26 @@ int main(int argc, char* argv[]) {
 		}
 
 		//обрабока исключений
-		if (exeption)
+		if (exeption_0)
 		{
-			exeption -= 0x10; //убираем префикс исключения
 			//помещаем в стек IP и переходим по адресу прерывания
 			//новые адреса
-			uint16 new_IP = memory.read_2(exeption * 4) + memory.read_2(exeption * 4 + 1) * 256;
-			uint16 new_CS = memory.read_2(exeption * 4 + 2) + memory.read_2(exeption * 4 + 3) * 256;
+			uint16 new_IP = memory.read_2(0) + memory.read_2(1) * 256;
+			uint16 new_CS = memory.read_2(2) + memory.read_2(3) * 256;
 
-			if (log_to_console || 1) SetConsoleTextAttribute(hConsole, 10);
-			if (log_to_console || 1) cout << "EXEPTION " << (int)exeption << " jump to " << int_to_hex(new_CS, 4) << ":" << int_to_hex(new_IP, 4) << " ret to " << int_to_hex(*CS, 4) << ":" << int_to_hex(Instruction_Pointer + 2, 4) << endl;
-			if (log_to_console || 1) SetConsoleTextAttribute(hConsole, 7);
+			if (log_to_console)
+			{
+				SetConsoleTextAttribute(hConsole, 10);
+				cout << "EXEPTION 0 [DIV 0] jump to " << int_to_hex(new_CS, 4) << ":" << int_to_hex(new_IP, 4) << " ret to " << int_to_hex(*CS, 4) << ":" << int_to_hex(Instruction_Pointer, 4) << endl;
+				SetConsoleTextAttribute(hConsole, 7);
+			}
 
 			//помещаем в стек флаги
 			Stack_Pointer--;
 			memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 			Stack_Pointer--;
 			memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
-			
+
 			//помещаем в стек сегмент
 			Stack_Pointer--;
 			memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
@@ -509,24 +498,63 @@ int main(int argc, char* argv[]) {
 
 			//помещаем в стек IP
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 2) >> 8);
+			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 2) & 255);
-			
+			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+
 			//передаем управление
 			Flag_IF = false;//запрет внешних прерываний
 			Flag_TF = false;
 			*CS = new_CS;
 			Instruction_Pointer = new_IP;
-			exeption = 0; //сброс флага
+			exeption_0 = 0; //сброс флага
+		}
+		if (exeption_1)
+		{
+			//помещаем в стек IP и переходим по адресу прерывания
+			//новые адреса
+			uint16 new_IP = memory.read_2(4) + memory.read_2(4 + 1) * 256;
+			uint16 new_CS = memory.read_2(4 + 2) + memory.read_2(4 + 3) * 256;
+
+			if (log_to_console)
+			{
+				SetConsoleTextAttribute(hConsole, 10);
+				cout << "EXEPTION 1(trap) jump to " << int_to_hex(new_CS, 4) << ":" << int_to_hex(new_IP, 4) << " ret to " << int_to_hex(*CS, 4) << ":" << int_to_hex(Instruction_Pointer, 4) << endl;
+				SetConsoleTextAttribute(hConsole, 7);
+			}
+
+			//помещаем в стек флаги
+			Stack_Pointer--;
+			memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+			Stack_Pointer--;
+			memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+
+			//помещаем в стек сегмент
+			Stack_Pointer--;
+			memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+			Stack_Pointer--;
+			memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+
+			//помещаем в стек IP
+			Stack_Pointer--;
+			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+			Stack_Pointer--;
+			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+
+			//передаем управление
+			Flag_IF = false;//запрет внешних прерываний
+			Flag_TF = false;
+			*CS = new_CS;
+			Instruction_Pointer = new_IP;
+			exeption_1 = 0; //сброс флага
 		}
 
 		//обработка Trap Flag
 		if (Flag_TF)
 		{
-			exeption = 0x11; //прерывание 1
-			cout << "It is a Trap!" << endl;
-			Flag_TF = 0;
+			exeption_1 = 1; //прерывание 1
+			//Flag_TF = 0;
+			step_mode = 1;
 		}
 
 halt_jump:
@@ -2188,6 +2216,7 @@ void process_debug_keys()
 
 	//мониторинг нажатия клавиш в обычном режиме
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up) { step_mode = !step_mode; keys_up = false; }
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up) { go_forward = 1; keys_up = false; }
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num1) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		show_debug_window = !show_debug_window;

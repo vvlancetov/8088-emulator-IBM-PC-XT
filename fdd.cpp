@@ -218,7 +218,7 @@ uint8 FDD_Ctrl::read_port(uint16 port)
 }
 void FDD_Ctrl::write_port(uint16 port, uint8 data)
 {
-	//cout << "WRITE port " << hex << (int)port << endl;
+	//cout << "WRITE port " << hex << (int)port << " data " << (int)data << endl;
 	//SetConsoleTextAttribute(hConsole, 12);
 	//if (log_to_console_FDD || 1) FDD_monitor.log("FDD WRITE " + to_string(port));
 	//SetConsoleTextAttribute(hConsole, 7);

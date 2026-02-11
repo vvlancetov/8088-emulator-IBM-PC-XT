@@ -24,7 +24,8 @@ extern std::string int_to_hex(T i, int w);
 using namespace std;
 extern HANDLE hConsole;
 
-extern uint8 exeption;
+extern bool exeption_0;
+extern bool exeption_1;
 
 //регистры процессора
 extern uint16 AX; // AX
@@ -159,10 +160,13 @@ void tester3()
 	"tests2\\FF.5.json","tests2\\FF.6.json","tests2\\FF.7.json" };
 	
 	// сделаны D0 и D1
-	//string files[4] = {"tests2\\27.json","tests2\\2F.json","tests2\\F6.7.json","tests2\\F7.7.json"};
+	//string files[6] = {"tests2\\27.json","tests2\\2F.json","tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json"};
 	//сопроцессор
-	string files[8] = { "tests2\\D8.json","tests2\\D9.json","tests2\\DA.json","tests2\\DB.json","tests2\\DC.json","tests2\\DD.json", "tests2\\DE.json","tests2\\DF.json" };
-
+	//string files[8] = { "tests2\\D8.json","tests2\\D9.json","tests2\\DA.json","tests2\\DB.json","tests2\\DC.json","tests2\\DD.json", "tests2\\DE.json","tests2\\DF.json" };
+	string files[2] = {"tests2\\CC.json","tests2\\CE.json" };
+	
+	test_log = 0;
+		
 	//move - 88, 89, 8A, 8B, 8C, 8E, A0, A1, A2, A3, A4, A5, B0 - BF, C6, C7
 	//pop, push - 06, 07, 0E, 16, 17, 1E, 1F, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 5A, 5B, 5C, 5D, 5E, 5F, 8F, 9C, 9D, FF.6, FF.7
 	//str - A4, A5, A6, A7, AA, AB, AC, AD, AE, AF    
@@ -183,14 +187,14 @@ void tester3()
 	//XOR - 30, 31, 32, 33, 34, 35, 80.6, 81.6, 82.6, 83.6
 	//test - 84, 85, A8, A9, F6.0, F6.1, F7.0, F7.1
 
-	test_log = 0;
-
+	
 	int file_N = 0;
 	for (auto f_N : files)
 	{
 		//открываем файл json
 		//string json_file_name = "tests2\\f7.0.json";
-		string json_file_name = f_N.replace(0,6, "tests");
+		string json_file_name = f_N.replace(0,6, "tests");  //замена tests2 на tests
+		//string json_file_name = f_N;
 		file_N++;
 
 		//неопределенные флаги
@@ -232,10 +236,11 @@ void tester3()
 		if (json_file_name == "tests\\85.json") AF_undef = true;
 		if (json_file_name == "tests\\A8.json") AF_undef = true;
 		if (json_file_name == "tests\\A9.json") AF_undef = true;
-		if (json_file_name == "tests2\\F6.0.json") AF_undef = true;
+		if (json_file_name == "tests\\F6.0.json") AF_undef = true;
 		if (json_file_name == "tests\\F6.4.json") { AF_undef = true; PF_undef = true; ZF_undef = true; SF_undef = true; }
 		//if (json_file_name == "tests2\\F7.4.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
 		if (json_file_name == "tests\\F6.5.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
+		if (json_file_name == "tests\\F7.0.json") AF_undef = true;
 		if (json_file_name == "tests\\F7.1.json") AF_undef = true;
 		if (json_file_name == "tests\\F7.5.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true;}
 		if (json_file_name == "tests\\F6.6.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
@@ -442,44 +447,83 @@ test_rep:
 	//monitor.sync(1);
 	if (test_log) cout << "\t ZF=" << Flag_ZF << " CF=" << Flag_CF << " AF=" << Flag_AF << " SF=" << Flag_SF << " PF=" << Flag_PF << " OF=" << Flag_OF << " IF=" << Flag_IF << endl;
 	
-	if (exeption)
+	if (exeption_0)
 	{
-		exeption -= 0x10; //убираем префикс исключения
 		//помещаем в стек IP и переходим по адресу прерывания
 		//новые адреса
-		uint16 new_IP = memory_2[exeption * 4] + memory_2[exeption * 4 + 1] * 256;
-		uint16 new_CS = memory_2[exeption * 4 + 2] + memory_2[exeption * 4 + 3] * 256;
+		uint16 new_IP = memory.read_2(0) + memory.read_2(1) * 256;
+		uint16 new_CS = memory.read_2(2) + memory.read_2(3) * 256;
+
+		if (log_to_console)
+		{
+			SetConsoleTextAttribute(hConsole, 10);
+			cout << "EXEPTION 0 [DIV 0] jump to " << int_to_hex(new_CS, 4) << ":" << int_to_hex(new_IP, 4) << " ret to " << int_to_hex(*CS, 4) << ":" << int_to_hex(Instruction_Pointer, 4) << endl;
+			SetConsoleTextAttribute(hConsole, 7);
+		}
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
-		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
+		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 		Stack_Pointer--;
-		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
+		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 		//помещаем в стек сегмент
 		Stack_Pointer--;
-		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = *CS >> 8;
+		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
 		Stack_Pointer--;
-		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = (*CS) & 255;
-		
+		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+
 		//помещаем в стек IP
 		Stack_Pointer--;
-		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = Instruction_Pointer >> 8;
+		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 		Stack_Pointer--;
-		memory_2[(Stack_Pointer + SS_data * 16) & 0xFFFFF] = Instruction_Pointer & 255;
-		
+		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+
 		//передаем управление
 		Flag_IF = false;//запрет внешних прерываний
 		Flag_TF = false;
 		*CS = new_CS;
-		uint16 old = Instruction_Pointer;
 		Instruction_Pointer = new_IP;
-		if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
-		if (log_to_console) cout << "EXEPTION " << (int)exeption << " jump to " << (int)new_CS << ":" << (int)Instruction_Pointer << " ret to " << (int)old;
-		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		exeption_0 = 0; //сброс флага
+	}
+	if (exeption_1)
+	{
+		//помещаем в стек IP и переходим по адресу прерывания
+		//новые адреса
+		uint16 new_IP = memory.read_2(4) + memory.read_2(4 + 1) * 256;
+		uint16 new_CS = memory.read_2(4 + 2) + memory.read_2(4 + 3) * 256;
 
-		exeption = 0; //сброс флага
-		exeption_fired = 1; //для проверки результата
+		if (log_to_console)
+		{
+			SetConsoleTextAttribute(hConsole, 10);
+			cout << "EXEPTION 1(trap) jump to " << int_to_hex(new_CS, 4) << ":" << int_to_hex(new_IP, 4) << " ret to " << int_to_hex(*CS, 4) << ":" << int_to_hex(Instruction_Pointer, 4) << endl;
+			SetConsoleTextAttribute(hConsole, 7);
+		}
+
+		//помещаем в стек флаги
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+
+		//помещаем в стек сегмент
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+
+		//помещаем в стек IP
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+
+		//передаем управление
+		Flag_IF = false;//запрет внешних прерываний
+		Flag_TF = false;
+		*CS = new_CS;
+		Instruction_Pointer = new_IP;
+		exeption_1 = 0; //сброс флага
 	}
 	
 	if (test_log) cout << endl << "Result control" << endl;

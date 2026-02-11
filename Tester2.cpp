@@ -24,7 +24,8 @@ extern std::string int_to_hex(T i, int w);
 using namespace std;
 extern HANDLE hConsole;
 
-extern uint8 exeption;
+extern bool exeption_0;
+extern bool exeption_1;
 
 //регистры процессора
 extern uint16 AX; // AX
@@ -381,13 +382,19 @@ test_rep:
 	monitor.sync(1);
 	if (test_log) cout << "\t ZF=" << Flag_ZF << " CF=" << Flag_CF << " AF=" << Flag_AF << " SF=" << Flag_SF << " PF=" << Flag_PF << " OF=" << Flag_OF << " IF=" << Flag_IF << endl;
 	
-	if (exeption)
+	if (exeption_0)
 	{
-		exeption -= 0x10; //убираем префикс исключения
 		//помещаем в стек IP и переходим по адресу прерывания
 		//новые адреса
-		uint16 new_IP = memory.read_2(exeption * 4) + memory.read_2(exeption * 4 + 1) * 256;
-		uint16 new_CS = memory.read_2(exeption * 4 + 2) + memory.read_2(exeption * 4 + 3) * 256;
+		uint16 new_IP = memory.read_2(0) + memory.read_2(1) * 256;
+		uint16 new_CS = memory.read_2(2) + memory.read_2(3) * 256;
+
+		if (log_to_console)
+		{
+			SetConsoleTextAttribute(hConsole, 10);
+			cout << "EXEPTION 0 [DIV 0] jump to " << int_to_hex(new_CS, 4) << ":" << int_to_hex(new_IP, 4) << " ret to " << int_to_hex(*CS, 4) << ":" << int_to_hex(Instruction_Pointer, 4) << endl;
+			SetConsoleTextAttribute(hConsole, 7);
+		}
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
@@ -400,25 +407,58 @@ test_rep:
 		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
 		Stack_Pointer--;
 		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
-		
+
 		//помещаем в стек IP
 		Stack_Pointer--;
 		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 		Stack_Pointer--;
 		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
-		
+
 		//передаем управление
 		Flag_IF = false;//запрет внешних прерываний
 		Flag_TF = false;
 		*CS = new_CS;
-		uint16 old = Instruction_Pointer;
 		Instruction_Pointer = new_IP;
-		SetConsoleTextAttribute(hConsole, 10);
-		if (log_to_console) cout << "EXEPTION " << (int)exeption << " jump to " << (int)new_CS << ":" << (int)Instruction_Pointer << " ret to " << (int)old;
-		SetConsoleTextAttribute(hConsole, 7);
+		exeption_0 = 0; //сброс флага
+	}
+	if (exeption_1)
+	{
+		//помещаем в стек IP и переходим по адресу прерывания
+		//новые адреса
+		uint16 new_IP = memory.read_2(4) + memory.read_2(4 + 1) * 256;
+		uint16 new_CS = memory.read_2(4 + 2) + memory.read_2(4 + 3) * 256;
 
-		exeption = 0; //сброс флага
-		exeption_fired = 1; //для проверки результата
+		if (log_to_console)
+		{
+			SetConsoleTextAttribute(hConsole, 10);
+			cout << "EXEPTION 1(trap) jump to " << int_to_hex(new_CS, 4) << ":" << int_to_hex(new_IP, 4) << " ret to " << int_to_hex(*CS, 4) << ":" << int_to_hex(Instruction_Pointer, 4) << endl;
+			SetConsoleTextAttribute(hConsole, 7);
+		}
+
+		//помещаем в стек флаги
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+
+		//помещаем в стек сегмент
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+
+		//помещаем в стек IP
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+		Stack_Pointer--;
+		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+
+		//передаем управление
+		Flag_IF = false;//запрет внешних прерываний
+		Flag_TF = false;
+		*CS = new_CS;
+		Instruction_Pointer = new_IP;
+		exeption_1 = 0; //сброс флага
 	}
 	
 	if (test_log) cout << endl << "Result control" << endl;

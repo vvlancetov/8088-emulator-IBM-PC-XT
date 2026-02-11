@@ -585,8 +585,8 @@ uint8 CGA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 		if (log_to_console) cout << "CGA: read PORT 0x3DA (CRT ray) -> ";
 		//считывание регистра состояния
 		//меняем для симуляции обратного хода луча
-		static uint8 CRT_flip_flop = 0;
-		CRT_flip_flop++;
+		static bool CRT_flip_flop = 0;
+		CRT_flip_flop = !CRT_flip_flop;
 		//if (CRT_flip_flop && log_to_console) cout << "0000 ";
 		//if (!CRT_flip_flop && log_to_console) cout << "1001 ";
 		if (!CRT_flip_flop) return 0b00000000; // бит 3 - обратный ход луча, бит 0 - разрешение записи в видеопамять
