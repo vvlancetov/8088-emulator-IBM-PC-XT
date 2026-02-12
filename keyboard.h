@@ -21,7 +21,7 @@ private:
 	uint8 sleep_timer = 0;
 
 public:
-	KBD(){};
+	KBD();
 	bool CLK_high = false;
 	bool data_line_enabled = false;
 	void poll_keys(uint32 elapsed_us, bool has_focus);			//синхронизация клавиатуры
@@ -30,4 +30,5 @@ public:
 	void set_CLK_low();
 	void set_CLK_high();
 	void sync(); //процедура синхронизации и вызова прерывания #1
+	void next(); //сигнал о том, что нужен следующий код
 };

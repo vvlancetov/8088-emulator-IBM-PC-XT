@@ -198,7 +198,7 @@ private:
 	bool switches_hign = false;
 	uint8 port_B_out = 0;
 	bool port_B_6 = false; //уровень вывода 6 порта B
-	bool port_B_7 = false; //уровень вывода 7 порта B
+	//bool port_B_7 = false; //уровень вывода 7 порта B
 
 public:
 	void write_port(uint16 port, uint8 data);

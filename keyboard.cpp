@@ -13,20 +13,12 @@ typedef unsigned __int16 uint16;
 using namespace std;
 
 extern IC8259 int_ctrl;
+extern bool log_to_console;
 
 //клавиатура
 void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 {
 	//has_focus - флаг наличия фокуса у окна монитора
-	
-	//технические клавиши F5-F10 для управления эмулятором
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F10) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) return;
-	
 
 	//синхронизируем нажатия клавишь
 	if (!data_line_enabled) return; //если отключена - возврат
@@ -45,15 +37,6 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 		{
 			out_buffer.push_back(0x3b);
 			pressed_keys[(uint8)(KBD_key::F1)] = 1;
-		}
-		else
-		{
-			pressed_time_us[(uint8)(KBD_key::F1)] += elapsed_us;
-			if (pressed_time_us[(uint8)(KBD_key::F1)] > 500000)
-			{
-				out_buffer.push_back(0x3b + 0x80);
-				out_buffer.push_back(0x3b);
-			}
 		}
 	}
 	else
@@ -914,7 +897,7 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 
 	// ======================= Others ==============
 
-	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter) && has_focus)
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Enter) && has_focus)
 	{
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::ENTER)])
@@ -927,7 +910,7 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 	{
 		if (pressed_keys[(int)(KBD_key::ENTER)])
 		{
-			out_buffer.push_back(0x1C + 0x80);
+			out_buffer.push_back(0x9C);
 			pressed_keys[(int)(KBD_key::ENTER)] = 0;
 		}
 	}
@@ -1478,6 +1461,7 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumLock) && has_focus)
 	{
+		cout << "Numlock!" << endl;
 		//убираем повторение
 		if (!pressed_keys[(uint8)(KBD_key::NumLock)])
 		{
@@ -1969,12 +1953,13 @@ uint8 KBD::get_buf_size()
 }
 uint8 KBD::read_scan_code()
 {
-	uint8 code_out = 0;
+	static uint8 code_out = 0;
 	if (out_buffer.size())
 	{
 		code_out = out_buffer.at(0);
-		out_buffer.erase(out_buffer.begin());
+		//out_buffer.erase(out_buffer.begin());
 	}
+	//cout << "read scancode = 0x" << (int)code_out << " buf" << out_buffer.size() << endl;
 	return code_out;
 }
 void KBD::set_CLK_high()
@@ -1983,9 +1968,9 @@ void KBD::set_CLK_high()
 	{
 		//soft reset
 		//cout << "KB_SOFT_RES" << endl;
-		out_buffer.clear();
-		out_buffer.push_back(0xAA);
-		sleep_timer = 10; //небольшая задержка устройства
+		//out_buffer.clear();
+		//out_buffer.push_back(0xAA);
+		//sleep_timer = 10; //небольшая задержка устройства
 	}
 	CLK_high = true;
 }
@@ -2005,11 +1990,30 @@ void KBD::sync()  //синхронизация клавиатуры
 	}
 
 	//проверка буфера клавиатуры
-	if (get_buf_size() && data_line_enabled)
+	if (get_buf_size() && data_line_enabled && CLK_high)
 	{
 		if (!(int_ctrl.IS_REG & 0b00000010)) {
 			int_ctrl.request_IRQ(1);
-			sleep_timer = 10; //добавим небольшую задержку
+			//if (log_to_console) cout << "[KBD] INT 1 ";
+			sleep_timer = 5; //добавим небольшую задержку
 		}
 	}
+}
+
+void KBD::next()  //синхронизация клавиатуры
+{
+	if (!CLK_high) return;
+	if (out_buffer.size()) out_buffer.erase(out_buffer.begin());
+	if (log_to_console)
+	{
+		if (out_buffer.size()) cout << "[KB_next] 0x" << (int)out_buffer.at(0) << " ";
+		else cout << "[KB_next] 0x" << (int)255 << "(empty) ";
+	}
+}
+
+KBD::KBD()
+{
+	out_buffer.clear();
+	//out_buffer.push_back(0xFF);
+	out_buffer.push_back(0xAA);
 }

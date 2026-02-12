@@ -119,11 +119,13 @@ struct data_error
 
 };
 
+bool cycle_op = 0; //признак циклических операций
+
 data_error process2(string json_str); //декларация
 
 void tester3()
 {
-	string files1[323] = {"tests2\\00.json" ,"tests2\\01.json" ,"tests2\\02.json" ,"tests2\\03.json" ,"tests2\\04.json" ,"tests2\\05.json" ,"tests2\\06.json" ,"tests2\\07.json" ,"tests2\\08.json" ,
+	string files11[323] = {"tests2\\00.json" ,"tests2\\01.json" ,"tests2\\02.json" ,"tests2\\03.json" ,"tests2\\04.json" ,"tests2\\05.json" ,"tests2\\06.json" ,"tests2\\07.json" ,"tests2\\08.json" ,
 	"tests2\\09.json","tests2\\0A.json","tests2\\0B.json","tests2\\0C.json","tests2\\0D.json","tests2\\0E.json", "tests2\\10.json","tests2\\11.json","tests2\\12.json","tests2\\13.json",
 	"tests2\\14.json","tests2\\15.json","tests2\\16.json","tests2\\17.json","tests2\\18.json","tests2\\19.json","tests2\\1A.json","tests2\\1B.json","tests2\\1C.json","tests2\\1D.json","tests2\\1E.json",
 	"tests2\\1F.json","tests2\\20.json","tests2\\21.json","tests2\\22.json","tests2\\23.json","tests2\\24.json","tests2\\25.json","tests2\\27.json","tests2\\28.json","tests2\\29.json",
@@ -160,10 +162,12 @@ void tester3()
 	"tests2\\FF.5.json","tests2\\FF.6.json","tests2\\FF.7.json" };
 	
 	// сделаны D0 и D1
-	//string files[6] = {"tests2\\27.json","tests2\\2F.json","tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json"};
+	string files[6] = {"tests2\\27.json","tests2\\2F.json","tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json"};
 	//сопроцессор
-	//string files[8] = { "tests2\\D8.json","tests2\\D9.json","tests2\\DA.json","tests2\\DB.json","tests2\\DC.json","tests2\\DD.json", "tests2\\DE.json","tests2\\DF.json" };
-	string files[2] = {"tests2\\CC.json","tests2\\CE.json" };
+	//string files[8] = { "tests2\\F6.7.json" };
+	string files14[14] = { "tests2\\A4.json",	"tests2\\A5.json","tests2\\A6.json" ,"tests2\\A7.json" ,"tests2\\AA.json" ,"tests2\\AB.json" ,"tests2\\AC.json" ,
+	"tests2\\AD.json" ,"tests2\\AE.json",	"tests2\\AF.json" , "tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json" };
+	//string files[3] = {"tests2\\A7.json" ,"tests2\\AE.json",	"tests2\\AF.json" };
 	
 	test_log = 0;
 		
@@ -234,9 +238,21 @@ void tester3()
 		if (json_file_name == "tests\\83.6.json") AF_undef = true;
 		if (json_file_name == "tests\\84.json") AF_undef = true;
 		if (json_file_name == "tests\\85.json") AF_undef = true;
+		if (json_file_name == "tests\\A4.json") cycle_op = true;
+		if (json_file_name == "tests\\A5.json") cycle_op = true;
+		if (json_file_name == "tests\\A6.json") cycle_op = true;
+		if (json_file_name == "tests\\A7.json") cycle_op = true;
 		if (json_file_name == "tests\\A8.json") AF_undef = true;
 		if (json_file_name == "tests\\A9.json") AF_undef = true;
+		if (json_file_name == "tests\\AA.json") cycle_op = true;
+		if (json_file_name == "tests\\AB.json") cycle_op = true;
+		if (json_file_name == "tests\\AC.json") cycle_op = true;
+		if (json_file_name == "tests\\AD.json") cycle_op = true;
+		if (json_file_name == "tests\\AE.json") cycle_op = true;
+		if (json_file_name == "tests\\AF.json") cycle_op = true;
+		
 		if (json_file_name == "tests\\F6.0.json") AF_undef = true;
+		
 		if (json_file_name == "tests\\F6.4.json") { AF_undef = true; PF_undef = true; ZF_undef = true; SF_undef = true; }
 		//if (json_file_name == "tests2\\F7.4.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
 		if (json_file_name == "tests\\F6.5.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
@@ -526,6 +542,8 @@ test_rep:
 		exeption_1 = 0; //сброс флага
 	}
 	
+	if (cycle_op && memory.read_2((Instruction_Pointer + *CS * 16) & 0xFFFFF) != 0x90) goto test_rep;//повтор если IP не указывает на 90 (для строк)
+
 	if (test_log) cout << endl << "Result control" << endl;
 	
 	//возвращаем сегмент назад

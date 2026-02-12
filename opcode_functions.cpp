@@ -8121,7 +8121,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 			break;
 		}
 		if (log_to_console) cout << "MOVES_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-		while (CX)
+		if (CX)
 		{
 			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			if (Flag_DF)
@@ -8134,7 +8134,20 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Destination_Index++;
 				Source_Index++;
 			}
+			
 			CX--;
+			
+			if (Flag_segment_override)
+			{
+				Instruction_Pointer--;
+			}
+			
+			return;
+		}
+		else
+		{
+			Instruction_Pointer += 2;
+			return;
 		}
 		break;
 
@@ -8164,7 +8177,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 			break;
 		}
 		if (log_to_console) cout << "MOVES_W (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-		while (CX)
+		if(CX)
 		{
 			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			Destination_Index++;
@@ -8182,6 +8195,17 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Source_Index ++;
 			}
 			CX--;
+			if (Flag_segment_override)
+			{
+				Instruction_Pointer--;
+			}
+
+			return;
+		}
+		else
+		{
+			Instruction_Pointer += 2;
+			return;
 		}
 		break;
 
@@ -8220,9 +8244,9 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 			cout << "]" << endl;;
 		}
 		
-		do
+		if(CX)
 		{
-			if (!CX) break;
+			//if (!CX) break;
 			Result_16 = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] - memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 			OF_Carry = ((memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] & 0x7F) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 0x7F)) >> 7;
 			Flag_CF = (Result_16 >> 8) & 1;
@@ -8242,8 +8266,27 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Destination_Index++;
 				Source_Index++;
 			}
+			
 			CX--;
-		} while (CX && !Flag_ZF);
+			
+			if (Flag_ZF)
+			{
+				Instruction_Pointer += 2;
+				return;
+			}
+			
+			if (Flag_segment_override)
+			{
+				Instruction_Pointer--;
+			}
+
+			return;
+		}
+		else
+		{
+			Instruction_Pointer += 2;
+			return;
+		}
 		
 		break;
 
@@ -8273,9 +8316,8 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 			break;
 		}
 		if (log_to_console) cout << "CMPS_W (" << (int)CX << " word) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]" << endl;
-		do
+		if (CX)
 		{
-			if (!CX) break;
 			Src = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			Dst = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 			Destination_Index++;
@@ -8307,16 +8349,33 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Source_Index ++;
 			}
 			CX--;
-		} while (CX && !Flag_ZF);
+			if (!Flag_ZF)
+			{
+				if (Flag_segment_override)
+				{
+					Instruction_Pointer--; //продолжаем цикл
+				}
+				return;
+			}
+			else
+			{
+				Instruction_Pointer += 2; //выход
+				return;
+			}
+		} 
+		else
+		{
+			Instruction_Pointer += 2;//выход
+			return;
+		}
 		break;
 
 	case 0b10101110:  //SCAS 8
 		
 		if (log_to_console) cout << "SCAS_B (" << (int)CX << " bytes) from [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-		if (!CX) break;
-		do
+		
+		if (CX)
 		{
-			
 			uint16 Result = *ptr_AL - memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 			OF_Carry = ((*ptr_AL & 0x7F) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 0x7F)) >> 7;
 			Flag_CF = (Result >> 8) & 1;
@@ -8334,16 +8393,36 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 			{
 				Destination_Index++;
 			}
+			
 			CX--;
-		} while (CX && !Flag_ZF);
+
+			if (!Flag_ZF)
+			{
+				if (Flag_segment_override)
+				{
+					Instruction_Pointer--; //продолжаем
+				}
+				return;
+			}
+			else
+			{
+				Instruction_Pointer += 2; //выход
+				return;
+			}
+		}
+		else
+		{
+			Instruction_Pointer += 2; //выход
+			return;
+		}
 		break;
 
 	case 0b10101111:  //SCAS 16
 
 		if (log_to_console) cout << "SCAS_W (" << (int)CX << " word) from [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-		do
+		
+		if(CX)
 		{
-			if (!CX) break;
 			*ptr_Dst_L = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
 			Destination_Index++;
 			*ptr_Dst_H = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
@@ -8365,7 +8444,26 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Destination_Index ++;
 			}
 			CX--;
-		} while (CX && !Flag_ZF);
+
+			if (!Flag_ZF)
+			{
+				if (Flag_segment_override)
+				{
+					Instruction_Pointer--; //продолжаем
+				}
+				return;
+			}
+			else
+			{
+				Instruction_Pointer += 2; //выход
+				return;
+			}
+		}
+		else
+		{
+			Instruction_Pointer += 2; //выход
+			return;
+		}
 		break;
 
 	case 0b10101100:  //LODS 8
@@ -8394,7 +8492,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 			break;
 		}
 		if (log_to_console) cout << "LODS_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
-		while (CX)
+		if (CX)
 		{
 			*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			if (Flag_DF)
@@ -8406,6 +8504,16 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Source_Index++;
 			}
 			CX--;
+			if (Flag_segment_override)
+			{
+				Instruction_Pointer--;
+			}
+			return;
+		}
+		else
+		{
+			Instruction_Pointer += 2;
+			return;
 		}
 		break;
 
@@ -8435,7 +8543,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 			break;
 		}
 		if (log_to_console) cout << "LODS_B (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
-		while (CX)
+		if (CX)
 		{
 			*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
 			Source_Index++;
@@ -8449,13 +8557,23 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Source_Index ++;
 			}
 			CX--;
+			if (Flag_segment_override)
+			{
+				Instruction_Pointer--;
+			}
+			return;
+		}
+		else
+		{
+			Instruction_Pointer += 2;
+			return;
 		}
 		break;
 
 	case 0b10101010:  //STOS 8
 
 		if (log_to_console) cout << "STOS_B (" << (int)CX << " bytes) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-		while (CX)
+		if (CX)
 		{
 			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
 			if (Flag_DF)
@@ -8467,13 +8585,23 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Destination_Index++;
 			}
 			CX--;
+			if (Flag_segment_override)
+			{
+				Instruction_Pointer--;
+			}
+			return;
+		}
+		else
+		{
+			Instruction_Pointer += 2;
+			return;
 		}
 		break;
 
 	case 0b10101011:  //STOS 16
 
 		if (log_to_console) cout << "STOS_W (" << (int)CX << " words) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-		while (CX)
+		if (CX)
 		{
 			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
 			Destination_Index++;
@@ -8487,6 +8615,16 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 				Destination_Index ++;
 			}
 			CX--;
+			if (Flag_segment_override)
+			{
+				Instruction_Pointer--;
+			}
+			return;
+		}
+		else
+		{
+			Instruction_Pointer += 2;
+			return;
 		}
 		break;
 
@@ -8499,7 +8637,8 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 			if ((memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] & 0b00111000) == 0b00111000) 
 			{
 				negate_IDIV = true;
-				if (log_to_console) cout << "negate ON ";
+				if (log_to_console) cout << "negate ON [seg over = " << (int)Flag_segment_override << "]";
+				keep_segment_override = 1;
 			}
 		}
 		return;
@@ -8628,19 +8767,28 @@ void REP()			//REP = Repea while CX > 0			[F3]
 			operand_RM_seg = *DS;
 			break;
 		}
-		if (log_to_console) cout << "CMPS_B while == 0 (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]  ";
+		if (log_to_console) cout << "CMPS_B until CX == 0 (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]  ";
 		if (log_to_console)
 		{
+			uint16 pos = 0;
 			cout << "[";
-			for (int i = 0; i < CX; i = i + (1 + Flag_DF * -2)) cout << memory.read_2(Source_Index + i + operand_RM_seg * 16);
+			for (int i = 0; i < CX; i++)
+			{
+				cout << memory.read_2(Source_Index + pos + operand_RM_seg * 16);
+				pos = pos + (1 + Flag_DF * -2);
+			}
 			cout << "][";
-			for (int i = 0; i < CX; i = i + (1 + Flag_DF * -2)) cout << memory.read_2(Destination_Index + i + *ES * 16);
+			pos = 0;
+			for (int i = 0; i < CX; i++)
+			{
+				cout << memory.read_2(Destination_Index + pos + *ES * 16);
+				pos = pos + (1 + Flag_DF * -2);
+			}
 			cout << "]" << endl;
 		}
-				
-		do
+
+		if(CX)
 		{
-			if (!CX) break;
 			Result_16 = memory.read_2(Source_Index + operand_RM_seg * 16) - memory.read_2(Destination_Index + *ES * 16);
 			OF_Carry = ((memory.read_2(Source_Index + operand_RM_seg * 16) & 0x7F) - (memory.read_2(Destination_Index + *ES * 16) & 0x7F)) >> 7;
 			//if (log_to_console || 1) cout << " (" << memory.read_2(Source_Index + *DS * 16) << "-" << memory.read_2(Destination_Index + *ES * 16) << ") ";
@@ -8663,7 +8811,26 @@ void REP()			//REP = Repea while CX > 0			[F3]
 				Source_Index++;
 			}
 			CX--;
-		} while (CX && Flag_ZF);
+			if (CX && Flag_ZF)
+			{
+				if (Flag_segment_override)
+				{
+					Instruction_Pointer--; //если CX>0 и ZF = 0 откатываем префикс сегмента
+				}
+				return;
+			}
+			else
+			{
+				Instruction_Pointer += 2; //если CX=0 выходим
+				return;
+			}
+
+		} 
+		else
+		{
+			Instruction_Pointer += 2;//сразу выход
+			return;
+		}
 		break;
 
 	case 0b10100111:  //CMPS 16
@@ -8915,7 +9082,8 @@ void REP()			//REP = Repea while CX > 0			[F3]
 			if ((memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] & 0b00111000) == 0b00111000)
 			{
 				negate_IDIV = true;
-				if (log_to_console) cout << "negate ON ";
+				if (log_to_console) cout << "negate ON [seg over = " << (int)Flag_segment_override << "]";
+				keep_segment_override = 1;
 			}
 		}
 		return;

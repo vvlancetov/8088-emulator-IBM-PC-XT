@@ -275,12 +275,14 @@ int main(int argc, char* argv[]) {
 	cout << "Running..." << hex << endl;
 	//основной цикл программы
 
+	bp_mgr.set_comments_EN(1);  //включение комментов к коду
+	bp_mgr.set_bp_EN(1);		//включение точек останова
+
 	while (cont_exec)
 	{
 		op_counter++;			//счетчик операций
 		service_counter++;		//счетчик для вызова служебных процедур
 		//bp_mgr.check_points();	//проверка точек останова и печать комментариев к точкам
-		bp_mgr.set_comments_EN(1); //включение комментов к коду
 
 		//служебные подпрограммы
 		if (!service_counter || step_mode || log_to_console)
@@ -382,6 +384,7 @@ int main(int argc, char* argv[]) {
 			uint8 hardware_int = int_ctrl.next_int();
 			if (hardware_int < 8)
 			{
+				//if (hardware_int == 1) step_mode = 1;
 				//cout << "HW INT " << (int)hardware_int << endl;
 				//if (halt_cpu) cout << "HW irq " << (int)hardware_int << endl;
 				//выполняем аппаратное прерывание, меняя IP
@@ -554,7 +557,7 @@ int main(int argc, char* argv[]) {
 		{
 			exeption_1 = 1; //прерывание 1
 			//Flag_TF = 0;
-			step_mode = 1;
+			//step_mode = 1;
 		}
 
 halt_jump:
@@ -869,12 +872,6 @@ void IC8253::sync()
 				}
 				else counters[n].signal_high = true;
 				
-				if (n == 2) //передача уровня сигнала в спикер
-				{
-					if (counters[n].signal_high) speaker.put_sample(1);
-					else speaker.put_sample(-1);
-				}
-
 				if (n == 0) // прерывание таймера
 				{
 					if (!counters[n].signal_high) int_ctrl.request_IRQ(0);
@@ -888,18 +885,6 @@ void IC8253::sync()
 				counters[n].count--;
 				if (counters[n].count > (counters[n].initial_count >> 1)) counters[n].signal_high = true;
 				else counters[n].signal_high = false;
-				/*
-				if (counters[n].signal_high == true)
-				{
-					if (counters[n].count < counters[n].initial_count/2) counters[n].signal_high = false;
-				}
-				*/
-				if (n == 2) //передача уровня сигнала в спикер
-				{
-					if (counters[n].signal_high) speaker.put_sample(1);
-					else speaker.put_sample(-1);
-				}
-				
 			}
 		}
 	}
@@ -949,9 +934,12 @@ void IC8253::sync()
 	if (counters[2].enabled)
 	{
 		//место для счетчика 2
-
 	}
-	
+
+	//генерация звука
+	if (counters[2].signal_high) speaker.put_sample(1);
+	else speaker.put_sample(-1);
+
 	//отдельный таймер для синхронизации реального времени
 	counters[3].count--;
 	if (counters[3].count == 0)
@@ -984,14 +972,14 @@ void IC8253::write_port(uint16 port, uint8 data)
 			counters[n].enabled = true;
 			if (counters[n].mode == 0) counters[n].signal_high = false; //сброс выхода при перезагрузке
 			counters[n].wait_for_data = false; //отмена ожидания загрузки
-			if (n == 2) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
+			if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
 			break;
 		case 2:
 			counters[n].initial_count = counters[n].count = data * 256;
 			counters[n].enabled = true;
 			if (counters[n].mode == 0) counters[n].signal_high = false; //сброс выхода при перезагрузке
 			counters[n].wait_for_data = false; //отмена ожидания загрузки
-			if (n == 2) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
+			if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
 			break;
 		case 3:
 			if (!counters[n].second_byte)
@@ -1756,6 +1744,8 @@ string IC8237::get_ch_data_3(int ch_num)
 //PPI controller
 void IC8255::write_port(uint16 port, uint8 data)
 {
+	static bool port_B_7 = false; //вывод порта B7
+	
 	switch (port)
 	{
 	case 0x60: //port A
@@ -1780,7 +1770,7 @@ void IC8255::write_port(uint16 port, uint8 data)
 			//speaker.beep_off();
 		}
 		
-		if ((data & 2) == 2) // пины 0 и 1
+		if ((data & 3) == 3) // пины 0 и 1
 		{
 			//deferred_msg = deferred_msg + "SPK_ON  ";
 			speaker.beep_on();
@@ -1819,16 +1809,20 @@ void IC8255::write_port(uint16 port, uint8 data)
 		
 		if ((data & 128) == 0) //pin7
 		{
+			//разблокировка клавиатуру
 			//deferred_msg = deferred_msg + "enable_KB ";
-			//if (port_B_7) keyboard.data_line_enabled = true; //включаем передачу данных
+			if (port_B_7) keyboard.next(); //включаем передачу данных
 			keyboard.data_line_enabled = true;
-			//cout << "KB_EN" << endl;
+			//cout << "port_B_7 = 0" << endl;
 			port_B_7 = false;
 		}
 		else
 		{
+			//блокировка клавиатуры
 			//deferred_msg = deferred_msg + "clear_KB ";
 			port_B_7 = true; //переключаем состояние
+			//cout << "port_B_7 = 1" << endl;
+			keyboard.data_line_enabled = false;
 		}
 		
 		Audio_monitor.set_pinout(data & 0b11);

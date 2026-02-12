@@ -26,6 +26,9 @@ extern uint8 service_counter;
 void Breakpointer::load_breakpoints()
 {
 
+	breakpoints.push_back({ 0xfe3d4,"POST[729]: KEYBOARD TEST" });
+	breakpoints.push_back({ 0xff9eb,"POST[729]: KEYBOARD TEST" });
+
 //breakpoints.push_back({0xc81fa,"jmp to 7c00"});
 //breakpoints.push_back({0xc8003,"IBM HDD CTRL"}); 
 //breakpoints.push_back({0xc8127,"IBM HDD CTRL"}); 
