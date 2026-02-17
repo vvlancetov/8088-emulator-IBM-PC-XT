@@ -9629,7 +9629,7 @@ void Call_Jump_Push()				//Indirect (4 operations)
 			Instruction_Pointer = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
 		}
 		
-		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Indirect Jump within Segment to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 		break;
@@ -9648,7 +9648,7 @@ void Call_Jump_Push()				//Indirect (4 operations)
 
 		Instruction_Pointer = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
 		*CS = memory_2[New_Addr_32 + 2] + memory_2[New_Addr_32 + 3] * 256;
-		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Indirect Intersegment Jump to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 		break;
@@ -9706,14 +9706,14 @@ void Call_dir_interseg()		//Direct Intersegment Call
 void Jump_Near_8()				//Direct jump within Segment-Short
 {
 	Instruction_Pointer += DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
-	if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 	if (log_to_console) cout << "Direct jump(8) within Segment-Short to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void Jump_Near_16()				//Direct jump within Segment-Short
 {
 	Instruction_Pointer += DispCalc16(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256) + 3;
-	if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 	if (log_to_console) cout << "Direct jump(16) within Segment-Short to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
@@ -9722,7 +9722,7 @@ void Jump_Far()					//Direct Intersegment Jump
 	uint16 new_IP = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
 	*CS = memory.read_2(Instruction_Pointer + 3 + *CS * 16) + memory.read_2(Instruction_Pointer + 4 + *CS * 16) * 256;
 	Instruction_Pointer = new_IP;
-	if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
+	if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 	if (log_to_console) cout << "Direct Intersegment Jump to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
@@ -9733,16 +9733,16 @@ void JE_JZ()			// JE/JZ = Jump on Equal/Zero
 	if (Flag_ZF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
-		//if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Equal / Zero (JE/JZ) to " << (int)*CS << ":" << (int)Instruction_Pointer;
-		//if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
-		//if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Equal / Zero (JE/JZ)";
-		//if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JL_JNGE()			// JL/JNGE = Jump on Less/Not Greater, or Equal
@@ -9750,16 +9750,16 @@ void JL_JNGE()			// JL/JNGE = Jump on Less/Not Greater, or Equal
 	if (Flag_SF ^ Flag_OF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
-		//if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Less/Not Greater, or Equal (JL/JNGE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
-		//if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
-		//if (log_to_console) SetConsoleTextAttribute(hConsole, 15);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Less/Not Greater, or Equal (JL/JNGE)";
-		//if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JLE_JNG()			// JLE/JNG = Jump on Less, or Equal/Not Greater
@@ -9767,12 +9767,16 @@ void JLE_JNG()			// JLE/JNG = Jump on Less, or Equal/Not Greater
 	if ((Flag_SF ^ Flag_OF) | Flag_ZF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Less, or Equal/Not Greater (JLE/JNG) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Less, or Equal/Not Greater (JLE/JNG)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JB_JNAE()			// JB/JNAE = Jump on Below/Not Above, or Equal
@@ -9780,12 +9784,16 @@ void JB_JNAE()			// JB/JNAE = Jump on Below/Not Above, or Equal
 	if (Flag_CF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Below/Not Above, or Equal (JB/JNAE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Below/Not Above, or Equal (JB/JNAE)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JBE_JNA()			// JBE/JNA = Jump on Below, or Equal/Not Above
@@ -9793,12 +9801,16 @@ void JBE_JNA()			// JBE/JNA = Jump on Below, or Equal/Not Above
 	if ((Flag_ZF | Flag_CF))
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Below, or Equal/Not Above (JBE/JNA) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Below, or Equal/Not Above (JBE/JNA)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JP_JPE()			// JP/JPE = Jump on Parity/Parity Even
@@ -9806,12 +9818,16 @@ void JP_JPE()			// JP/JPE = Jump on Parity/Parity Even
 	if (Flag_PF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Parity/Parity Even (JP/JPE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Parity/Parity Even (JP/JPE)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JO()				// JO = Jump on Overflow
@@ -9819,12 +9835,16 @@ void JO()				// JO = Jump on Overflow
 	if (Flag_OF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Overflow (JO) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Overflow (JO)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JS()				// JS = Jump on Sign
@@ -9832,12 +9852,16 @@ void JS()				// JS = Jump on Sign
 	if (Flag_SF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Sign (JS) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Sign (JS)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JNE_JNZ()			// JNE/JNZ = Jump on Not Equal/Not Zero
@@ -9845,12 +9869,16 @@ void JNE_JNZ()			// JNE/JNZ = Jump on Not Equal/Not Zero
 	if (!Flag_ZF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Equal/Not Zero (JNE/JNZ) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Not Equal/Not Zero (JNE/JNZ)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JNL_JGE()			// JNL/JGE = Jump on Not Less/Greater, or Equal
@@ -9858,12 +9886,16 @@ void JNL_JGE()			// JNL/JGE = Jump on Not Less/Greater, or Equal
 	if (!(Flag_SF ^ Flag_OF))
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Less/Greater, or Equal (JNL/JGE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Not Less/Greater, or Equal (JNL/JGE)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JNLE_JG()			// JNLE/JG = Jump on Not Less, or Equal/Greater
@@ -9871,12 +9903,16 @@ void JNLE_JG()			// JNLE/JG = Jump on Not Less, or Equal/Greater
 	if (Flag_ZF || (Flag_SF ^ Flag_OF))
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Not Less, or Equal/Greater (JNLE/JG)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Less, or Equal/Greater (JNLE/JG) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JNB_JAE()			// JNB/JAE = Jump on Not Below/Above, or Equal
@@ -9884,12 +9920,16 @@ void JNB_JAE()			// JNB/JAE = Jump on Not Below/Above, or Equal
 	if (!Flag_CF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Below/Above, or Equal (JNB/JAE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Not Below/Above, or Equal (JNB/JAE)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JNBE_JA()			// JNBE/JA = Jump on Not Below, or Equal/Above
@@ -9897,12 +9937,16 @@ void JNBE_JA()			// JNBE/JA = Jump on Not Below, or Equal/Above
 	if (!(Flag_CF | Flag_ZF))
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Below, or Equal/Above (JNBE/JA) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Not Below, or Equal/Above (JNBE/JA)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JNP_JPO()			// JNP/JPO = Jump on Not Parity/Parity Odd
@@ -9910,12 +9954,16 @@ void JNP_JPO()			// JNP/JPO = Jump on Not Parity/Parity Odd
 	if (!Flag_PF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Parity/Parity Odd (JNP/JPO) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Not Parity/Parity Odd (JNP/JPO)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JNO()				// JNO = Jump on Not Overflow
@@ -9923,12 +9971,16 @@ void JNO()				// JNO = Jump on Not Overflow
 	if (!Flag_OF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Overflow (JNO) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Not Overflow (JNO)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void JNS()				// JNS = Jump on Not Sign
@@ -9936,12 +9988,16 @@ void JNS()				// JNS = Jump on Not Sign
 	if (!Flag_SF)
 	{
 		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Sign (JNS) to " << (int)*CS << ":" << (int)Instruction_Pointer;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 	else
 	{
 		Instruction_Pointer += 2;
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "NOT Jump on Not Sign (JNS)";
+		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	}
 }
 void LOOP()			// LOOP = Loop CX Times
@@ -10338,7 +10394,7 @@ void STI()					//Set Interrupt
 {
 	Flag_IF = true;
 	if (log_to_console) cout << "Set Interrupt Flag (INT enable)";
-	int_ctrl.set_timeout(1); //ставим задержку неактивности иначе возможны ошибки
+	int_ctrl.set_timeout(2); //ставим задержку неактивности иначе возможны ошибки
 	Instruction_Pointer++;
 }
 void HLT()					//Halt

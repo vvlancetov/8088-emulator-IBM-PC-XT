@@ -19,11 +19,13 @@ private:
 	uint32 pressed_time_us[256] = { 0 };
 	std::vector<uint8> out_buffer;
 	uint8 sleep_timer = 0;
+	bool fetch_new = 0;
+	bool do_int = 0;
 
 public:
 	KBD();
+	bool enabled = 0;
 	bool CLK_high = false;
-	bool data_line_enabled = false;
 	void poll_keys(uint32 elapsed_us, bool has_focus);			//синхронизация клавиатуры
 	uint8 read_scan_code();	 //чтение скан-кода клавиатуры
 	uint8 get_buf_size();	 //проверка объема буфера ввода

@@ -275,14 +275,22 @@ int main(int argc, char* argv[]) {
 	cout << "Running..." << hex << endl;
 	//основной цикл программы
 
-	bp_mgr.set_comments_EN(1);  //включение комментов к коду
-	bp_mgr.set_bp_EN(1);		//включение точек останова
+	bp_mgr.set_comments_EN(0);  //включение комментов к коду
+	bp_mgr.set_bp_EN(0);		//включение точек останова
 
 	while (cont_exec)
 	{
 		op_counter++;			//счетчик операций
 		service_counter++;		//счетчик для вызова служебных процедур
-		//bp_mgr.check_points();	//проверка точек останова и печать комментариев к точкам
+		bp_mgr.check_points();	//проверка точек останова и печать комментариев к точкам
+
+		//переход в пошаговый режим при CX=0
+		if ((CX == 0) && run_until_CX0)
+		{
+			run_until_CX0 = false;
+			step_mode = true;
+			log_to_console = true;
+		}
 
 		//служебные подпрограммы
 		if (!service_counter || step_mode || log_to_console)
@@ -361,7 +369,8 @@ int main(int argc, char* argv[]) {
 		}
 		else
 		{
-			for (int r = 0; r < empty_cycles; r++); //замедление
+			uint16 s = 0;
+			for (int r = 0; r < empty_cycles; r++) s = s + r; //замедление
 		}
 
 		pc_timer.sync();	//синхронизация таймера
@@ -561,6 +570,7 @@ int main(int argc, char* argv[]) {
 		}
 
 halt_jump:
+		
 		//уменьшаем таймер сна контроллера прерываний после выполнения команды
 		if (int_ctrl.sleep_timer) int_ctrl.sleep_timer--;
 
@@ -1745,7 +1755,7 @@ string IC8237::get_ch_data_3(int ch_num)
 void IC8255::write_port(uint16 port, uint8 data)
 {
 	static bool port_B_7 = false; //вывод порта B7
-	
+	//if (port == 0x61)cout << "port 61 b0 & b1 = " << (bitset<8>)data << endl;
 	switch (port)
 	{
 	case 0x60: //port A
@@ -1812,7 +1822,7 @@ void IC8255::write_port(uint16 port, uint8 data)
 			//разблокировка клавиатуру
 			//deferred_msg = deferred_msg + "enable_KB ";
 			if (port_B_7) keyboard.next(); //включаем передачу данных
-			keyboard.data_line_enabled = true;
+			keyboard.enabled = true;
 			//cout << "port_B_7 = 0" << endl;
 			port_B_7 = false;
 		}
@@ -1822,7 +1832,7 @@ void IC8255::write_port(uint16 port, uint8 data)
 			//deferred_msg = deferred_msg + "clear_KB ";
 			port_B_7 = true; //переключаем состояние
 			//cout << "port_B_7 = 1" << endl;
-			keyboard.data_line_enabled = false;
+			keyboard.enabled = false;
 		}
 		
 		Audio_monitor.set_pinout(data & 0b11);
@@ -1852,8 +1862,8 @@ uint8 IC8255::read_port(uint16 port)
 	{
 	case 0x60:
 		//read scan code from keyboard
-		out = keyboard.read_scan_code();
-		//deferred_msg = "KB read 0x60 key_code = " + to_string(out);
+		//cout << "read scan code = " << int_to_hex(scan_code_latch, 2) << endl;
+		return scan_code_latch;
 		break;
 
 	case 0x61:
@@ -1999,7 +2009,7 @@ void IC8259::write_port(uint16 port, uint8 data)
 		//Operation Command Word 1
 		if (log_to_console_INT) deferred_msg = "INT_Ctrl Command_1: masked bits " + int_to_bin(data);
 		IM_REG = data;
-		sleep_timer = 2;
+		set_timeout(6);
 		return;
 	}
 	
@@ -2032,7 +2042,7 @@ void IC8259::write_port(uint16 port, uint8 data)
 			if (log_to_console_INT) cout << int_to_bin(IS_REG);
 		}
 		
-		sleep_timer = 2;
+		set_timeout(6);
 		return;
 	}
 
@@ -2071,7 +2081,7 @@ void IC8259::write_port(uint16 port, uint8 data)
 			if (log_to_console_INT) deferred_msg += "SET_SPEC_MASK ";
 			break;
 		}
-		
+		set_timeout(6);
 		return;
 	}
 }
@@ -2114,6 +2124,7 @@ uint8 IC8259::request_IRQ(uint8 irq)
 		if (log_to_console_INT) deferred_msg = "INT_Ctr: IRQ_" + to_string(irq) + " is masked and request denied ";
 		return 2; //выход если маскировано данное INT
 	}
+	
 	if ((IS_REG >> irq) & 1)
 	{
 		if (log_to_console_INT) deferred_msg = "INT_Ctr: IRQ_" + to_string(irq) + " in service. Request denied ";
@@ -2122,6 +2133,7 @@ uint8 IC8259::request_IRQ(uint8 irq)
 
 	//дополняем регистр запросов
 	IR_REG = IR_REG | (1 << irq);
+	//sleep_timer = 10;
 	return 0;
 }
 uint8 IC8259::get_last_int() { return last_INT; }
@@ -2144,7 +2156,7 @@ uint8 IC8259::next_int()
 {
 	if (sleep_timer) 
 	{
-		sleep_timer--;
+		//sleep_timer--;
 		if (log_to_console_INT) deferred_msg = "sleep timer = " + to_string(sleep_timer) + " return 255";
 		return 255;
 	}
@@ -2188,7 +2200,7 @@ string IC8259::get_ch_data(int ch)
 }
 void IC8259::set_timeout(uint8 delay)
 {
-	sleep_timer = delay;
+	if (sleep_timer < delay) sleep_timer = delay;
 }
 
 void process_debug_keys()
@@ -2211,6 +2223,8 @@ void process_debug_keys()
 	//мониторинг нажатия клавиш в обычном режиме
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F9) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up) { step_mode = !step_mode; keys_up = false; }
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up) { go_forward = 1; keys_up = false; }
+	
+	//показ отладочных окон
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num1) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		show_debug_window = !show_debug_window;
@@ -2218,7 +2232,6 @@ void process_debug_keys()
 		else debug_monitor.hide();
 		keys_up = false;
 	}
-
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num2) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		show_fdd_window = !show_fdd_window;
@@ -2226,7 +2239,6 @@ void process_debug_keys()
 		else FDD_monitor.hide();
 		keys_up = false;
 	}
-
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		show_hdd_window = !show_hdd_window;
@@ -2234,7 +2246,6 @@ void process_debug_keys()
 		else HDD_monitor.hide();
 		keys_up = false;
 	}
-
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		show_audio_window = !show_audio_window;
@@ -2242,7 +2253,6 @@ void process_debug_keys()
 		else Audio_monitor.hide();
 		keys_up = false;
 	}
-
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		show_memory_window = !show_memory_window;
@@ -2250,7 +2260,6 @@ void process_debug_keys()
 		else Mem_monitor.hide();
 		keys_up = false;
 	}
-
 
 	//включаем пропуск цикла
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F5) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))

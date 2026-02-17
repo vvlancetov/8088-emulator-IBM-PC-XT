@@ -1019,12 +1019,19 @@ void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
 	text.setPosition(sf::Vector2f(580, 690));
 	main_window.draw(text);
 
+	//INT sleep timer
+	text.setString(to_string(int_ctrl.sleep_timer));
+	text.setPosition(sf::Vector2f(580, 750));
+	text.setFillColor(sf::Color::White);
+	main_window.draw(text);
+
+
+	//keyboard buffer data
 	text.setString("| Keyboard");
 	text.setPosition(sf::Vector2f(630, 690));
 	text.setFillColor(sf::Color::White);
 	main_window.draw(text);
 
-	//keyboard buffer size
 	text.setString("| KB_buf=" + to_string(keyboard.get_buf_size()));
 	text.setPosition(sf::Vector2f(630, 750));
 	main_window.draw(text);
@@ -1035,7 +1042,7 @@ void Dev_mon_device::sync(int elapsed_ms)   // синхронизация
 	main_window.draw(text);
 
 	//KB_line status
-	text.setString("| KB_line=" + to_string(keyboard.data_line_enabled));
+	text.setString("| KB_line=" + to_string(keyboard.enabled));
 	text.setPosition(sf::Vector2f(630, 810));
 	main_window.draw(text);
 

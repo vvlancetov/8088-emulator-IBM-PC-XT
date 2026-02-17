@@ -198,9 +198,13 @@ private:
 	bool switches_hign = false;
 	uint8 port_B_out = 0;
 	bool port_B_6 = false; //уровень вывода 6 порта B
-	//bool port_B_7 = false; //уровень вывода 7 порта B
+	uint8 scan_code_latch = 0;
 
 public:
 	void write_port(uint16 port, uint8 data);
 	uint8 read_port(uint16 port);
+	void set_scancode(uint8 code)
+	{
+		scan_code_latch = code;
+	};
 };

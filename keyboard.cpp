@@ -15,13 +15,15 @@ using namespace std;
 extern IC8259 int_ctrl;
 extern bool log_to_console;
 
+extern IC8255 ppi_ctrl;
+
 //клавиатура
 void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 {
 	//has_focus - флаг наличия фокуса у окна монитора
 
 	//синхронизируем нажатия клавишь
-	if (!data_line_enabled) return; //если отключена - возврат
+	if (!enabled) return; //если отключена - возврат
 	if (!CLK_high) return; //
 
 	bool special = false;
@@ -1953,7 +1955,8 @@ uint8 KBD::get_buf_size()
 }
 uint8 KBD::read_scan_code()
 {
-	static uint8 code_out = 0;
+	//FF - символ переполнения буфера
+	static uint8 code_out = 0xAA;
 	if (out_buffer.size())
 	{
 		code_out = out_buffer.at(0);
@@ -1968,9 +1971,11 @@ void KBD::set_CLK_high()
 	{
 		//soft reset
 		//cout << "KB_SOFT_RES" << endl;
-		//out_buffer.clear();
-		//out_buffer.push_back(0xAA);
-		//sleep_timer = 10; //небольшая задержка устройства
+		out_buffer.clear();
+		out_buffer.push_back(0xAA);
+		sleep_timer = 5; //небольшая задержка устройства
+		fetch_new = 1;
+		do_int = 0;
 	}
 	CLK_high = true;
 }
@@ -1982,19 +1987,31 @@ void KBD::set_CLK_low()
 void KBD::sync()  //синхронизация клавиатуры
 {
 	//проверка таймера задержки
-
 	if (sleep_timer)  //уменьшаем таймер
 	{
 		sleep_timer--;
 		return;
 	}
 
+	if (fetch_new)
+	{
+		if (get_buf_size() && enabled && CLK_high)
+		{
+			ppi_ctrl.set_scancode(out_buffer.at(0)); //записываем код в буфер PPI
+			out_buffer.erase(out_buffer.begin());	//удаляем код из буфера клавиатуры
+			fetch_new = 0;
+			do_int = 1;
+		}
+	}
+
 	//проверка буфера клавиатуры
-	if (get_buf_size() && data_line_enabled && CLK_high)
+	if (do_int && enabled)
 	{
 		if (!(int_ctrl.IS_REG & 0b00000010)) {
+			//out_buffer.erase(out_buffer.begin());	//удаляем из буфера
 			int_ctrl.request_IRQ(1);
-			//if (log_to_console) cout << "[KBD] INT 1 ";
+			//enabled = 0; //отключаемся
+			if (log_to_console) cout << "[KBD] INT 1 " << endl;
 			sleep_timer = 5; //добавим небольшую задержку
 		}
 	}
@@ -2002,18 +2019,24 @@ void KBD::sync()  //синхронизация клавиатуры
 
 void KBD::next()  //синхронизация клавиатуры
 {
-	if (!CLK_high) return;
-	if (out_buffer.size()) out_buffer.erase(out_buffer.begin());
-	if (log_to_console)
+	fetch_new = 1;
+	do_int = 0;
+	ppi_ctrl.set_scancode(0); //записываем нули в буфер PPI
+	//cout << "KB -> fetch new key" << endl;
+	return;
+	
+	//if (!CLK_high) return;
+	//if (!data_line_enabled) return; //если отключена - возврат
+	//if (out_buffer.size()) out_buffer.erase(out_buffer.begin());
+	if (log_to_console || 1)
 	{
-		if (out_buffer.size()) cout << "[KB_next] 0x" << (int)out_buffer.at(0) << " ";
-		else cout << "[KB_next] 0x" << (int)255 << "(empty) ";
+		//if (out_buffer.size()) cout << "\n[KB_next] 0x" << (int)out_buffer.at(0) << " ";
+		//else cout << "\n[KB_next] 0x" << (int)0 << "(empty) ";
 	}
 }
 
 KBD::KBD()
 {
 	out_buffer.clear();
-	//out_buffer.push_back(0xFF);
 	out_buffer.push_back(0xAA);
 }
