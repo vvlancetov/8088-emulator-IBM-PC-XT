@@ -50,6 +50,7 @@ private:
 	uint8 under_line_pos = 10;	 //позици€ линии подчеркивани€ (по высоте)
 	uint8 cursor_format = 1;	 //формат курсора: 0 - мигающий блок, 1 - мигающий штрих, 2 - инверсный блок, 3 - немигающий штрих
 	bool transp_attr = true;			 //невидимый атрибут пол€ (при установке специальных атрибутов) 0 - невидимый, 1 - обычный (с разрывами)
+	
 	// ============= новые команды
 
 	uint8 sel_reg = 0; //выбранный регистр дл€ записи
@@ -71,6 +72,10 @@ private:
 	int elapsed_ms = 0;				//период времени
 	std::thread t;					//указатель на поток
 	bool do_render = true;			//запрос отрисовки
+
+	//масштаб
+	float display_scale = 5;
+	bool do_resize = 0;
 
 public:
 	sf::Font font;
@@ -101,6 +106,8 @@ public:
 	void show();								//создать окно
 	void hide();								//убрать окно
 	bool is_visible();							//проверка наличи€ окна
+	void scale_up();
+	void scale_down();
 };
 
 //монитор отладки
@@ -221,6 +228,9 @@ private:
 	
 	bool do_render = 0;
 	int elapsed_ms = 0;				//период времени
+	//масштаб
+	float display_scale = 5;
+	bool do_resize = 0;
 
 public:
 	
@@ -238,6 +248,8 @@ public:
 	void hide();								//убрать окно
 	void update(int new_elapsed_ms);				//синхронизаци€
 	bool is_visible();							//проверка наличи€ окна
+	void scale_up();
+	void scale_down();
 };
 
 //EGA videocard
@@ -296,6 +308,10 @@ private:
 	uint8 CGA_Color_Select_Register = 0;
 	uint8 EGA_Mode_Select_Register = 0;
 
+	//масштаб
+	float display_scale = 5;
+	bool do_resize = 0;
+
 public:
 
 	EGA_videocard();
@@ -312,6 +328,8 @@ public:
 	void show();								//создать окно
 	void hide();								//убрать окно
 	bool is_visible();							//проверка наличи€ окна
+	void scale_up();
+	void scale_down();
 };
 
 //=================== —“ј¬»“№ после определени€ видеокарт
@@ -328,7 +346,7 @@ private:
 public:
 	//конструктор
 	Monitor();
-	
+
 	//Ўрифт дл€ отладочных сообщений
 	sf::Font font;
 	
@@ -342,4 +360,6 @@ public:
 	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
 	bool has_focus();							//проверить наличие фокуса
 	void update(int new_elapsed_ms);				//синхронизаци€
+	void scale_up();
+	void scale_down();
 };

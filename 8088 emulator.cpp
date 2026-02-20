@@ -2224,7 +2224,9 @@ void process_debug_keys()
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num2) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
-		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMinus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
 		) keys_up = true;
 
 	//мониторинг нажатия клавиш в обычном режиме
@@ -2265,6 +2267,17 @@ void process_debug_keys()
 		show_memory_window = !show_memory_window;
 		if (show_memory_window) Mem_monitor.show();
 		else Mem_monitor.hide();
+		keys_up = false;
+	}
+	//изменения масштаба
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		monitor.scale_up();
+		keys_up = false;
+	}
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMinus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		monitor.scale_down();
 		keys_up = false;
 	}
 

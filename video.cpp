@@ -130,9 +130,10 @@ extern std::chrono::high_resolution_clock Hi_Res_Clk;
 void CGA_videocard::main_loop()   // синхронизация
 {
 	//создаем окно
-	main_window.create(sf::VideoMode(sf::Vector2u(window_size_x, window_size_y)), window_title, sf::Style::Titlebar, sf::State::Windowed);
+	main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
 	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setFramerateLimit(60);
+	main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+	main_window.setFramerateLimit(0);
 	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
@@ -144,6 +145,11 @@ void CGA_videocard::main_loop()   // синхронизация
 		if (do_render)
 		{
 			do_render = 0;
+			if (do_resize)
+			{
+				main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+				do_resize = 0;
+			}
 			//рисуем окно
 			render();
 			//события окна
@@ -193,7 +199,7 @@ void CGA_videocard::render()
 	sf::Text text(font);		//обычный шрифт
 
 	main_window.setActive(1);
-	main_window.clear();// очистка экрана
+	main_window.clear();		// очистка экрана
 
 	//проверка бита включения экрана
 	if ((CGA_Mode_Select_Register & 8) == 0) goto exit; //карта отключена
@@ -218,9 +224,8 @@ void CGA_videocard::render()
 		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
 		rectangle.setPosition(sf::Vector2f(0, 0));
 		rectangle.setFillColor(border);
-		//rectangle.setFillColor(sf::Color(0,0,60));
-
 		main_window.draw(rectangle);
+
 		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
 		rectangle.setPosition(sf::Vector2f(20, 20));
 		rectangle.setFillColor(sf::Color(0, 0, 0));
@@ -272,11 +277,11 @@ void CGA_videocard::render()
 
 				//рисуем сам символ
 				if (!blink || cursor_flipflop)
-					//if (!blink)
 				{
 					if (width == 40)
 					{
 						font_sprite_40.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5, font_t_y * 8 * 5), sf::Vector2i(8 * 5, 8 * 5)));
+						//font_sprite_40.setScale(sf::Vector2f(1, 1));
 						font_sprite_40.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
 						font_sprite_40.setColor(fg_color);
 						main_window.draw(font_sprite_40);
@@ -284,9 +289,10 @@ void CGA_videocard::render()
 					else
 					{
 						font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
+						//font_sprite_80.setScale(sf::Vector2f(1, 1));
 						font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
 						font_sprite_80.setColor(fg_color);
-						main_window.draw(font_sprite_80);
+						main_window.draw(font_sprite_80);						
 					}
 				}
 
@@ -301,7 +307,7 @@ void CGA_videocard::render()
 					{
 						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
 						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(40, (registers[0xb] - registers[0xa] + 1) * 6));
+						cursor_rectangle.setSize(sf::Vector2f(8 * 5, (registers[0xb] - registers[0xa] + 1) * 1.2 * 5));
 						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, (y * 8 + registers[0xa]) * 5 * 1.2 + 20));
 						cursor_rectangle.setFillColor(fg_color);
 						//rectangle.setFillColor(sf::Color(0,0,60));
@@ -318,7 +324,7 @@ void CGA_videocard::render()
 						//main_window.draw(font_sprite_80);
 						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
 						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(20, (registers[0xb] - registers[0xa] + 1) * 6));
+						cursor_rectangle.setSize(sf::Vector2f(8 * 5, (registers[0xb] - registers[0xa] + 1) * 1.2 * 5));
 						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + registers[0xa]) * 5 * 1.2 + 20));
 						cursor_rectangle.setFillColor(fg_color);
 						main_window.draw(cursor_rectangle);
@@ -357,7 +363,7 @@ void CGA_videocard::render()
 				palette_shift = 0; //первый ряд палитры
 			}
 			//start_address = 0;
-			CGA_320_palette_sprite.setScale({ 1,1 });
+			
 			//cout << "colorEN " << (int)color_enable << " intens " << (int)intensity << " palette " << (int)((CGA_Mode_Select_Register >> 5) & 1) << " p_shift " << (int)palette_shift <<  endl;
 			//четные строки
 			for (int y = 0; y < 100; ++y)
@@ -397,8 +403,8 @@ void CGA_videocard::render()
 			int height = 200;
 
 			//масштаб точек
-			float display_x_scale = 2.5; // (float)(GAME_WINDOW_X_RES - 40) / width;  //1600    5 или 2,5
-			float display_y_scale = 6; // (float)(GAME_WINDOW_Y_RES - 40) / height; //1200    6
+			float display_x_scale = 5 / 2.0; // (float)(GAME_WINDOW_X_RES - 40) / width;  //1600    5 или 2,5
+			float display_y_scale = 5 * 1.2; // (float)(GAME_WINDOW_Y_RES - 40) / height; //1200    6
 			dot.setScale(sf::Vector2f(display_x_scale, display_y_scale));
 
 			//start_address  - начало буфера
@@ -412,7 +418,7 @@ void CGA_videocard::render()
 					uint8 dot_color = ((memory.read(0xB8000 + start_address + 80 * y + (x >> 3)) >> (7 - (x % 8))) & 1);
 
 					//рисуем пиксел
-					dot.setPosition(sf::Vector2f(x * display_x_scale + 20, y * 2 * display_y_scale + 20)); //20 - бордюр
+					dot.setPosition(sf::Vector2f(x* display_x_scale + 20, y * 2 * display_y_scale + 20)); //20 - бордюр
 					if (dot_color)
 					{
 						dot.setFillColor(CGA_colors[CGA_Color_Select_Register & 15]);
@@ -421,7 +427,7 @@ void CGA_videocard::render()
 
 					//нечетные строки
 					dot_color = (memory.read(0xBA000 + start_address + 80 * y + (x >> 3)) >> (7 - (x % 8))) & 1;
-					dot.setPosition(sf::Vector2f(x * display_x_scale + 20, (y * 2 + 1) * display_y_scale + 20)); //20 - бордюр
+					dot.setPosition(sf::Vector2f(x* display_x_scale + 20, (y * 2 + 1) * display_y_scale + 20)); //20 - бордюр
 					if (dot_color)
 					{
 						dot.setFillColor(CGA_colors[CGA_Color_Select_Register & 15]);
@@ -512,22 +518,24 @@ CGA_videocard::CGA_videocard()   // конструктор класса
 
 	display_mode = 3;
 
-	//инициализируем графические константы
-	GAME_WINDOW_X_RES = 320 * 5 + 40;	// масштаб 1:5 + 500 px для отладки
-	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
-
 	//получаем данные о текущем дисплее
 	my_display_H = sf::VideoMode::getDesktopMode().size.y;
 	my_display_W = sf::VideoMode::getDesktopMode().size.x;
+	
+	//базовое разрешение
+	GAME_WINDOW_X_RES = 320 * 5 + 40;		 // масштаб 1:5 + 500 px для отладки
+	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
 
-	cout << "Video Init " << my_display_H << " x " << my_display_W << " display" << endl;
+	display_scale = floor(5 * my_display_H / GAME_WINDOW_Y_RES);
+	
+	cout << "Video Init (CGA) " << my_display_H << " x " << my_display_W << " display" << " scale " << (int)display_scale << endl;
 
 	//задаем переменные окна
 	window_title = "IBM PC/XT emulator. CGA videocard.";		//заголовок окна
-	window_pos_x = my_display_W - GAME_WINDOW_X_RES - 10;		//позиция окна
-	window_pos_y = 0;											//позиция окна
-	window_size_x = GAME_WINDOW_X_RES;							//размер окна
-	window_size_y = GAME_WINDOW_Y_RES;							//размер окна
+	window_pos_x = (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
+	window_pos_y = (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
+	window_size_x = GAME_WINDOW_X_RES * display_scale / 5;			//размер окна
+	window_size_y = GAME_WINDOW_Y_RES * display_scale / 5;			//размер окна
 	cursor_clock.restart();										//запускаем таймер мигания
 
 	//создаем массив цветов CGA
@@ -726,6 +734,21 @@ bool CGA_videocard::is_visible()
 {
 	return visible;
 }
+void CGA_videocard::scale_up()
+{
+	if (display_scale < 8) display_scale++;
+	window_size_x = 320 * display_scale + 40;	// масштаб 1:5 + 500 px для отладки
+	window_size_y = 200 * 1.2 * display_scale + 40;  // масштаб 1:5
+	do_resize = 1;
+}
+void CGA_videocard::scale_down()
+{
+	if (display_scale > 1) display_scale--;
+	window_size_x = 320 * display_scale + 40;	// масштаб 1:5 + 500 px для отладки
+	window_size_y = 200 * 1.2 * display_scale + 40;  // масштаб 1:5
+	do_resize = 1;
+}
+
 
 //отладочные экраны
 Dev_mon_device::Dev_mon_device(uint16 w, uint16 h, string title, uint16 x_pos, uint16 y_pos)   // конструктор класса
@@ -748,7 +771,7 @@ void Dev_mon_device::main_loop()   // синхронизация
 	//создаем окно
 	main_window.create(sf::VideoMode(sf::Vector2u(window_size_x, window_size_y)), window_title, sf::Style::Titlebar, sf::State::Windowed);
 	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setFramerateLimit(60);
+	main_window.setFramerateLimit(0);
 	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
@@ -1331,7 +1354,7 @@ void FDD_mon_device::main_loop()
 	//создаем окно
 	main_window.create(sf::VideoMode(sf::Vector2u(window_size_x, window_size_y)), window_title, sf::Style::Titlebar, sf::State::Windowed);
 	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setFramerateLimit(60);
+	main_window.setFramerateLimit(0);
 	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
@@ -1422,7 +1445,7 @@ void HDD_mon_device::main_loop()
 	//создаем окно
 	main_window.create(sf::VideoMode(sf::Vector2u(window_size_x, window_size_y)), window_title, sf::Style::Titlebar, sf::State::Windowed);
 	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setFramerateLimit(60);
+	main_window.setFramerateLimit(0);
 	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
@@ -1515,7 +1538,7 @@ void Mem_mon_device::main_loop()
 	//создаем окно
 	main_window.create(sf::VideoMode(sf::Vector2u(window_size_x, window_size_y)), window_title, sf::Style::Titlebar, sf::State::Windowed);
 	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setFramerateLimit(60);
+	main_window.setFramerateLimit(0);
 	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
@@ -1705,23 +1728,30 @@ void Mem_mon_device::update(int new_elapsed_ms)
 void MDA_videocard::main_loop()
 {
 	//создаем окно
-	main_window.create(sf::VideoMode(sf::Vector2u(window_size_x, window_size_y)), window_title, sf::Style::Titlebar, sf::State::Windowed);
+	main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
 	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setFramerateLimit(60);
+	main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+	main_window.setFramerateLimit(0);
 	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	main_window.setActive(1);
 
 	while (visible)
 	{
 		if (do_render)
 		{
+			do_render = 0;
+			if (do_resize)
+			{
+				main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+				do_resize = 0;
+			}
 			//рисуем окно
 			render();
 			//события окна
 			while (main_window.pollEvent()) {};
-			do_render = 0;
 		}
 		else
 		{
@@ -1907,7 +1937,8 @@ void MDA_videocard::render()					//синхронизация
 
 	debug_mess_1 = to_string(1000000 / (duration_cast<microseconds>(Hi_Res_t_end - Hi_Res_t_start).count() + 1));
 	text.setString(debug_mess_1);
-	text.setPosition(sf::Vector2f(100, 1000));
+	text.setCharacterSize(20);
+	text.setPosition(sf::Vector2f(0, 0));
 	text.setFillColor(sf::Color(255, 0, 0));
 	text.setOutlineThickness(3.1);
 	if (debug_mess_1 != "") main_window.draw(text);
@@ -1918,7 +1949,6 @@ exit:
 	main_window.setActive(0);
 	Hi_Res_t_start = Hi_Res_Clk.now();
 }
-
 void MDA_videocard::write_port(uint16 port, uint8 data)	//запись в порт адаптера
 {
 	if (log_to_console) cout << "MDA write port " << (int)port << " data " << (bitset<8>)data << endl;
@@ -1995,7 +2025,6 @@ bool MDA_videocard::has_focus()							//проверить наличие фокуса
 }
 MDA_videocard::MDA_videocard()							//конструктор
 {
-
 	//инициализируем графические константы
 	GAME_WINDOW_X_RES = 320 * 5 + 40;	// масштаб 1:5 + 500 px для отладки
 	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
@@ -2004,14 +2033,20 @@ MDA_videocard::MDA_videocard()							//конструктор
 	my_display_H = sf::VideoMode::getDesktopMode().size.y;
 	my_display_W = sf::VideoMode::getDesktopMode().size.x;
 
-	cout << "Video Init " << my_display_H << " x " << my_display_W << " display" << endl;
+	//базовое разрешение
+	GAME_WINDOW_X_RES = 320 * 5 + 40;		 // масштаб 1:5 + 500 px для отладки
+	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
+
+	display_scale = floor(5 * my_display_H / GAME_WINDOW_Y_RES);
+
+	cout << "Video Init (MDA) " << my_display_H << " x " << my_display_W << " display" << " scale " << (int)display_scale << endl;
 
 	//задаем переменные окна
 	window_title = "IBM PC/XT emulator. MDA videocard.";		//заголовок окна
-	window_pos_x = my_display_W - GAME_WINDOW_X_RES - 10;		//позиция окна
-	window_pos_y = 0;											//позиция окна
-	window_size_x = GAME_WINDOW_X_RES;							//размер окна
-	window_size_y = GAME_WINDOW_Y_RES;							//размер окна
+	window_pos_x = (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
+	window_pos_y = (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
+	window_size_x = GAME_WINDOW_X_RES * display_scale / 5;			//размер окна
+	window_size_y = GAME_WINDOW_Y_RES * display_scale / 5;			//размер окна
 	cursor_clock.restart();										//запускаем таймер мигания
 }
 void MDA_videocard::show()
@@ -2038,37 +2073,24 @@ bool MDA_videocard::is_visible()
 {
 	return visible;
 }
+void MDA_videocard::scale_up()
+{
+	if (display_scale < 8) display_scale++;
+	window_size_x = 320 * display_scale + 40;	// масштаб 1:5 + 500 px для отладки
+	window_size_y = 200 * 1.2 * display_scale + 40;  // масштаб 1:5
+	do_resize = 1;
+}
+void MDA_videocard::scale_down()
+{
+	if (display_scale > 1) display_scale--;
+	window_size_x = 320 * display_scale + 40;	// масштаб 1:5 + 500 px для отладки
+	window_size_y = 200 * 1.2 * display_scale + 40;  // масштаб 1:5
+	do_resize = 1;
+}
 
 //==================== EGA videocard =============
 EGA_videocard::EGA_videocard()							//конструктор
 {
-	/*
-		Режимы работы
-
-		Текстовые
-		0 - 40 x 25 символов (8х8), 2 байта на символ, 320х200 пикселей, подавление цвета (BW)
-		1 - 40 x 25 символов (8х8), 2 байта на символ, 320х200 пикселей, цвет есть
-		2 - 80 х 25 символов (8х8), 2 байта на символ, 640х200 пикселей, подавление цвета (BW)
-		3 - 80 х 25 символов (8х8), 2 байта на символ, 640х200 пикселей, цвет есть
-		Формат байта символа: 7 - мигание, 6-4 - цвет фона, 3 - интенсивность, 2-0 - цвет символа
-
-
-		Графические:
-		4 - (320х200)							2 бита на пиксель
-		5 - (320х200) + подавление цвета (BW)	2 бита на пиксель
-		6 - (640х200)							1 бит на пиксель
-
-		Цвета CGA	00 - черный
-					01 - синий/зеленый
-					10 - малиновый/красный
-					11 - белый/коричневый
-		Выбор палитры - функция 0Bh прерывания INT 10h
-		При вывода строк чередуются два банка памяти.
-
-		порты:
-		3D4h - регистр
-		3D5h - данные
-	*/
 
 	//инициализируем графические константы
 	GAME_WINDOW_X_RES = 320 * 5 + 40;	// масштаб 1:5 + 500 px для отладки
@@ -2078,14 +2100,20 @@ EGA_videocard::EGA_videocard()							//конструктор
 	my_display_H = sf::VideoMode::getDesktopMode().size.y;
 	my_display_W = sf::VideoMode::getDesktopMode().size.x;
 
-	cout << "Video Init " << my_display_H << " x " << my_display_W << " display" << endl;
+	//базовое разрешение
+	GAME_WINDOW_X_RES = 320 * 5 + 40;		 // масштаб 1:5 + 500 px для отладки
+	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
+
+	display_scale = floor(5 * my_display_H / GAME_WINDOW_Y_RES);
+
+	cout << "Video Init (EGA) " << my_display_H << " x " << my_display_W << " display" << " scale " << (int)display_scale << endl;
 
 	//задаем переменные окна
 	window_title = "IBM PC/XT emulator. EGA videocard.";		//заголовок окна
-	window_pos_x = my_display_W - GAME_WINDOW_X_RES - 10;		//позиция окна
-	window_pos_y = 0;											//позиция окна
-	window_size_x = GAME_WINDOW_X_RES;							//размер окна
-	window_size_y = GAME_WINDOW_Y_RES;							//размер окна
+	window_pos_x = (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
+	window_pos_y = (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
+	window_size_x = GAME_WINDOW_X_RES * display_scale / 5;			//размер окна
+	window_size_y = GAME_WINDOW_Y_RES * display_scale / 5;			//размер окна
 	cursor_clock.restart();										//запускаем таймер мигания
 
 	EGA_colors[0] = sf::Color(0, 0, 0);
@@ -2135,7 +2163,7 @@ void EGA_videocard::main_loop()
 	//создаем окно
 	main_window.create(sf::VideoMode(sf::Vector2u(window_size_x, window_size_y)), window_title, sf::Style::Titlebar, sf::State::Windowed);
 	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setFramerateLimit(60);
+	main_window.setFramerateLimit(0);
 	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
@@ -2718,6 +2746,20 @@ bool EGA_videocard::is_visible()
 {
 	return visible;
 }
+void EGA_videocard::scale_up()
+{
+	if (display_scale < 8) display_scale++;
+	window_size_x = 320 * display_scale + 40;	// масштаб 1:5 + 500 px для отладки
+	window_size_y = 200 * 1.2 * display_scale + 40;  // масштаб 1:5
+	do_resize = 1;
+}
+void EGA_videocard::scale_down()
+{
+	if (display_scale > 1) display_scale--;
+	window_size_x = 320 * display_scale + 40;	// масштаб 1:5 + 500 px для отладки
+	window_size_y = 200 * 1.2 * display_scale + 40;  // масштаб 1:5
+	do_resize = 1;
+}
 
 //====================== Monitor =================
 void Monitor::set_card_type(videocard_type new_mode)
@@ -2831,6 +2873,31 @@ bool Monitor::has_focus()							//проверить наличие фокуса
 	}
 	return 0;
 }
+void Monitor::scale_up()
+{
+	switch (card_type)
+	{
+	case videocard_type::CGA:
+		return CGA_card.scale_up();
+	case videocard_type::MDA:
+		return MDA_card.scale_up();
+	case videocard_type::EGA:
+		return EGA_card.scale_up();
+	}
+}
+void Monitor::scale_down()
+{
+	switch (card_type)
+	{
+	case videocard_type::CGA:
+		return CGA_card.scale_down();
+	case videocard_type::MDA:
+		return MDA_card.scale_down();
+	case videocard_type::EGA:
+		return EGA_card.scale_down();
+	}
+}
+
 Monitor::Monitor()
 {
 	//конструктор
