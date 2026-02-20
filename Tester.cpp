@@ -144,8 +144,8 @@ void tester()
 	
 	step_mode = 0; log_to_console = 0;
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x3C);
-	memory.write_2(*CS * 16 + uint16(Instruction_Pointer + 1), 0xFF);
+	memory.write(*CS * 16 + Instruction_Pointer, 0x3C);
+	memory.write(*CS * 16 + uint16(Instruction_Pointer + 1), 0xFF);
 
 	cout << "Start test" << endl;
 	
@@ -157,7 +157,7 @@ void tester()
 	for (int i = 0;i < 256;++i)
 	{
 		AX = i;
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 		cout << "AX = " << (int)AX << " cmp " << (int)i << " FZ = " << Flag_ZF << endl;
 	}
@@ -170,14 +170,14 @@ void tester()
 
 	//================================================================================
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x89);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 1, 0xD8);
+	memory.write(*CS * 16 + Instruction_Pointer, 0x89);
+	memory.write(*CS * 16 + Instruction_Pointer + 1, 0xD8);
 
 	start = std::chrono::system_clock::now();
 
 	for (int i = 0; i < cycles; ++i)
 	{
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 	}
 
@@ -188,14 +188,14 @@ void tester()
 	cout << setw(25) << left << "MOV AL, CL" << (int)cycles << " opers " << elapsed_seconds.count() << " sec - " << (int)op_sec << " op/sec" << endl;
 	//================================================================================
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x00);
-	memory.write_2(*CS * 16 + uint16(Instruction_Pointer + 1), 0xCC);
+	memory.write(*CS * 16 + Instruction_Pointer, 0x00);
+	memory.write(*CS * 16 + uint16(Instruction_Pointer + 1), 0xCC);
 
 	start = std::chrono::system_clock::now();
 
 	for (int i = 0; i < cycles; ++i)
 	{
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 	}
 
@@ -206,15 +206,15 @@ void tester()
 	cout << setw(25) << left << "ADD AH, CL" << (int)cycles << " opers " << elapsed_seconds.count() << " sec - " << (int)op_sec << " op/sec" << endl;
 	//================================================================================
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x88);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 1, 0x6F);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 2, 0x04);
+	memory.write(*CS * 16 + Instruction_Pointer, 0x88);
+	memory.write(*CS * 16 + Instruction_Pointer + 1, 0x6F);
+	memory.write(*CS * 16 + Instruction_Pointer + 2, 0x04);
 
 	start = std::chrono::system_clock::now();
 
 	for (int i = 0; i < cycles; ++i)
 	{
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 	}
 
@@ -226,16 +226,16 @@ void tester()
 
 	//================================================================================
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x0);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 1, 0xAC);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 2, 0x45);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 3, 0x12);
+	memory.write(*CS * 16 + Instruction_Pointer, 0x0);
+	memory.write(*CS * 16 + Instruction_Pointer + 1, 0xAC);
+	memory.write(*CS * 16 + Instruction_Pointer + 2, 0x45);
+	memory.write(*CS * 16 + Instruction_Pointer + 3, 0x12);
 
 	start = std::chrono::system_clock::now();
 
 	for (int i = 0; i < cycles; ++i)
 	{
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 	}
 
@@ -247,16 +247,16 @@ void tester()
 
 	//================================================================================
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x28);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 1, 0x9f);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 2, 0x45);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 3, 0x12);
+	memory.write(*CS * 16 + Instruction_Pointer, 0x28);
+	memory.write(*CS * 16 + Instruction_Pointer + 1, 0x9f);
+	memory.write(*CS * 16 + Instruction_Pointer + 2, 0x45);
+	memory.write(*CS * 16 + Instruction_Pointer + 3, 0x12);
 
 	start = std::chrono::system_clock::now();
 
 	for (int i = 0; i < cycles; ++i)
 	{
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 	}
 
@@ -271,16 +271,16 @@ void tester()
 
 	//log_to_console = 1;
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0xFF);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 1, 0x87);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 2, 0x45);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 3, 0x12);
+	memory.write(*CS * 16 + Instruction_Pointer, 0xFF);
+	memory.write(*CS * 16 + Instruction_Pointer + 1, 0x87);
+	memory.write(*CS * 16 + Instruction_Pointer + 2, 0x45);
+	memory.write(*CS * 16 + Instruction_Pointer + 3, 0x12);
 
 	start = std::chrono::system_clock::now();
 
 	for (int i = 0; i < cycles; ++i)
 	{
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 	}
 
@@ -293,16 +293,16 @@ void tester()
 
 	//log_to_console = 1;
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x43);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 1, 0x87);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 2, 0x45);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 3, 0x12);
+	memory.write(*CS * 16 + Instruction_Pointer, 0x43);
+	memory.write(*CS * 16 + Instruction_Pointer + 1, 0x87);
+	memory.write(*CS * 16 + Instruction_Pointer + 2, 0x45);
+	memory.write(*CS * 16 + Instruction_Pointer + 3, 0x12);
 
 	start = std::chrono::system_clock::now();
 
 	for (int i = 0; i < cycles; ++i)
 	{
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 	}
 
@@ -317,16 +317,16 @@ void tester()
 
 	//log_to_console = 1;
 
-	memory.write_2(*CS * 16 + Instruction_Pointer, 0x88);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 1, 0x3F);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 2, 0x45);
-	memory.write_2(*CS * 16 + Instruction_Pointer + 3, 0x12);
+	memory.write(*CS * 16 + Instruction_Pointer, 0x88);
+	memory.write(*CS * 16 + Instruction_Pointer + 1, 0x3F);
+	memory.write(*CS * 16 + Instruction_Pointer + 2, 0x45);
+	memory.write(*CS * 16 + Instruction_Pointer + 3, 0x12);
 
 	start = std::chrono::system_clock::now();
 
 	for (int i = 0; i < cycles; ++i)
 	{
-		op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 		Instruction_Pointer = 0;
 	}
 
@@ -359,11 +359,11 @@ void tester()
 	for (int y = 0; y < 64; ++y)
 	{
 		//memory.write_2(0xB8000 + y, 55);
-		memory.write_2(0xB8000 + y * 80, (y + 0) * 2);
-		memory.write_2(0xB8000 + y * 80 + 8192, (y + 0) * 2 + 1);
+		memory.write(0xB8000 + y * 80, (y + 0) * 2);
+		memory.write(0xB8000 + y * 80 + 8192, (y + 0) * 2 + 1);
 	}
 	
-	while (1) monitor.sync(1);
+	while (1) monitor.update(0);
 }
 
 

@@ -125,7 +125,7 @@ data_error process2(string json_str); //декларация
 
 void tester3()
 {
-	string files11[323] = {"tests2\\00.json" ,"tests2\\01.json" ,"tests2\\02.json" ,"tests2\\03.json" ,"tests2\\04.json" ,"tests2\\05.json" ,"tests2\\06.json" ,"tests2\\07.json" ,"tests2\\08.json" ,
+	string filesww[323] = {"tests2\\00.json" ,"tests2\\01.json" ,"tests2\\02.json" ,"tests2\\03.json" ,"tests2\\04.json" ,"tests2\\05.json" ,"tests2\\06.json" ,"tests2\\07.json" ,"tests2\\08.json" ,
 	"tests2\\09.json","tests2\\0A.json","tests2\\0B.json","tests2\\0C.json","tests2\\0D.json","tests2\\0E.json", "tests2\\10.json","tests2\\11.json","tests2\\12.json","tests2\\13.json",
 	"tests2\\14.json","tests2\\15.json","tests2\\16.json","tests2\\17.json","tests2\\18.json","tests2\\19.json","tests2\\1A.json","tests2\\1B.json","tests2\\1C.json","tests2\\1D.json","tests2\\1E.json",
 	"tests2\\1F.json","tests2\\20.json","tests2\\21.json","tests2\\22.json","tests2\\23.json","tests2\\24.json","tests2\\25.json","tests2\\27.json","tests2\\28.json","tests2\\29.json",
@@ -161,15 +161,14 @@ void tester3()
 	"tests2\\FB.json","tests2\\FC.json","tests2\\FD.json","tests2\\FE.0.json","tests2\\FE.1.json","tests2\\FF.0.json","tests2\\FF.1.json","tests2\\FF.2.json","tests2\\FF.3.json","tests2\\FF.4.json",
 	"tests2\\FF.5.json","tests2\\FF.6.json","tests2\\FF.7.json" };
 	
-	// сделаны D0 и D1
-	string files[6] = {"tests2\\27.json","tests2\\2F.json","tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json"};
-	//сопроцессор
-	//string files[8] = { "tests2\\F6.7.json" };
-	string files14[14] = { "tests2\\A4.json",	"tests2\\A5.json","tests2\\A6.json" ,"tests2\\A7.json" ,"tests2\\AA.json" ,"tests2\\AB.json" ,"tests2\\AC.json" ,
-	"tests2\\AD.json" ,"tests2\\AE.json",	"tests2\\AF.json" , "tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json" };
+	// 80.3  82.3 d4 F6.6 F6.7 F7.6 F7.7
+	
+	//string files[6] = {"tests2\\01.json","tests2\\01.json","tests2\\02.json","tests2\\03.json","tests2\\04.json","tests2\\05.json"};
+	string files[1] = { "tests2\\D4.json" };
+	//string files[14] = { "tests2\\C9.json",	"tests2\\A5.json","tests2\\A6.json" ,"tests2\\A7.json" ,"tests2\\AA.json" ,"tests2\\AB.json" ,"tests2\\AC.json" , "tests2\\AD.json" ,"tests2\\AE.json",	"tests2\\AF.json" , "tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json" };
 	//string files[3] = {"tests2\\A7.json" ,"tests2\\AE.json",	"tests2\\AF.json" };
 	
-	test_log = 0;
+	test_log = 1;
 		
 	//move - 88, 89, 8A, 8B, 8C, 8E, A0, A1, A2, A3, A4, A5, B0 - BF, C6, C7
 	//pop, push - 06, 07, 0E, 16, 17, 1E, 1F, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 5A, 5B, 5C, 5D, 5E, 5F, 8F, 9C, 9D, FF.6, FF.7
@@ -190,7 +189,6 @@ void tester3()
 	//OR  - 08, 09, 0A, 0B, 0C, 0D, 80.1, 81.1, 82.1, 83.1
 	//XOR - 30, 31, 32, 33, 34, 35, 80.6, 81.6, 82.6, 83.6
 	//test - 84, 85, A8, A9, F6.0, F6.1, F7.0, F7.1
-
 	
 	int file_N = 0;
 	for (auto f_N : files)
@@ -201,86 +199,95 @@ void tester3()
 		//string json_file_name = f_N;
 		file_N++;
 
+		AF_undef = 0;
+		OF_undef = 0; 
+		PF_undef = 0; 
+		SF_undef = 0; 
+		ZF_undef = 0;
+		cycle_op = 0;
+		CF_undef = 0;
+
 		//неопределенные флаги
-		if (json_file_name == "tests\\08.json") AF_undef = true;
-		if (json_file_name == "tests\\09.json") AF_undef = true;
-		if (json_file_name == "tests\\0A.json") AF_undef = true;
-		if (json_file_name == "tests\\0B.json") AF_undef = true;
-		if (json_file_name == "tests\\0C.json") AF_undef = true;
-		if (json_file_name == "tests\\0D.json") AF_undef = true;
-		if (json_file_name == "tests\\20.json") AF_undef = true;
-		if (json_file_name == "tests\\21.json") AF_undef = true;
-		if (json_file_name == "tests\\22.json") AF_undef = true;
-		if (json_file_name == "tests\\23.json") AF_undef = true;
-		if (json_file_name == "tests\\24.json") AF_undef = true;
-		if (json_file_name == "tests\\25.json") AF_undef = true;
-		if (json_file_name == "tests\\30.json") AF_undef = true;
-		if (json_file_name == "tests\\31.json") AF_undef = true;
-		if (json_file_name == "tests\\32.json") AF_undef = true;
-		if (json_file_name == "tests\\33.json") AF_undef = true;
-		if (json_file_name == "tests\\34.json") AF_undef = true;
-		if (json_file_name == "tests\\35.json") AF_undef = true;
-		if (json_file_name == "tests\\80.1.json") AF_undef = true;
-		if (json_file_name == "tests\\80.4.json") AF_undef = true;
-		if (json_file_name == "tests\\27.json") OF_undef = true;
-		if (json_file_name == "tests\\2F.json") OF_undef = true;
-		if (json_file_name == "tests\\37.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; }
-		if (json_file_name == "tests\\3F.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; }
-		if (json_file_name == "tests\\80.6.json") AF_undef = true;
-		if (json_file_name == "tests\\81.1.json") AF_undef = true;
-		if (json_file_name == "tests\\81.4.json") AF_undef = true;
-		if (json_file_name == "tests\\81.6.json") AF_undef = true;
-		if (json_file_name == "tests\\82.1.json") AF_undef = true;
-		if (json_file_name == "tests\\83.1.json") AF_undef = true;
-		if (json_file_name == "tests\\82.4.json") AF_undef = true;
-		if (json_file_name == "tests\\83.4.json") AF_undef = true;
-		if (json_file_name == "tests\\82.6.json") AF_undef = true;
-		if (json_file_name == "tests\\83.6.json") AF_undef = true;
-		if (json_file_name == "tests\\84.json") AF_undef = true;
-		if (json_file_name == "tests\\85.json") AF_undef = true;
-		if (json_file_name == "tests\\A4.json") cycle_op = true;
-		if (json_file_name == "tests\\A5.json") cycle_op = true;
-		if (json_file_name == "tests\\A6.json") cycle_op = true;
-		if (json_file_name == "tests\\A7.json") cycle_op = true;
-		if (json_file_name == "tests\\A8.json") AF_undef = true;
-		if (json_file_name == "tests\\A9.json") AF_undef = true;
-		if (json_file_name == "tests\\AA.json") cycle_op = true;
-		if (json_file_name == "tests\\AB.json") cycle_op = true;
-		if (json_file_name == "tests\\AC.json") cycle_op = true;
-		if (json_file_name == "tests\\AD.json") cycle_op = true;
-		if (json_file_name == "tests\\AE.json") cycle_op = true;
-		if (json_file_name == "tests\\AF.json") cycle_op = true;
+		if (json_file_name.find("\\08.json")!=std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\09.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\0A.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\0B.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\0C.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\0D.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\20.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\21.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\22.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\23.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\24.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\25.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\30.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\31.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\32.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\33.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\34.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\35.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\80.1.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\80.4.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\27.json") != std::string::npos) OF_undef = true;
+		if (json_file_name.find("\\2F.json") != std::string::npos) OF_undef = true;
+		if (json_file_name.find("\\37.json") != std::string::npos) { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; }
+		if (json_file_name.find("\\3F.json") != std::string::npos) { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; }
+		if (json_file_name.find("\\80.6.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\81.1.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\81.4.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\81.6.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\82.1.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\83.1.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\82.4.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\83.4.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\82.6.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\83.6.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\84.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\85.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\A4.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\A5.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\A6.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\A7.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\A8.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\A9.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\AA.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\AB.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\AC.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\AD.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\AE.json") != std::string::npos) cycle_op = true;
+		if (json_file_name.find("\\AF.json") != std::string::npos) cycle_op = true;
+
+		if (json_file_name.find("\\F6.0.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\F6.1.json") != std::string::npos) AF_undef = true;
 		
-		if (json_file_name == "tests\\F6.0.json") AF_undef = true;
-		
-		if (json_file_name == "tests\\F6.4.json") { AF_undef = true; PF_undef = true; ZF_undef = true; SF_undef = true; }
+		if (json_file_name.find("\\F6.4.json") != std::string::npos) { AF_undef = true; PF_undef = true; ZF_undef = true; SF_undef = true; }
 		//if (json_file_name == "tests2\\F7.4.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
-		if (json_file_name == "tests\\F6.5.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
-		if (json_file_name == "tests\\F7.0.json") AF_undef = true;
-		if (json_file_name == "tests\\F7.1.json") AF_undef = true;
-		if (json_file_name == "tests\\F7.5.json") { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true;}
-		if (json_file_name == "tests\\F6.6.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests\\F6.7.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests\\F7.6.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests\\F7.7.json") { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests\\D4.json") { OF_undef = true; AF_undef = true; CF_undef = true; }
-		if (json_file_name == "tests\\D0.4.json") AF_undef = true;
-		if (json_file_name == "tests\\D0.5.json") AF_undef = true;
-		if (json_file_name == "tests\\D0.7.json") AF_undef = true;
-		if (json_file_name == "tests\\D1.4.json") AF_undef = true;
-		if (json_file_name == "tests\\D1.5.json") AF_undef = true;
-		if (json_file_name == "tests\\D1.7.json") AF_undef = true;
-		if (json_file_name == "tests\\D2.4.json") AF_undef = true;
-		if (json_file_name == "tests\\D2.5.json") AF_undef = true;
-		if (json_file_name == "tests\\D2.7.json") AF_undef = true;
-		if (json_file_name == "tests\\D3.4.json") AF_undef = true;
-		if (json_file_name == "tests\\D3.5.json") AF_undef = true;
-		if (json_file_name == "tests\\D3.7.json") AF_undef = true;
-		
+		if (json_file_name.find("\\F6.5.json") != std::string::npos) { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true; }
+		if (json_file_name.find("\\F7.0.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\F7.1.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\F7.5.json") != std::string::npos) { PF_undef = true; AF_undef = true; ZF_undef = true; SF_undef = true;}
+		if (json_file_name.find("\\F6.6.json") != std::string::npos) { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name.find("\\F6.7.json") != std::string::npos) { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name.find("\\F7.4.json") != std::string::npos) {PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true;}
+		if (json_file_name.find("\\F7.6.json") != std::string::npos) { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name.find("\\F7.7.json") != std::string::npos) { OF_undef = true; PF_undef = true; SF_undef = true; ZF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name.find("\\D4.json") != std::string::npos) { OF_undef = true; AF_undef = true; CF_undef = true; }
+		if (json_file_name.find("\\D0.4.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D0.5.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D0.7.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D1.4.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D1.5.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D1.7.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D2.4.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D2.5.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D2.7.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D3.4.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D3.5.json") != std::string::npos) AF_undef = true;
+		if (json_file_name.find("\\D3.7.json") != std::string::npos) AF_undef = true;
 
 		std::string json_string;
 		std::ifstream inputFile(path + json_file_name);
-		cout << file_N << "/" << files->size()  << " Testing file: " << json_file_name << " ";
+		cout << dec << file_N << " File: " << json_file_name << " ";
 		enum class i_state { wait, copy, process };
 
 		i_state state = i_state::wait;
@@ -351,14 +358,14 @@ void tester3()
 
 	end_test:
 		SetConsoleTextAttribute(hConsole, 7);
-		cout << " Operations: " << (int)total_ops;
+		cout << " Ops: " << (int)total_ops;
 		if (total_err) SetConsoleTextAttribute(hConsole, 12);
-		cout << " Errors: " << (int)total_err << " (ip_err " << (int)ip_err << ")";
+		cout << " Errs: " << (int)total_err << " (ip_err " << (int)ip_err << ")";
 		SetConsoleTextAttribute(hConsole, 7);
 
 		timer.stop();
 		uint16 el = timer.getElapsedTime().asSeconds();
-		cout << "Total time: " << (int)(el / 3600) << " h " << (int)((el % 3600) / 60) << " min " << (int)((el % 3600) % 60) << " sec";
+		cout << "Time: " << (int)(el / 3600) << " h " << (int)((el % 3600) / 60) << " min " << (int)((el % 3600) % 60) << " sec";
 		cout << std::endl;
 	}
 }
@@ -368,7 +375,6 @@ data_error process2(string json_str)
 	//cout << json_str << endl;
 	nlohmann::json jsonData; //объект json
 	jsonData = nlohmann::json::parse(json_str);
-	
 
 	if (test_log) cout << endl << "=========================================" << endl;
 
@@ -420,32 +426,29 @@ data_error process2(string json_str)
 	if (test_log) cout << "Load RAM" << endl;
 	for (auto e : jsonData["initial"]["ram"])
 	{
-		memory.write_2((int)e[0], (int)e[1]);
+		memory.write((int)e[0], (int)e[1]);
 		if (test_log) cout << hex << setw(5) << (int)e[0] << " " << setw(2) << (int)e[1] << endl;
 	}
 	
-
 	log_to_console = test_log;
 	exeption_fired = 0; //флаг события исключения
 
 	//выполняем команду
 
-
+	uint16 old_IP = Instruction_Pointer;
 test_rep:
 	if (test_log)
 	{
-		cout << "Run..." << hex << endl;
 		cout << *CS << ":" << std::setfill('0') << std::setw(4) << Instruction_Pointer << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 2 + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 3 + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 4 + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + 5 + *CS * 16) << "\t";
+			std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + 1 + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + 2 + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + 3 + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + 4 + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + 5 + *CS * 16) << "\t";
 	}
 	
-	op_code_table[memory.read_2((Instruction_Pointer + *CS * 16) & 0xFFFFF)]();
-	
+	op_code_table[memory.read((Instruction_Pointer + *CS * 16) & 0xFFFFF)]();
 
 	if (keep_segment_override) { 
 		keep_segment_override = false; //сбрасываем флаг сохранения
@@ -467,8 +470,8 @@ test_rep:
 	{
 		//помещаем в стек IP и переходим по адресу прерывания
 		//новые адреса
-		uint16 new_IP = memory.read_2(0) + memory.read_2(1) * 256;
-		uint16 new_CS = memory.read_2(2) + memory.read_2(3) * 256;
+		uint16 new_IP = memory.read(0) + memory.read(1) * 256;
+		uint16 new_CS = memory.read(2) + memory.read(3) * 256;
 
 		if (log_to_console)
 		{
@@ -479,21 +482,21 @@ test_rep:
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+		memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+		memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 		//помещаем в стек сегмент
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 
 		//помещаем в стек IP
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
 
 		//передаем управление
 		Flag_IF = false;//запрет внешних прерываний
@@ -506,8 +509,8 @@ test_rep:
 	{
 		//помещаем в стек IP и переходим по адресу прерывания
 		//новые адреса
-		uint16 new_IP = memory.read_2(4) + memory.read_2(4 + 1) * 256;
-		uint16 new_CS = memory.read_2(4 + 2) + memory.read_2(4 + 3) * 256;
+		uint16 new_IP = memory.read(4) + memory.read(4 + 1) * 256;
+		uint16 new_CS = memory.read(4 + 2) + memory.read(4 + 3) * 256;
 
 		if (log_to_console)
 		{
@@ -518,21 +521,21 @@ test_rep:
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+		memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+		memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 		//помещаем в стек сегмент
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 
 		//помещаем в стек IP
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
 
 		//передаем управление
 		Flag_IF = false;//запрет внешних прерываний
@@ -542,17 +545,16 @@ test_rep:
 		exeption_1 = 0; //сброс флага
 	}
 	
-	if (cycle_op && memory.read_2((Instruction_Pointer + *CS * 16) & 0xFFFFF) != 0x90) goto test_rep;//повтор если IP не указывает на 90 (для строк)
+	if (cycle_op && (Instruction_Pointer == old_IP)) goto test_rep;//повтор если IP не указывает на 90 (для строк)
+	else
+	{
+		if (cycle_op && test_log) cout << "cycle end IP=" << (int)Instruction_Pointer << " oldIP = " << (int)old_IP << endl;
+	}
 
 	if (test_log) cout << endl << "Result control" << endl;
 	
-	//возвращаем сегмент назад
-	//DS = &DS_data;
-	
 	//сверяем данные после выполнения
 	data_error d_err = {0,0};
-	
-
 	
 	if (jsonData["final"]["regs"]["ax"].is_null()) jsonData["final"]["regs"]["ax"] = jsonData["initial"]["regs"]["ax"];
 	if (jsonData["final"]["regs"]["bx"].is_null()) jsonData["final"]["regs"]["bx"] = jsonData["initial"]["regs"]["bx"];
@@ -569,7 +571,6 @@ test_rep:
 	if (jsonData["final"]["regs"]["ip"].is_null()) jsonData["final"]["regs"]["ip"] = jsonData["initial"]["regs"]["ip"];
 	if (jsonData["final"]["regs"]["flags"].is_null()) jsonData["final"]["regs"]["flags"] = jsonData["initial"]["regs"]["flags"];
 	
-
 	if (test_log) cout << "AX = " << hex << setw(4) << (int)AX << " supposed " << (uint16)jsonData["final"]["regs"]["ax"];
 	
 	if (AX == (uint16)jsonData["final"]["regs"]["ax"])
@@ -872,7 +873,7 @@ test_rep:
 	if (test_log) cout << "Checking RAM" << endl;
 	for (auto e : jsonData["final"]["ram"])
 	{
-		uint8 fact_ram = memory.read_2((int)e[0]);
+		uint8 fact_ram = memory.read((int)e[0]);
 		if (test_log) cout << hex << setw(5) << (int)e[0] << " " << setw(2) << (int)fact_ram << " supposed " << setw(2) << (int)e[1];
 		if (fact_ram == (int)e[1])
 		{
@@ -893,5 +894,4 @@ test_rep:
 	//if (test_log) while (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F8)) { std::this_thread::sleep_for(std::chrono::milliseconds(50)); }
 
 	return d_err;
-
 }

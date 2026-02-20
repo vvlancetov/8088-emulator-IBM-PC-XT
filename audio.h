@@ -36,7 +36,7 @@ public:
 	std::int16_t* s_buffer_A;		//ссылка на буфер для звука A
 	std::int16_t* s_buffer_B;		//ссылка на буфер для звука B
 	int next_buffer_to_play = 0;	//следующий буфер 0 - A, 1 - B
-	int sample_size;				//размер сэмпла
+	int sample_size = 0;				//размер сэмпла
 	bool buffer_changed = false;	//флаг смены буфера
 };
 
@@ -80,19 +80,19 @@ public:
 	void change_to_A();	//подготовить сэмпл А
 	void change_to_B(); //подготовить сэмпл В
 	bool wait_for_dispatch = 0;
+
 };
 
 //класс аудио_монитора
 class Audio_mon_device : public Dev_mon_device
 {
-	int16_t sample_array[5000] = { 0 };
+	int16_t sample_array[1000] = { 0 };
 	uint16 array_pointer_next_el = 0;
 	int array_pointer_to_draw = 0;
 	std::string pinout_11;
 
 public:
 	using Dev_mon_device::Dev_mon_device;
-	void sync();
 	void get_sample(int16_t sample);
 	int generation_overhead = 999;
 	std::string curr_buffer = "--";
@@ -102,5 +102,12 @@ public:
 	int empty_samples_B;
 	int over_samples_A;
 	int over_samples_B;
+	int diff = 0;
+
+	void main_loop();
+	void show();
+	void hide();
+	void render();
+	void update(int elapsed_ms);
 };
 

@@ -32,7 +32,7 @@ extern sf::Sprite font_sprite_80_MDA;
 extern sf::Texture CGA_320_texture;
 extern sf::Sprite CGA_320_palette_sprite;
 
-extern uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
+extern Mem_Ctrl memory; //контроллер памяти
 
 extern Monitor monitor;
 
@@ -178,30 +178,7 @@ void load_hdd(std::string filename_HDD)
 		HDD.filename = filename_HDD;//запоминаем имя файла
 		cout << "Загружено " << (int)(a - 1) << " байт данных в образ HDD" << endl;
 	}
-
-	
-	
-	
 	return;
-
-	//запись образа для тестов
-	
-	file_HDD.open(path + "test.dat", ios::binary | ios::out);
-	int a = 0;
-	char b;    //buffer
-	
-	for(int i = 0; i < 256; i++)
-	{
-		for (int u = 0; u < 512; u++)
-		{
-			char b = i;
-			file_HDD.write(&b, 1);
-		}
-		//записываем виртуальный HDD
-	};
-	file_HDD.close();
-	
-
 }
 
 void loader(int argc, char* argv[])
@@ -396,7 +373,7 @@ void loader(int argc, char* argv[])
 						char b;    //buffer
 						while (file_HDD_ROM.read(&b, 1)) {
 							// записываем виртуальный ROM
-							memory_2[0xC8000 + a] = b;
+							memory.write(0xC8000 + a, b);
 							a++;
 							checksum += b;
 						};
@@ -457,7 +434,7 @@ void loader(int argc, char* argv[])
 		char b;    //buffer
 		while (file.read(&b, 1)) {
 			// записываем виртуальный ROM
-			memory_2[ROM_address + a] = b;
+			memory.write(ROM_address + a, b);
 			sum += b;
 			a++;
 		};
@@ -476,7 +453,7 @@ void loader(int argc, char* argv[])
 			char b;    //buffer
 			while (file_v_rom.read(&b, 1)) {
 				// записываем виртуальный ROM
-				memory_2[a] = b;
+				memory.write(a, b);
 				a++;
 			};
 			file_v_rom.close();

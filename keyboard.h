@@ -1,13 +1,14 @@
 #pragma once
 #include "custom_classes.h"
 #include <vector>
+#include <thread>
 
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 
 enum class KBD_key {
 	F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, Num0,
-	Q, W, E, R, T, Y, U, I, O, P, A, S, D, F, G, H, J, K, L, Z, X, C, V, B, N, M, ENTER, SPACE, Grave, Hyphen, Equal, Backspace, Escape, Tab, LShift, RShift,
+	Q, W, E, R, T, Y, U, I, O, P, A, S, D, F, G, H, J, K, L, Z, X, C, V, B, N, M, Enter, Space, Grave, Hyphen, Equal, Backspace, Escape, Tab, LShift, RShift,
 	LControl, LAlt, RAlt, RControl, Backslash, LBracket, RBracket, Semicolon, Apostrophe, Comma, Period, Slash, Up, Down, Left, Right, Delete, Insert, PageUp, PageDown,Home, End, 
 	PrintScreen, CapsLock, NumLock, ScrLock, Pause, NumpadDivide, NumpadMultiply, NumpadMinus, NumpadPlus, NumpadEnter, NumpadDecimal, Numpad0, Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9
 };
@@ -21,9 +22,15 @@ private:
 	uint8 sleep_timer = 0;
 	bool fetch_new = 0;
 	bool do_int = 0;
+	std::thread t;					//указатель на поток
+	bool do_poll = 0;				//разрешение на сканирование клавиатуры
+	bool do_main_loop = 1;			//контроль жизни потока
+	uint32 elapsed_us = 0;			//прошедшее врем€
+	bool window_has_focus = 0;		//наличие фокуса у окна
 
 public:
 	KBD();
+	~KBD();
 	bool enabled = 0;
 	bool CLK_high = false;
 	void poll_keys(uint32 elapsed_us, bool has_focus);			//синхронизаци€ клавиатуры
@@ -33,4 +40,6 @@ public:
 	void set_CLK_high();
 	void sync(); //процедура синхронизации и вызова прерывани€ #1
 	void next(); //сигнал о том, что нужен следующий код
+	void main_loop();
+	void update(uint32 elapsed_us, bool has_focus);
 };

@@ -38,20 +38,11 @@ std::string int_to_bin(T i)
 class Mem_Ctrl // контроллер пам€ти
 {
 private:
-	//uint8 ram_array[640 * 1024] = { 0 };  //RAM
-	//uint8 rom_array[64 * 1024] = { 0 };   //ROM
-	//uint8 test_ram[1024 * 1024] = { 0 };  //тестова€ пам€ть
 
 public:
 	Mem_Ctrl() {};
-	//void flash_rom(uint16 address, uint8 data); //запись в ѕ«”
-	//void load_ram(uint32 address, uint8 data); //запись пр€мо в ќ«”
-	//uint8 get_ram(uint32 address); //пр€мое считывание
-
-	//апдейт
-
-	void write_2(uint32 address, uint8 data); //запись значений в €чейки
-	uint8 read_2(uint32 address); //чтение данных из пам€ти
+	void write(uint32 address, uint8 data); //запись значений в €чейки
+	uint8 read(uint32 address); //чтение данных из пам€ти
 };
 
 class IO_Ctrl  //контроллер портов
@@ -76,7 +67,7 @@ private:
 	uint16 INT_vector_addr_86 = 0; //адрес таблицы векторов режим 8086/88
 	uint16 INT_vector_addr_80 = 0; //адрес таблицы векторов режим 8080/85
 	uint8 next_reg_to_read = 1; // 1 - IR, 2 - IS, 3 - IM
-	uint8 last_INT; //текущее прерывание в работе
+	uint8 last_INT = 255; //текущее прерывание в работе
 	
 
 public:
@@ -180,7 +171,7 @@ private:
 	std::chrono::steady_clock::time_point timer_end;
 	uint32 duration = 0;
 public:
-
+	int cycle_duration = 0;
 	void write_port(uint16 port, uint8 data);
 	uint8 read_port(uint16 port);
 	void sync();

@@ -83,7 +83,7 @@ void FDD_Ctrl::flush_buffer()
 		return;
 	}
 
-	for (int i = 0; i < file_size[selected_drive]; i++)
+	for (uint32 i = 0; i < file_size[selected_drive]; i++)
 	{
 		file_FDD.write((char*)&sector_data[i + selected_drive * 2880 * 1024], 1);
 	}
@@ -215,6 +215,7 @@ uint8 FDD_Ctrl::read_port(uint16 port)
 		if (log_to_console_FDD) SetConsoleTextAttribute(hConsole, 7);
 		return Digital_input_register;
 	}
+	return 255;
 }
 void FDD_Ctrl::write_port(uint16 port, uint8 data)
 {

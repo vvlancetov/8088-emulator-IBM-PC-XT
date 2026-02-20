@@ -14,6 +14,7 @@ using namespace std;
 
 extern IC8259 int_ctrl;
 extern bool log_to_console;
+extern bool step_mode;
 
 extern IC8255 ppi_ctrl;
 
@@ -21,10 +22,10 @@ extern IC8255 ppi_ctrl;
 void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 {
 	//has_focus - флаг наличия фокуса у окна монитора
-
+	if (step_mode) has_focus = 0; //в пошаговом режиме отключаем нажатия
 	//синхронизируем нажатия клавишь
-	if (!enabled) return; //если отключена - возврат
-	if (!CLK_high) return; //
+	if (!enabled) has_focus = 0;  //отключаем новые нажатия
+	if (!CLK_high) has_focus = 0; //
 
 	bool special = false;
 	uint8 code = 0;
@@ -902,36 +903,36 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Enter) && has_focus)
 	{
 		//убираем повторение
-		if (!pressed_keys[(uint8)(KBD_key::ENTER)])
+		if (!pressed_keys[(uint8)(KBD_key::Enter)])
 		{
 			out_buffer.push_back(0x1C);
-			pressed_keys[(uint8)(KBD_key::ENTER)] = 1;
+			pressed_keys[(uint8)(KBD_key::Enter)] = 1;
 		}
 	}
 	else
 	{
-		if (pressed_keys[(int)(KBD_key::ENTER)])
+		if (pressed_keys[(int)(KBD_key::Enter)])
 		{
 			out_buffer.push_back(0x9C);
-			pressed_keys[(int)(KBD_key::ENTER)] = 0;
+			pressed_keys[(int)(KBD_key::Enter)] = 0;
 		}
 	}
 
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space) && has_focus)
 	{
 		//убираем повторение
-		if (!pressed_keys[(uint8)(KBD_key::SPACE)])
+		if (!pressed_keys[(uint8)(KBD_key::Space)])
 		{
 			out_buffer.push_back(0x39);
-			pressed_keys[(uint8)(KBD_key::SPACE)] = 1;
+			pressed_keys[(uint8)(KBD_key::Space)] = 1;
 		}
 	}
 	else
 	{
-		if (pressed_keys[(int)(KBD_key::SPACE)])
+		if (pressed_keys[(int)(KBD_key::Space)])
 		{
 			out_buffer.push_back(0x39 + 0x80);
-			pressed_keys[(int)(KBD_key::SPACE)] = 0;
+			pressed_keys[(int)(KBD_key::Space)] = 0;
 		}
 	}
 
@@ -1948,7 +1949,6 @@ void KBD::poll_keys(uint32 elapsed_us, bool has_focus)
 	if (code) out_buffer.push_back(code); //отправляем в буффер
 
 }
-
 uint8 KBD::get_buf_size()
 {
 	return out_buffer.size();
@@ -1983,7 +1983,6 @@ void KBD::set_CLK_low()
 {
 	CLK_high = false;
 }
-
 void KBD::sync()  //синхронизация клавиатуры
 {
 	//проверка таймера задержки
@@ -1992,6 +1991,8 @@ void KBD::sync()  //синхронизация клавиатуры
 		sleep_timer--;
 		return;
 	}
+
+	if (do_poll) return; //если происходит опрос кнопок, то ждем
 
 	if (fetch_new)
 	{
@@ -2016,7 +2017,6 @@ void KBD::sync()  //синхронизация клавиатуры
 		}
 	}
 }
-
 void KBD::next()  //синхронизация клавиатуры
 {
 	fetch_new = 1;
@@ -2034,9 +2034,42 @@ void KBD::next()  //синхронизация клавиатуры
 		//else cout << "\n[KB_next] 0x" << (int)0 << "(empty) ";
 	}
 }
-
+void KBD::update(uint32 new_elapsed_us, bool has_focus)
+{
+	elapsed_us = new_elapsed_us;
+	window_has_focus = has_focus;
+	do_poll = 1;
+}
+void KBD::main_loop()
+{
+	//цикл в отдельном потоке
+	while (do_main_loop)
+	{
+		if (do_poll)
+		{
+			//опрашиваем клавиатуру
+			poll_keys(elapsed_us, window_has_focus);
+			do_poll = 0;
+		}
+		else
+		{
+			//отдыхаем
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+	}
+}
 KBD::KBD()
 {
 	out_buffer.clear();
 	out_buffer.push_back(0xAA);
+	do_main_loop = 1;
+
+	//создаем поток
+	std::thread new_t(&KBD::main_loop, this);
+	t = std::move(new_t);
+}
+KBD::~KBD()
+{
+	do_main_loop = 0;	//сигнал потоку завершиться
+	t.join();			//завершаем поток
 }

@@ -3,13 +3,12 @@
 #include <SFML/Audio.hpp>
 #include <SFML/System.hpp>
 #include <string>
+#include <thread>
 #include "custom_classes.h"
 
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
 typedef unsigned __int32 uint32;
-
-extern uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
 
 //видеокарты
 enum class videocard_type { MDA, CGA, EGA, VGA };
@@ -20,10 +19,10 @@ class CGA_videocard
 private:
 	sf::RenderWindow main_window;
 	bool visible = 0;		//наличие окна
-	int my_display_H;
-	int my_display_W;
-	__int16 GAME_WINDOW_X_RES;
-	__int16 GAME_WINDOW_Y_RES;
+	uint16 my_display_H;
+	uint16 my_display_W;
+	uint16 GAME_WINDOW_X_RES;
+	uint16 GAME_WINDOW_Y_RES;
 
 	int counter = 0;  //?
 	sf::Clock cursor_clock;				//таймер мигания курсора
@@ -68,6 +67,10 @@ private:
 	int window_pos_y;				//позиция окна
 	int window_size_x;				//размер окна
 	int window_size_y;				//размер окна
+	bool render_complete = true; //флаг окончания рендеринга
+	int elapsed_ms = 0;				//период времени
+	std::thread t;					//указатель на поток
+	bool do_render = true;			//запрос отрисовки
 
 public:
 	sf::Font font;
@@ -81,15 +84,16 @@ public:
 	//uint8 read_vram_MDA(uint16 address);			 //чтение из видеопамяти
 
 	uint8 line_height = 10;						//высота строки в пикселях
-	CGA_videocard();								// конструктор класса
-	void sync(int elapsed_ms);					//импульс синхронизации
+	CGA_videocard();							//конструктор класса
+	void update(int new_elapsed_ms);				//синхронизация
+	void main_loop();
+	void render();								//рисуем содержимое
 	void write_port(uint16 port, uint8 data);	//запись в порт адаптера
 	uint8 read_port(uint16 port);				//чтение из порта адаптера
 	void set_CGA_mode(uint8 mode);				//установка конкретного видеорежима
 	void set_cursor_type(uint16 type);			//установка типа курсора
 	void set_cursor_position(uint8 X, uint8 Y, uint8 Page);		//установка позиции курсора
 	void read_cursor_position();				//чтение позиции курсора
-	void teletype(uint8 symbol);
 	std::string get_mode_name();
 	void show_joy_sence(uint8 central_point);
 	bool has_focus();
@@ -104,7 +108,6 @@ class Dev_mon_device
 {
 protected:
 	sf::RenderWindow main_window;
-	//int display_mode; //режим работы адаптера
 	int my_display_H;
 	int my_display_W;
 	uint16 GAME_WINDOW_X_RES;
@@ -115,26 +118,40 @@ protected:
 	int window_pos_y;
 	int window_size_x;
 	int window_size_y;
+	bool do_render = true;			//запрос отрисовки
+	uint32 cpu_speed[64] = { 0 };	//массив для усреднения скорости
+	uint8 cpu_speed_ptr = 0;		//указатель массива
+	std::thread t;					//указатель на поток
+	int elapsed_ms = 0;				//период времени
+	int ops = 0;					//количество команд для расчета скорости
 
 public:
 	Dev_mon_device(uint16 w, uint16 h, std::string title, uint16 x_pos, uint16 y_pos); //конструктор
 	sf::Font font;
-	void sync(int elapsed_ms);
+	void main_loop();
 	void show();
 	void hide();
+	void render();
+	void update(int new_elapsed_ms, int op_counter);
 };
 
 //монитор FDD
 class FDD_mon_device : public Dev_mon_device
 {
+	using Dev_mon_device::Dev_mon_device;
+
 private:
 	std::vector<std::string> log_strings;
 	std::string last_str = "";
 
 public:
-	using Dev_mon_device::Dev_mon_device;
-	void sync();
+	
 	void log(std::string log_string);
+	void main_loop();
+	void show();
+	void hide();
+	void render();
+	void update(int new_elapsed_ms);
 };
 
 //монитор HDD
@@ -146,8 +163,12 @@ private:
 
 public:
 	using Dev_mon_device::Dev_mon_device;
-	void sync();
 	void log(std::string log_string);
+	void main_loop();
+	void show();
+	void hide();
+	void render();
+	void update(int new_elapsed_ms);
 };
 
 //монитор памяти
@@ -160,7 +181,11 @@ private:
 
 public:
 	using Dev_mon_device::Dev_mon_device;
-	void sync();
+	void main_loop();
+	void show();
+	void hide();
+	void render();
+	void update(int new_elapsed_ms);
 };
 
 //MDA videocard
@@ -169,10 +194,10 @@ class MDA_videocard
 private:
 	sf::RenderWindow main_window;
 	bool visible = 0;		//наличие окна
-	int my_display_H;
-	int my_display_W;
-	__int16 GAME_WINDOW_X_RES;
-	__int16 GAME_WINDOW_Y_RES;
+	uint16 my_display_H;
+	uint16 my_display_W;
+	uint16 GAME_WINDOW_X_RES;
+	uint16 GAME_WINDOW_Y_RES;
 	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
 	uint8 joy_sence_value = 0; //центральная точка джойстика
 	sf::Clock cursor_clock;				//таймер мигания курсора
@@ -185,6 +210,17 @@ private:
 	int window_pos_y;				//позиция окна
 	int window_size_x;				//размер окна
 	int window_size_y;				//размер окна
+	std::thread t;					//указатель на поток
+
+	//константы
+	sf::Color fg_color = sf::Color::Green;
+	sf::Color fg_color_bright = sf::Color::Yellow;
+	sf::Color fg_color_inverse = sf::Color::Black;
+	sf::Color bg_color = sf::Color::Black;
+	sf::Color bg_color_inverse = sf::Color::Green;
+	
+	bool do_render = 0;
+	int elapsed_ms = 0;				//период времени
 
 public:
 	
@@ -196,9 +232,11 @@ public:
 	std::string get_mode_name();				//получить название режима для отладки
 	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
 	bool has_focus();							//проверить наличие фокуса
-	void sync(int elapsed_ms);					//синхронизация
+	void main_loop();							//синхронизация
+	void render();
 	void show();								//создать окно
 	void hide();								//убрать окно
+	void update(int new_elapsed_ms);				//синхронизация
 	bool is_visible();							//проверка наличия окна
 };
 
@@ -249,8 +287,9 @@ private:
 		
 	//палитра
 	sf::Color EGA_colors[16]; //массив цветов EGA для текста
-
-	
+	int elapsed_ms = 0;				//период времени
+	std::thread t;					//указатель на поток
+	bool do_render = 0;
 
 	//отладка DELETE
 	uint8 CGA_Mode_Select_Register = 0;
@@ -266,13 +305,14 @@ public:
 	uint8 read_port(uint16 port);				//чтение из порта адаптера
 	std::string get_mode_name();				//получить название режима для отладки
 	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
+	void main_loop();
 	bool has_focus();							//проверить наличие фокуса
-	void sync(int elapsed_ms);					//синхронизация
+	void update(int new_elapsed_ms);				//синхронизация
+	void render();								//рисуем содержимое
 	void show();								//создать окно
 	void hide();								//убрать окно
 	bool is_visible();							//проверка наличия окна
 };
-
 
 //=================== СТАВИТЬ после определения видеокарт
 
@@ -301,5 +341,5 @@ public:
 	std::string get_mode_name();				//получить название режима для отладки
 	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
 	bool has_focus();							//проверить наличие фокуса
-	void sync(int elapsed_ms);					//синхронизация
+	void update(int new_elapsed_ms);				//синхронизация
 };

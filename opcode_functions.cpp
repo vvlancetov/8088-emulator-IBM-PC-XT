@@ -140,8 +140,7 @@ extern bool keep_segment_override; //сохранение флага
 //флаг аппаратных прерываний
 extern bool Flag_hardware_INT;
 
-extern Mem_Ctrl memory;
-extern uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
+extern Mem_Ctrl memory; //контроллер памяти
 
 extern SoundMaker speaker;
 extern IO_Ctrl IO_device;
@@ -660,7 +659,7 @@ void opcode_table_init()
 }
 void op_code_unknown()		// Unknown operation
 {
-	if (log_to_console) cout << "Unknown operation IP = " << Instruction_Pointer << " OPCODE = " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16);
+	if (log_to_console) cout << "Unknown operation IP = " << Instruction_Pointer << " OPCODE = " << (bitset<8>)memory.read(Instruction_Pointer + *CS * 16);
 	step_mode = 1;
 	log_to_console = 1;
 	Instruction_Pointer++;
@@ -674,7 +673,7 @@ void op_code_NOP()  // NOP
 }
 void segment_override_prefix()
 {
-	uint8 Seg = (memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] >> 3) & 3;
+	uint8 Seg = (memory.read(Instruction_Pointer + *CS * 16) >> 3) & 3;
 
 #ifdef DEBUG
 	if (log_to_console) cout << "segment_override_prefix ";
@@ -751,7 +750,7 @@ uint16 mod_RM_Old(uint8 byte2)		//расчет адреса операнда по биту 2
 			return Destination_Index;
 		case 6:
 			additional_IPs = 2;
-			return memory.read_2(uint16(Instruction_Pointer + 2) + *CS * 16) + memory.read_2(uint16(Instruction_Pointer + 3) + *CS * 16) * 256;
+			return memory.read(uint16(Instruction_Pointer + 2) + *CS * 16) + memory.read(uint16(Instruction_Pointer + 3) + *CS * 16) * 256;
 		case 7:
 			return BX;
 		}
@@ -760,7 +759,7 @@ uint16 mod_RM_Old(uint8 byte2)		//расчет адреса операнда по биту 2
 	if ((byte2 >> 6) == 1) // 8-bit displacement
 	{
 		//грузим смещение
-		__int8 d8 = memory.read_2(uint16(Instruction_Pointer + 2) + *CS * 16);
+		__int8 d8 = memory.read(uint16(Instruction_Pointer + 2) + *CS * 16);
 		
 		additional_IPs = 1;
 		
@@ -788,7 +787,7 @@ uint16 mod_RM_Old(uint8 byte2)		//расчет адреса операнда по биту 2
 	if ((byte2 >> 6) == 2) // 16-bit displacement
 	{
 		//грузим два байта смещения
-		__int16 d16 = memory.read_2(uint16(Instruction_Pointer + 2) + *CS * 16) + memory.read_2(uint16(Instruction_Pointer + 3) + *CS * 16) * 256;
+		__int16 d16 = memory.read(uint16(Instruction_Pointer + 2) + *CS * 16) + memory.read(uint16(Instruction_Pointer + 3) + *CS * 16) * 256;
 		
 		additional_IPs = 2;
 
@@ -843,9 +842,9 @@ uint32 mod_RM_2(uint8 byte2)		//расчет адреса операнда по биту 2
 			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*DS, 4) + ":" + int_to_hex((Destination_Index) & 0xFFFF, 4) + "]";
 			return ((Destination_Index) & 0xFFFF) + *DS * 16;
 		case 6:
-			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*DS, 4) + ":" + int_to_hex(memory.read_2(Instruction_Pointer + 2 + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + *CS * 16) * 256, 4) + "]";
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*DS, 4) + ":" + int_to_hex(memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256, 4) + "]";
 			additional_IPs = 2;
-			return memory.read_2(Instruction_Pointer + 2 + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + *CS * 16) * 256 + *DS * 16;
+			return memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256 + *DS * 16;
 		case 7:
 			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*DS, 4) + ":" + int_to_hex(BX, 4) + "]";
 			return BX + *DS * 16;
@@ -857,7 +856,7 @@ uint32 mod_RM_2(uint8 byte2)		//расчет адреса операнда по биту 2
 		additional_IPs = 1;
 
 		//грузим смещение
-		__int8 d8 = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+		__int8 d8 = memory.read(Instruction_Pointer + 2 + *CS * 16);
 
 		switch (byte2 & 7)
 		{
@@ -892,7 +891,7 @@ uint32 mod_RM_2(uint8 byte2)		//расчет адреса операнда по биту 2
 		additional_IPs = 2;
 
 		//грузим два байта смещения
-		__int16 d16 = memory.read_2(Instruction_Pointer + 2 + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + *CS * 16) * 256;
+		__int16 d16 = memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256;
 
 		switch (byte2 & 7)
 		{
@@ -962,10 +961,10 @@ void mod_RM_3_old(uint8 byte2)		//расчет адреса операнда по биту 2
 			operand_RM_offset = Destination_Index;
 			break;
 		case 6:
-			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*DS, 4) + ":" + int_to_hex(memory.read_2(Instruction_Pointer + 2 + *CS * 16) + memory.read_2(Instruction_Pointer + 3 + *CS * 16) * 256, 4) + "]";
+			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*DS, 4) + ":" + int_to_hex(memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256, 4) + "]";
 			additional_IPs = 2;
 			operand_RM_seg = *DS;
-			operand_RM_offset = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF] * 256;
+			operand_RM_offset = memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256;
 			break;
 		case 7:
 			if (log_to_console) OPCODE_comment = "[" + int_to_hex(*DS, 4) + ":" + int_to_hex(BX, 4) + "]";
@@ -980,7 +979,7 @@ void mod_RM_3_old(uint8 byte2)		//расчет адреса операнда по биту 2
 		additional_IPs = 1;
 		
 		//грузим смещение
-		__int8 d8 = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+		__int8 d8 = memory.read(Instruction_Pointer + 2 + *CS * 16);
 
 		switch (byte2 & 7)
 		{
@@ -1032,7 +1031,7 @@ void mod_RM_3_old(uint8 byte2)		//расчет адреса операнда по биту 2
 		additional_IPs = 2;
 		
 		//грузим два байта смещения
-		__int16 d16 = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF] * 256;
+		__int16 d16 = memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256;
 
 		switch (byte2 & 7)
 		{
@@ -1279,7 +1278,7 @@ void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
 				operand_RM_seg = *DS;
 				break;
 			}
-			operand_RM_offset = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF] * 256;
+			operand_RM_offset = memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256;
 			if (log_to_console) OPCODE_comment = "[" + int_to_hex(operand_RM_seg, 4) + ":" + int_to_hex(operand_RM_offset, 4) + "]";
 			break;
 		case 7:
@@ -1311,7 +1310,6 @@ void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
 			break;
 		}
 		Flag_segment_override = 0; //отменяем смену сегмента
-
 		return;
 	}
 	if ((byte2 >> 6) == 1) // 8-bit displacement
@@ -1319,7 +1317,7 @@ void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
 		additional_IPs = 1;
 
 		//грузим смещение
-		__int8 d8 = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+		__int8 d8 = memory.read(Instruction_Pointer + 2 + *CS * 16);
 
 		switch (byte2 & 7)
 		{
@@ -1548,7 +1546,7 @@ void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
 		additional_IPs = 2;
 
 		//грузим два байта смещения
-		__int16 d16 = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF] * 256;
+		__int16 d16 = memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256;
 
 		switch (byte2 & 7)
 		{
@@ -1822,8 +1820,8 @@ std::string get_int21_data()
 		out = "Print string: ";
 		for (int i = 0; i < 80; ++i)
 		{
-			if (memory_2[(DS_data * 16 + DX + i) & 0xFFFFF] == 36) return out;
-			if (memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]) out+=(char)memory_2[(DS_data * 16 + DX + i) & 0xFFFFF];
+			if (memory.read(DS_data * 16 + DX + i) == 36) return out;
+			if (memory.read(DS_data * 16 + DX + i)) out+=(char)memory.read(DS_data * 16 + DX + i);
 		}
 		return out;
 	case 10:
@@ -1913,7 +1911,7 @@ std::string get_int21_data()
 	case 52:
 		return "Get address to DOS critical flag(undocumented)";
 	case 53:
-		return "Get int vector #" + int_to_hex(*ptr_AL,2) + "h = " + int_to_hex(memory_2[*ptr_AL + 3] * 256 + memory_2[*ptr_AL + 2], 4) + ":" + int_to_hex(memory_2[*ptr_AL + 1] * 256 + memory_2[*ptr_AL], 4);
+		return "Get int vector #" + int_to_hex(*ptr_AL,2) + "h = " + int_to_hex(memory.read(*ptr_AL + 3) * 256 + memory.read(*ptr_AL + 2), 4) + ":" + int_to_hex(memory.read(*ptr_AL + 1) * 256 + memory.read(*ptr_AL), 4);
 	case 54:
 		return "Get disk free space";
 	case 55:
@@ -1970,7 +1968,7 @@ std::string get_int21_data()
 		out += "name (" + int_to_hex(DS_data,4) + ":" + int_to_hex(DX, 4) + "):";
 		for (int i = 0; i < 12; ++i)
 		{
-			if (memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]) out += memory_2[(DS_data * 16 + DX + i) & 0xFFFFF];
+			if (memory.read(DS_data * 16 + DX + i)) out += memory.read(DS_data * 16 + DX + i);
 			else break;
 		}
 		return out;
@@ -1983,8 +1981,7 @@ std::string get_int21_data()
 		out += "Output buffer: ";
 		for (int i = 0; i < CX; ++i)
 		{
-			if (memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]) out += memory_2[(DS_data * 16 + DX + i) & 0xFFFFF];
-			//monitor.teletype(memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]);
+			if (memory.read(DS_data * 16 + DX + i)) out += memory.read(DS_data * 16 + DX + i);
 		}
 		return out;
 	case 65:
@@ -2067,7 +2064,7 @@ std::string get_int21_data()
 			out = "EXEC load and execute program ";
 			for (int i = 0; i < 40; ++i)
 			{
-				if (memory_2[(DS_data * 16 + DX + i) & 0xFFFFF]) out += memory_2[(DS_data * 16 + DX + i) & 0xFFFFF];
+				if (memory.read(DS_data * 16 + DX + i)) out += memory.read(DS_data * 16 + DX + i);
 			}
 			return out;
 		case 1:
@@ -2247,7 +2244,7 @@ std::string get_int10_data()
 
 void mov_R_to_RM_8() //Move 8 bit R->R/M
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if (log_to_console) cout << "MOV " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ")  to ";
 
 	//определяем получателя
@@ -2262,7 +2259,7 @@ void mov_R_to_RM_8() //Move 8 bit R->R/M
 	{
 		//получатель - память
 		mod_RM_3(byte2);
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_r8[(byte2 >> 3) & 7];
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_r8[(byte2 >> 3) & 7]);
 		if (log_to_console) cout << "M" << OPCODE_comment;
 	}
 
@@ -2271,7 +2268,7 @@ void mov_R_to_RM_8() //Move 8 bit R->R/M
 }
 void mov_R_to_RM_16() //Move 16 bit R->R/M
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if (log_to_console) cout << "MOV " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ")  to ";
 	
@@ -2287,9 +2284,9 @@ void mov_R_to_RM_16() //Move 16 bit R->R/M
 	{
 		//получатель - память
 		mod_RM_3(byte2);
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_r16[(byte2 >> 3) & 7] & 255;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_r16[(byte2 >> 3) & 7] & 255);
 		operand_RM_offset++;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_r16[(byte2 >> 3) & 7] >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_r16[(byte2 >> 3) & 7] >> 8);
 		if (log_to_console) cout << "M" << OPCODE_comment;
 	}
 
@@ -2297,7 +2294,7 @@ void mov_R_to_RM_16() //Move 16 bit R->R/M
 }
 void mov_RM_to_R_8() //Move 8 bit R/M->R
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 		
 	//определяем источник
 	if((byte2 >> 6) == 3)
@@ -2311,7 +2308,7 @@ void mov_RM_to_R_8() //Move 8 bit R/M->R
 	{
 		//источник - память
 		mod_RM_3(byte2);
-		*ptr_r8[(byte2 >> 3) & 7] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_r8[(byte2 >> 3) & 7] = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		if (log_to_console) cout << "MOV M" << OPCODE_comment << " to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ")";
 	}
 
@@ -2319,7 +2316,7 @@ void mov_RM_to_R_8() //Move 8 bit R/M->R
 }
 void mov_RM_to_R_16() //Move 16 bit R/M->R
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	//определяем источник
 	if ((byte2 >> 6) == 3)
@@ -2333,11 +2330,11 @@ void mov_RM_to_R_16() //Move 16 bit R/M->R
 	{
 		//источник - память
 		mod_RM_3(byte2);
-		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
-		if (log_to_console) cout << "M1 = " << (int)memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_r16[(byte2 >> 3) & 7] = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		if (log_to_console) cout << "M1 = " << (int)memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		if (log_to_console) cout << " M2 = " << (int)memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
-		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7]  + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		if (log_to_console) cout << " M2 = " << (int)memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7]  + memory.read(operand_RM_seg * 16 + operand_RM_offset) * 256;
 		if (log_to_console) cout << " MOV M" << OPCODE_comment << " to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ")";
 	}
 
@@ -2345,64 +2342,64 @@ void mov_RM_to_R_16() //Move 16 bit R/M->R
 }
 void IMM_8_to_RM()		//IMM_8 to R/M
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 																			//определяем получателя
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 получатель - регистр
 		additional_IPs = 0; //обязательно устанавливать
-		if (log_to_console) cout << "MOV IMM(" << (int)memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] << ") to " << reg8_name[byte2 & 7];
-		*ptr_r8[byte2 & 7] = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+		if (log_to_console) cout << "MOV IMM(" << (int)memory.read(Instruction_Pointer + 2 + *CS * 16) << ") to " << reg8_name[byte2 & 7];
+		*ptr_r8[byte2 & 7] = memory.read(Instruction_Pointer + 2 + *CS * 16);
 	}
 	else
 	{
 		mod_RM_3(byte2);
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = memory_2[(Instruction_Pointer + 2 + additional_IPs  + *CS * 16) & 0xFFFFF];
-		if (log_to_console) cout << "IMM (" << (int)memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF] << ") to M" << OPCODE_comment;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, memory.read(Instruction_Pointer + 2 + additional_IPs  + *CS * 16));
+		if (log_to_console) cout << "IMM (" << (int)memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16) << ") to M" << OPCODE_comment;
 	}
 
 	Instruction_Pointer += 3 + additional_IPs;
 }
 void IMM_16_to_RM()	//IMM_16 to R/M
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	
 	//определяем получателя
 	if((byte2 >> 6) == 3)
 	{
 		// mod 11 получатель - регистр
 		additional_IPs = 0; //ставить обязательно
-		*ptr_r16[byte2 & 7] = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF] * 256;
-		if (log_to_console) cout << "MOV IMM(" << (int)(memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF] * 256) << ") to " << reg16_name[byte2 & 7];
+		*ptr_r16[byte2 & 7] = memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256;
+		if (log_to_console) cout << "MOV IMM(" << (int)(memory.read(Instruction_Pointer + 2 + *CS * 16) + memory.read(Instruction_Pointer + 3 + *CS * 16) * 256) << ") to " << reg16_name[byte2 & 7];
 	}
 	else
 	{
 		//получатель память
 		mod_RM_3(byte2);
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+		memory.write(operand_RM_seg * 16 + operand_RM_offset , memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16));
 		operand_RM_offset++;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
-		if (log_to_console) cout << "IMM (" << (int)(memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF] * 256) << ") to M" << OPCODE_comment;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16));
+		if (log_to_console) cout << "IMM (" << (int)(memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16) + memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16) * 256) << ") to M" << OPCODE_comment;
 	}
 	Instruction_Pointer += 4 + additional_IPs;
 }
 
 void IMM_8_to_R()		//IMM_8 to Register
 {
-	*ptr_r8[memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7] = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
-	if (log_to_console) cout << "IMM(" << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] << ") to " << reg8_name[memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7];
+	*ptr_r8[memory.read(Instruction_Pointer + *CS * 16) & 7] = memory.read(Instruction_Pointer + 1 + *CS * 16);
+	if (log_to_console) cout << "IMM(" << (int)memory.read(Instruction_Pointer + 1 + *CS * 16) << ") to " << reg8_name[memory.read(Instruction_Pointer + *CS * 16) & 7];
 	Instruction_Pointer += 2;
 }
 void IMM_16_to_R()		//IMM_16 to Register
 {
-	*ptr_r16[memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7] = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
-	if (log_to_console) cout << "IMM(" << (int)(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256) << ") to " << reg16_name[memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7];
+	*ptr_r16[memory.read(Instruction_Pointer + *CS * 16) & 7] = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
+	if (log_to_console) cout << "IMM(" << (int)(memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256) << ") to " << reg16_name[memory.read(Instruction_Pointer + *CS * 16) & 7];
 	Instruction_Pointer += 3;
 }
 
 void M_8_to_ACC()		//Memory to Accumulator 8
 {
-	New_Addr_32 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	New_Addr_32 = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	switch (Flag_segment_override)
 	{
 	case 0:
@@ -2426,13 +2423,13 @@ void M_8_to_ACC()		//Memory to Accumulator 8
 		operand_RM_seg = *DS;
 		break;
 	}
-	*ptr_AL = memory_2[(New_Addr_32 + operand_RM_seg * 16) & 0xFFFFF];
+	*ptr_AL = memory.read(New_Addr_32 + operand_RM_seg * 16);
 	Instruction_Pointer += 3;
 	if (log_to_console) cout << "M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "] to AL(" << (int)(AX & 255) << ")";
 }
 void M_16_to_ACC()		//Memory to Accumulator 16
 {
-	New_Addr_32 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	New_Addr_32 = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	switch (Flag_segment_override)
 	{
 	case 0:
@@ -2456,14 +2453,14 @@ void M_16_to_ACC()		//Memory to Accumulator 16
 		operand_RM_seg = *DS;
 		break;
 	}
-	*ptr_AL = memory_2[(New_Addr_32 + operand_RM_seg * 16) & 0xFFFFF];
-	*ptr_AH = memory_2[(New_Addr_32 + 1 + operand_RM_seg * 16) & 0xFFFFF];
+	*ptr_AL = memory.read(New_Addr_32 + operand_RM_seg * 16);
+	*ptr_AH = memory.read(New_Addr_32 + 1 + operand_RM_seg * 16);
 	Instruction_Pointer += 3;
 	if (log_to_console) cout << "M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "] to AX(" << (int)(AX) << ")";
 }
 void ACC_8_to_M()		//Accumulator to Memory 8
 {
-	New_Addr_32 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	New_Addr_32 = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	switch (Flag_segment_override)
 	{
 	case 0:
@@ -2487,13 +2484,13 @@ void ACC_8_to_M()		//Accumulator to Memory 8
 		operand_RM_seg = *DS;
 		break;
 	}
-	memory_2[(New_Addr_32 + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AL;
+	memory.write(New_Addr_32 + operand_RM_seg * 16, *ptr_AL);
 	Instruction_Pointer += 3;
 	if (log_to_console) cout << "AL(" << (int)(AX & 255) << ") to M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "]";
 }
 void ACC_16_to_M()		//Accumulator to Memory 16
 {
-	operand_RM_offset = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256;
+	operand_RM_offset = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	switch (Flag_segment_override)
 	{
 	case 0:
@@ -2517,9 +2514,9 @@ void ACC_16_to_M()		//Accumulator to Memory 16
 		operand_RM_seg = *DS;
 		break;
 	}
-	memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AL;
+	memory.write(operand_RM_offset + operand_RM_seg * 16, *ptr_AL);
 	operand_RM_offset++;
-	memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] = *ptr_AH;
+	memory.write(operand_RM_offset + operand_RM_seg * 16, *ptr_AH);
 	Instruction_Pointer += 3;
 	if (log_to_console) cout << "AX(" << (int)AX << ") to M[" << (int)operand_RM_seg << ":" << (int)New_Addr_32 << "]";
 }
@@ -2528,7 +2525,7 @@ void RM_to_Segment_Reg()	//Register/Memory to Segment Register
 {
 	operand_RM_offset = Instruction_Pointer;
 	operand_RM_offset++;
-	byte2 = memory_2[(*CS * 16 + operand_RM_offset) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(*CS * 16 + operand_RM_offset); //mod / reg / rm
 
 	//определяем источник
 	if((byte2 >> 6) == 3)
@@ -2541,9 +2538,9 @@ void RM_to_Segment_Reg()	//Register/Memory to Segment Register
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_segreg[(byte2 >> 3) & 3] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_segreg[(byte2 >> 3) & 3] = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_segreg[(byte2 >> 3) & 3] = *ptr_segreg[(byte2 >> 3) & 3] + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		*ptr_segreg[(byte2 >> 3) & 3] = *ptr_segreg[(byte2 >> 3) & 3] + memory.read(operand_RM_seg * 16 + operand_RM_offset) * 256;
 		if (log_to_console) cout << "M" << OPCODE_comment << " to " << segreg_name[(byte2 >> 3) & 3] << "(" << (int)*ptr_segreg[(byte2 >> 3) & 3] << ")";
 	}
 
@@ -2551,7 +2548,7 @@ void RM_to_Segment_Reg()	//Register/Memory to Segment Register
 }
 void Segment_Reg_to_RM()	//Segment Register to Register/Memory
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	//выбираем приёмник данных
 	if((byte2 >> 6) == 3)
@@ -2564,9 +2561,9 @@ void Segment_Reg_to_RM()	//Segment Register to Register/Memory
 	else
 	{
 		mod_RM_3(byte2);
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_segreg[(byte2 >> 3) & 3] & 255;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_segreg[(byte2 >> 3) & 3] & 255);
 		operand_RM_offset++;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_segreg[(byte2 >> 3) & 3] >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_segreg[(byte2 >> 3) & 3] >> 8);
 		if (log_to_console) cout << "MOV M" << OPCODE_comment << " to " << segreg_name[(byte2 >> 3) & 3] << "(" << *ptr_segreg[(byte2 >> 3) & 3] << ")";
 	}
 	
@@ -2575,7 +2572,7 @@ void Segment_Reg_to_RM()	//Segment Register to Register/Memory
 
 void Push_R()		//PUSH Register
 {
-	uint8 reg = memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7;
+	uint8 reg = memory.read(Instruction_Pointer + *CS * 16) & 7;
 	uint16 reg_data = *ptr_r16[reg];
 	if (reg == 4) reg_data -= 2;
 
@@ -2583,36 +2580,36 @@ void Push_R()		//PUSH Register
 		
 	//пушим число
 	Stack_Pointer--;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFf] = reg_data >> 8;
+	memory.write(SS_data * 16 + Stack_Pointer, reg_data >> 8);
 	Stack_Pointer--;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = reg_data & 255;
+	memory.write(SS_data * 16 + Stack_Pointer, reg_data & 255);
 	Instruction_Pointer++;
 }
 void Push_SegReg()	//PUSH Segment Register
 {
-	uint8 reg = (memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] >> 3) & 3;
+	uint8 reg = (memory.read(Instruction_Pointer + *CS * 16) >> 3) & 3;
 	if (log_to_console) cout << "PUSH " << segreg_name[reg] <<  "(" << (int)*ptr_segreg[reg] << ")";
 
 	//пушим число
 	Stack_Pointer--;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = *ptr_segreg[reg] >> 8;
+	memory.write(SS_data * 16 + Stack_Pointer, *ptr_segreg[reg] >> 8);
 	Stack_Pointer--;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = *ptr_segreg[reg] & 255;
+	memory.write(SS_data * 16 + Stack_Pointer, *ptr_segreg[reg] & 255);
 	Instruction_Pointer++;
 }
 
 void Pop_RM()			//POP Register/Memory (8F)
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16);//второй байт
 	uint8 OP = (byte2 >> 3) & 7;
 	uint16 Src = 0;
 
 	if (OP == 0 || 1) //пока отключим, эти биты вроде игнорируются
 	{
 		//делаем POP
-		Src = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
+		Src = memory.read(SS_data * 16 + Stack_Pointer);
 		Stack_Pointer++;
-		Src += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
+		Src += memory.read(SS_data * 16 + Stack_Pointer) * 256;
 		Stack_Pointer++;
 
 		if ((byte2 >> 6) == 3)
@@ -2626,16 +2623,16 @@ void Pop_RM()			//POP Register/Memory (8F)
 		{
 			// грузим в память
 			mod_RM_3(byte2);
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Src & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Src & 255);
 			operand_RM_offset++;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Src >> 8;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Src >> 8);
 			if (log_to_console) cout << "POP M" << OPCODE_comment;
 		}
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 	else
 	{
-		cout << "Error: POP RM with REG!=0  command = " << (int)memory_2[CS_data * 16 + Instruction_Pointer] << " " << (int)memory_2[CS_data * 16 + Instruction_Pointer + 1];
+		cout << "Error: POP RM with REG!=0  command = " << (int)memory.read(CS_data * 16 + Instruction_Pointer) << " " << (int)memory.read(CS_data * 16 + Instruction_Pointer + 1);
 		//log_to_console = 1;
 		//step_mode = 1;
 		Instruction_Pointer += 2 + additional_IPs;
@@ -2643,13 +2640,13 @@ void Pop_RM()			//POP Register/Memory (8F)
 }
 void Pop_R()			//POP Register
 {
-	uint8 reg = memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7;
+	uint8 reg = memory.read(Instruction_Pointer + *CS * 16) & 7;
 	uint16 Src = 0;
 
 	//извлекаем число
-	Src = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
+	Src = memory.read(SS_data * 16 + Stack_Pointer);
 	Stack_Pointer++;
-	Src += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
+	Src += memory.read(SS_data * 16 + Stack_Pointer) * 256;
 	Stack_Pointer ++;
 
 	*ptr_r16[reg] = Src;
@@ -2659,13 +2656,13 @@ void Pop_R()			//POP Register
 }
 void Pop_SegReg()		//POP Segment Register
 {
-	uint8 reg = (memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] >> 3) & 3;
+	uint8 reg = (memory.read(Instruction_Pointer + *CS * 16) >> 3) & 3;
 	uint16 Src = 0;
 
 	//извлекаем число
-	Src = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
+	Src = memory.read(SS_data * 16 + Stack_Pointer);
 	Stack_Pointer++;
-	Src += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
+	Src += memory.read(SS_data * 16 + Stack_Pointer) * 256;
 	Stack_Pointer++;
 	
 	*ptr_segreg[reg] = Src;
@@ -2676,7 +2673,7 @@ void Pop_SegReg()		//POP Segment Register
 
 void XCHG_8()			//Exchange Register/Memory with Register 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -2691,15 +2688,15 @@ void XCHG_8()			//Exchange Register/Memory with Register 8bit
 	{
 		*ptr_Src_L = *ptr_r8[(byte2 >> 3) & 7]; //временное значение
 		mod_RM_3(byte2);
-		*ptr_r8[(byte2 >> 3) & 7] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+		*ptr_r8[(byte2 >> 3) & 7] = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_L);
 		if (log_to_console) cout << "Exchange " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") with M" << OPCODE_comment;
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }
 void XCHG_16()			//Exchange Register/Memory with Register 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -2714,12 +2711,12 @@ void XCHG_16()			//Exchange Register/Memory with Register 16bit
 	{
 		*ptr_Src = *ptr_r16[(byte2 >> 3) & 7]; //временное значение
 		mod_RM_3(byte2);
-		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_r16[(byte2 >> 3) & 7] = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_H;
+		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory.read(operand_RM_seg * 16 + operand_RM_offset) * 256;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_H);
 		operand_RM_offset--;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_L);
 
 		if (log_to_console) cout << "Exchange " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") with M" << OPCODE_comment;
 		Instruction_Pointer += 2 + additional_IPs;
@@ -2729,7 +2726,7 @@ void XCHG_16()			//Exchange Register/Memory with Register 16bit
 }
 void XCHG_ACC_R()		//Exchange Register with Accumulator
 {
-	byte2 = memory.read_2(Instruction_Pointer + *CS * 16) & 7; //reg
+	byte2 = memory.read(Instruction_Pointer + *CS * 16) & 7; //reg
 	
 	if (log_to_console) cout << "Exchange AX(" << (int)AX << ") with " << reg16_name[byte2] << "(" << (int)*ptr_r16[byte2] << ")";
 	
@@ -2742,33 +2739,33 @@ void XCHG_ACC_R()		//Exchange Register with Accumulator
 
 void In_8_to_ACC_from_port()	 //Input 8 to AL/AX AX from fixed PORT
 {
-	*ptr_AL = IO_device.input_from_port_8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]); //пишем в AL байт из порта
+	*ptr_AL = IO_device.input_from_port_8(memory.read(Instruction_Pointer + 1 + *CS * 16)); //пишем в AL байт из порта
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
-	if (log_to_console) cout << "read (" << (int)(AX & 255) << ") from port " << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	if (log_to_console) cout << "read (" << (int)(AX & 255) << ") from port " << (int)memory.read(Instruction_Pointer + 1 + *CS * 16);
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 2;
 }
 void In_16_to_ACC_from_port()    //Input 16 to AL/AX AX from fixed PORT
 {
-	AX = IO_device.input_from_port_16(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]); //пишем в AX 2 байта из порта
+	AX = IO_device.input_from_port_16(memory.read(Instruction_Pointer + 1 + *CS * 16)); //пишем в AX 2 байта из порта
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
-	if (log_to_console) cout << "read (" << (int)AX << ") from port " << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	if (log_to_console) cout << "read (" << (int)AX << ") from port " << (int)memory.read(Instruction_Pointer + 1 + *CS * 16);
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 2;
 }
 void Out_8_from_ACC_to_port()    //Output 8 from AL/AX AX from fixed PORT
 {
-	IO_device.output_to_port_8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF], *ptr_AL);//выводим в порт байт AL
+	IO_device.output_to_port_8(memory.read(Instruction_Pointer + 1 + *CS * 16), *ptr_AL);//выводим в порт байт AL
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
-	if (log_to_console) cout << "write AL(" << (int)(AX & 255) << ") to port " << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	if (log_to_console) cout << "write AL(" << (int)(AX & 255) << ") to port " << (int)memory.read(Instruction_Pointer + 1 + *CS * 16);
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 2;
 }
 void Out_16_from_ACC_to_port()   //Output 16 from AL/AX AX from fixed PORT
 {
-	IO_device.output_to_port_16(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF], AX);//выводим в порт 2 байта AX
+	IO_device.output_to_port_16(memory.read(Instruction_Pointer + 1 + *CS * 16), AX);//выводим в порт 2 байта AX
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
-	if (log_to_console) cout << "write AX(" << (int)(AX) << ") to port " << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	if (log_to_console) cout << "write AX(" << (int)(AX) << ") to port " << (int)memory.read(Instruction_Pointer + 1 + *CS * 16);
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 	Instruction_Pointer += 2;
 }
@@ -2832,13 +2829,13 @@ void XLAT()			//Translate Byte to AL
 	}
 	if (log_to_console) cout << "XLAT M[" << (int)((BX + *ptr_AL + operand_RM_seg * 16) & 0xFFFFF) << "] -> AL(";
 	uint16 Addr = BX + *ptr_AL;
-	*ptr_AL = memory_2[(Addr + operand_RM_seg * 16) & 0xFFFFF];
+	*ptr_AL = memory.read(Addr + operand_RM_seg * 16);
 	if (log_to_console) cout << (int)(AX & 255) << ")";
 	Instruction_Pointer++;
 }
 void LEA()			//Load EA to Register
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 EA = 0;
 
 	//определяем смещение
@@ -2861,7 +2858,7 @@ void LEA()			//Load EA to Register
 }
 void LDS()			//Load Pointer to DS
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	//определяем источник
 	if ((byte2 >> 6) == 3)
@@ -2869,25 +2866,25 @@ void LDS()			//Load Pointer to DS
 		// UNDOC
 		// возвращает данные с учетом старых данных во внутренних регистрах
 		//уточнить порядок при необходимости
-		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		*ptr_r16[(byte2 >> 3) & 7] = memory.read(operand_RM_offset + operand_RM_seg * 16);
 		operand_RM_offset++;
-		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory.read(operand_RM_offset + operand_RM_seg * 16) * 256;
 		operand_RM_offset++;
-		DS_data = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		DS_data = memory.read(operand_RM_offset + operand_RM_seg * 16);
 		operand_RM_offset++;
-		DS_data = DS_data + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		DS_data = DS_data + memory.read(operand_RM_offset + operand_RM_seg * 16) * 256;
 		if (log_to_console) cout << "UNDOC! LDS " << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << " + DS(" << (int)DS_data << ")";
 	}
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		*ptr_r16[(byte2 >> 3) & 7] = memory.read(operand_RM_offset + operand_RM_seg * 16);
 		operand_RM_offset++;
-		*ptr_r16[(byte2 >> 3) & 7]  = *ptr_r16[(byte2 >> 3) & 7]  + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		*ptr_r16[(byte2 >> 3) & 7]  = *ptr_r16[(byte2 >> 3) & 7]  + memory.read(operand_RM_offset + operand_RM_seg * 16) * 256;
 		operand_RM_offset++;
-		DS_data = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		DS_data = memory.read(operand_RM_offset + operand_RM_seg * 16);
 		operand_RM_offset++;
-		DS_data  = DS_data  + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		DS_data  = DS_data  + memory.read(operand_RM_offset + operand_RM_seg * 16) * 256;
 		if (log_to_console) cout << "LDS " << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << " + DS(" << (int)DS_data << ")";
 	}
 
@@ -2895,7 +2892,7 @@ void LDS()			//Load Pointer to DS
 }
 void LES()			//Load Pointer to ES
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	//определяем источник
 	if ((byte2 >> 6) == 3)
@@ -2903,25 +2900,25 @@ void LES()			//Load Pointer to ES
 		// UNDOC
 		// возвращает данные с учетом старых данных во внутренних регистрах
 		//уточнить порядок при необходимости
-		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		*ptr_r16[(byte2 >> 3) & 7] = memory.read(operand_RM_offset + operand_RM_seg * 16);
 		operand_RM_offset++;
-		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		*ptr_r16[(byte2 >> 3) & 7] = *ptr_r16[(byte2 >> 3) & 7] + memory.read(operand_RM_offset + operand_RM_seg * 16) * 256;
 		operand_RM_offset++;
-		ES_data = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		ES_data = memory.read(operand_RM_offset + operand_RM_seg * 16);
 		operand_RM_offset++;
-		ES_data = ES_data + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		ES_data = ES_data + memory.read(operand_RM_offset + operand_RM_seg * 16) * 256;
 		if (log_to_console) cout << "UNDOC! LES " << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << " + ES(" << (int)ES_data << ")";
 	}
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_r16[(byte2 >> 3) & 7] = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		*ptr_r16[(byte2 >> 3) & 7] = memory.read(operand_RM_offset + operand_RM_seg * 16);
 		operand_RM_offset++;
-		*ptr_r16[(byte2 >> 3) & 7]  = *ptr_r16[(byte2 >> 3) & 7]  + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		*ptr_r16[(byte2 >> 3) & 7]  = *ptr_r16[(byte2 >> 3) & 7]  + memory.read(operand_RM_offset + operand_RM_seg * 16) * 256;
 		operand_RM_offset++;
-		ES_data = memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF];
+		ES_data = memory.read(operand_RM_offset + operand_RM_seg * 16);
 		operand_RM_offset++;
-		ES_data  = ES_data + memory_2[(operand_RM_offset + operand_RM_seg * 16) & 0xFFFFF] * 256;
+		ES_data  = ES_data + memory.read(operand_RM_offset + operand_RM_seg * 16) * 256;
 		if (log_to_console) cout << "LES " << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << " + ES(" << (int)ES_data << ")";
 	}
 
@@ -2947,20 +2944,20 @@ void SAHF()			// Store AH with Flags
 void PUSHF()		// Push Flags
 {
 	Stack_Pointer--;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
-	//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x00 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
+	memory.write(SS_data * 16 + Stack_Pointer, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+	//memory.read(SS_data * 16 + Stack_Pointer) = 0x00 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF;
 	Stack_Pointer--;
-	memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
-	//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = 0x0 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
+	memory.write(SS_data * 16 + Stack_Pointer, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+	//memory.read(SS_data * 16 + Stack_Pointer) = 0x0 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF);
 	if (log_to_console) cout << "Push Flags";
 	Instruction_Pointer++;
 }
 void POPF()			// Pop Flags
 {
 	uint32 stack_addr = (SS_data * 16 + Stack_Pointer) & 0xFFFFF;
-	int Flags = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
+	int Flags = memory.read(SS_data * 16 + Stack_Pointer);
 	Stack_Pointer++;
-	Flags += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
+	Flags += memory.read(SS_data * 16 + Stack_Pointer) * 256;
 	Stack_Pointer++;
 	if ((Flags >> 8) & 1)
 	{
@@ -2987,7 +2984,7 @@ void POPF()			// Pop Flags
 
 void ADD_R_to_RM_8()		// ADD R -> R/M 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	if (log_to_console) cout << "ADD " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") ";
@@ -3017,16 +3014,16 @@ void ADD_R_to_RM_8()		// ADD R -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7];
-		Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		Result = memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7];
+		Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		Flag_CF = Result >> 8;
-		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory_2[New_Addr_32] = Result;
+		memory.write(New_Addr_32, Result);
 		if (log_to_console) cout << " + M" << OPCODE_comment << " = " << (int)(Result & 255);
 
 		Instruction_Pointer += 2 + additional_IPs;
@@ -3034,7 +3031,7 @@ void ADD_R_to_RM_8()		// ADD R -> R/M 8bit
 }
 void ADD_R_to_RM_16()		// ADD R -> R/M 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	if (log_to_console) cout << "ADD " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
@@ -3060,15 +3057,15 @@ void ADD_R_to_RM_16()		// ADD R -> R/M 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result =  *ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
 		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
@@ -3082,7 +3079,7 @@ void ADD_R_to_RM_16()		// ADD R -> R/M 16bit
 }
 void ADD_RM_to_R_8()		// INC R/M -> R 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 	
 	//определяем 1-й операнд
@@ -3107,16 +3104,16 @@ void ADD_RM_to_R_8()		// INC R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7];
+		Result = memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 		
 		Instruction_Pointer += 2 + additional_IPs;
@@ -3125,7 +3122,7 @@ void ADD_RM_to_R_8()		// INC R/M -> R 8bit
 }
 void ADD_RM_to_R_16()		// INC R/M -> R 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	//определяем 1-й операнд
@@ -3149,9 +3146,9 @@ void ADD_RM_to_R_16()		// INC R/M -> R 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
@@ -3169,7 +3166,7 @@ void ADD_RM_to_R_16()		// INC R/M -> R 16bit
 }
 void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint8 OP = (byte2 >> 3) & 7;
 	uint16 Src = 0;
 	uint32 Result_32 = 0;
@@ -3184,7 +3181,7 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "ADD IMMs(" << (int)imm << ") + " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
 			//switch (byte2 & 7)
@@ -3206,12 +3203,12 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			mod_RM_3(byte2);
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "ADD IMMs(" << (int)imm << ") + ";
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = *ptr_Src + imm;
 			Flag_AF = (((*ptr_Src & 15) + (imm & 15)) >> 4) & 1;
 			OF_Carry = ((*ptr_Src & 0x7FFF) + (imm & 0x7FFF)) >> 15;
@@ -3221,9 +3218,9 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, (Result_32 >> 8) & 255);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Result_32 & 255);
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
 
 			Instruction_Pointer += 3 + additional_IPs;
@@ -3238,7 +3235,7 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "IMMs(" << (int)imm << ") OR " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
 			//switch (byte2 & 7)
@@ -3258,12 +3255,12 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			mod_RM_3(byte2);
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "IMMs(" << (int)imm << ") OR ";
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = *ptr_Src | imm;
 			Flag_CF = 0;
 			Flag_SF = (Result_32 >> 15) & 1;
@@ -3271,9 +3268,9 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, (Result_32 >> 8) & 255);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Result_32 & 255);
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
 
 			Instruction_Pointer += 3 + additional_IPs;
@@ -3287,7 +3284,7 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "ADC IMMs(" << (int)imm << ") + " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = ";
 			//switch (byte2 & 7)
@@ -3309,12 +3306,12 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			mod_RM_3(byte2);
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "ADC IMMs(" << (int)imm << ") +  CF(" << (int)Flag_CF << ") + ";
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = *ptr_Src + imm + Flag_CF;
 			Flag_AF = (((*ptr_Src & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
 			OF_Carry = ((*ptr_Src & 0x7FFF) + (imm & 0x7FFF) + Flag_CF) >> 15;
@@ -3324,9 +3321,9 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, (Result_32 >> 8) & 255);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Result_32 & 255);
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
 
 			Instruction_Pointer += 3 + additional_IPs;
@@ -3340,7 +3337,7 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") - SBB IMMs(" << (int)imm << ") - CF(" << (int)Flag_CF << ") = ";
 			//switch (byte2 & 7)
@@ -3362,12 +3359,12 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			mod_RM_3(byte2);
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - " << "SBB IMMs(" << (int)imm << ") - CF(" << (int)Flag_CF << ") = " << (int)(Result_32 & 0xFFFF);
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = *ptr_Src - imm - Flag_CF;
 			Flag_AF = (((*ptr_Src & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
 			OF_Carry = ((*ptr_Src & 0x7FFF) - (imm & 0x7FFF) - Flag_CF) >> 15;
@@ -3377,9 +3374,9 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, (Result_32 >> 8) & 255);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Result_32 & 255);
 
 			Instruction_Pointer += 3 + additional_IPs;
 		}
@@ -3393,7 +3390,7 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "IMMs(" << (int)imm << ") AND " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
 			//switch (byte2 & 7)
@@ -3413,12 +3410,12 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			mod_RM_3(byte2);
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "IMMs(" << (int)imm << ") AND ";
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = *ptr_Src & imm;
 			Flag_CF = 0;
 			Flag_SF = (Result_32 >> 15) & 1;
@@ -3426,9 +3423,9 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, (Result_32 >> 8) & 255);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Result_32 & 255);
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
 
 			Instruction_Pointer += 3 + additional_IPs;
@@ -3441,7 +3438,7 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") - SUB IMMs(" << (int)imm << ") = ";
 			//switch (byte2 & 7)
@@ -3463,12 +3460,12 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			mod_RM_3(byte2);
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - " << "SUB IMMs(" << (int)imm << ") = " << (int)(Result_32 & 0xFFFF);
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = *ptr_Src - imm;
 			Flag_AF = (((*ptr_Src & 15) - (imm & 15)) >> 4) & 1;
 			OF_Carry = ((*ptr_Src & 0x7FFF) - (imm & 0x7FFF)) >> 15;
@@ -3478,9 +3475,9 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, (Result_32 >> 8) & 255);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Result_32 & 255);
 			
 
 			Instruction_Pointer += 3 + additional_IPs;
@@ -3495,7 +3492,7 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "IMMs(" << (int)imm << ") XOR " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
 			//switch (byte2 & 7)
@@ -3515,12 +3512,12 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			mod_RM_3(byte2);
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "IMMs(" << (int)imm << ") XOR ";
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = *ptr_Src ^ imm;
 			Flag_CF = 0;
 			Flag_SF = (Result_32 >> 15) & 1;
@@ -3528,9 +3525,9 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = (Result_32 >> 8) & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, (Result_32 >> 8) & 255);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result_32 & 255;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, Result_32 & 255);
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)(Result_32 & 0xFFFF);
 
 			Instruction_Pointer += 3 + additional_IPs;
@@ -3544,7 +3541,7 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			// mod 11 источник - регистр
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "CMP "  << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") with IMMs(" << (int)imm << ") = ";
 			//switch (byte2 & 7)
@@ -3565,11 +3562,11 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 		{
 			mod_RM_3(byte2);
 			//непосредственный операнд
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = *ptr_Src - imm;
 			if (log_to_console) cout << "CMP M" << OPCODE_comment << "("<< (int)*ptr_Src << ") with " << " IMMs(" << (int)imm << ") = " << (int)(Result_32 & 0xFFFF);
 			Flag_AF = (((*ptr_Src & 15) - (imm & 15)) >> 4) & 1;
@@ -3590,7 +3587,7 @@ void ADD_IMM_to_ACC_8()	// ADD IMM -> ACC 8bit
 {
 	uint16 Result = 0;
 	
-	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 	if (log_to_console) cout << "ADD IMM (" << (int)imm << ") to AL(" << (int)(AX & 255) << ") = ";
 	OF_Carry = ((imm & 0x7F) + (AX & 0x7F)) >> 7;
 	Result = imm + *ptr_AL;
@@ -3610,9 +3607,9 @@ void ADD_IMM_to_ACC_16()	// ADD IMM -> ACC 16bit
 	uint32 Result = 0;
 	operand_RM_offset = Instruction_Pointer;
 	operand_RM_offset++;
-	uint16 imm = memory_2[(operand_RM_offset + *CS * 16) & 0xFFFFF];
+	uint16 imm = memory.read(operand_RM_offset + *CS * 16);
 	operand_RM_offset++;
-	imm += memory.read_2(operand_RM_offset + *CS * 16) * 256;
+	imm += memory.read(operand_RM_offset + *CS * 16) * 256;
 	if (log_to_console) cout << "ADD IMM (" << (int)imm << ") to AX(" << (int)(AX) << ") = ";
 	
 	Result = imm + AX;
@@ -3634,7 +3631,7 @@ void ADD_IMM_to_ACC_16()	// ADD IMM -> ACC 16bit
 
 void ADC_R_to_RM_8()		// ADC R -> R/M 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	if (log_to_console) cout << "ADC " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ")";
@@ -3662,10 +3659,10 @@ void ADC_R_to_RM_8()		// ADC R -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
+		Result = memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
 		if (log_to_console) cout << " + M" << OPCODE_comment << " + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
-		Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
+		Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
+		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
 		Flag_CF = Result >> 8;
 		if (log_to_console) cout << "  " << (int)OF_Carry;
 		Flag_SF = (Result >> 7) & 1;
@@ -3673,14 +3670,14 @@ void ADC_R_to_RM_8()		// ADC R -> R/M 8bit
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory_2[New_Addr_32] = Result;
+		memory.write(New_Addr_32, Result);
 
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }
 void ADC_R_to_RM_16()		// ADC R -> R/M 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	if (log_to_console) cout << "ADC " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
@@ -3706,15 +3703,15 @@ void ADC_R_to_RM_16()		// ADC R -> R/M 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7] + Flag_CF;
 		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
 		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
@@ -3728,7 +3725,7 @@ void ADC_R_to_RM_16()		// ADC R -> R/M 16bit
 }
 void ADC_RM_to_R_8()		// ADC R/M -> R 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем 1-й операнд
@@ -3753,10 +3750,10 @@ void ADC_RM_to_R_8()		// ADC R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
+		Result = memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
 		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
-		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
-		Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
+		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
+		Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
@@ -3770,7 +3767,7 @@ void ADC_RM_to_R_8()		// ADC R/M -> R 8bit
 }
 void ADC_RM_to_R_16()		// ADC R/M -> R 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	//определяем 1-й операнд
@@ -3794,9 +3791,9 @@ void ADC_RM_to_R_16()		// ADC R/M -> R 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7] + Flag_CF;
 		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 0xFFFF);
 		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
@@ -3817,7 +3814,7 @@ void ADC_IMM_to_ACC_8()		// ADC IMM->ACC 8bit
 {
 	uint16 Result = 0;
 	
-	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 	if (log_to_console) cout << "ADC IMM (" << (int)imm << ") to AL(" << (int)(AX & 255) << ") + CF("<<(int)Flag_CF<<") = ";
 	OF_Carry = ((imm & 0x7F) + (AX & 0x7F) + Flag_CF) >> 7;
 	Flag_AF = (((AX & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
@@ -3837,7 +3834,7 @@ void ADC_IMM_to_ACC_16()	// ADC IMM->ACC 16bit
 {
 	uint32 Result = 0;
 	
-	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	if (log_to_console) cout << "ADC IMM (" << (int)imm << ") to AX(" << (int)(AX) << ") + CF(" << (int)Flag_CF << ") = ";
 	OF_Carry = ((imm & 0x7FFF) + (AX & 0x7FFF) + Flag_CF) >> 15;
 	Flag_AF = (((AX & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
@@ -3856,7 +3853,7 @@ void ADC_IMM_to_ACC_16()	// ADC IMM->ACC 16bit
 //INC/DEC 8
 void INC_RM_8()		// INC R/M 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16);//второй байт
 	uint8 Src = 0;		//источник данных
 	additional_IPs = 0;
 	uint16 old_IP = 0;
@@ -3890,18 +3887,18 @@ void INC_RM_8()		// INC R/M 8bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Flag_AF = (((memory_2[New_Addr_32] & 0x0F) + 1) >> 4) & 1;
-			Flag_OF = ((memory_2[New_Addr_32] & 0x7F) + 1) >> 7;
-			memory_2[New_Addr_32]++;
-			if (memory_2[New_Addr_32]) Flag_ZF = 0;
+			Flag_AF = (((memory.read(New_Addr_32) & 0x0F) + 1) >> 4) & 1;
+			Flag_OF = ((memory.read(New_Addr_32) & 0x7F) + 1) >> 7;
+			memory.write(New_Addr_32, memory.read(New_Addr_32) + 1);
+			if (memory.read(New_Addr_32)) Flag_ZF = 0;
 			else 
 			{
 				Flag_ZF = 1;
 				Flag_OF = 0;
 			}
-			Flag_SF = (memory_2[New_Addr_32] >> 7) & 1;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
-			if (log_to_console) cout << "INC M" << OPCODE_comment << " = " << (int)memory_2[New_Addr_32];
+			Flag_SF = (memory.read(New_Addr_32) >> 7) & 1;
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
+			if (log_to_console) cout << "INC M" << OPCODE_comment << " = " << (int)memory.read(New_Addr_32);
 			
 			Instruction_Pointer += 2 + additional_IPs;
 		}
@@ -3916,7 +3913,7 @@ void INC_RM_8()		// INC R/M 8bit
 
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 0x0F) - 1) >> 4) & 1;
 			Flag_OF = ((*ptr_r8[byte2 & 7] & 0x7F) - 1) >> 7;
-			if (!*ptr_r8[byte2 & 7]) Flag_OF = 0;
+			if (!*ptr_r8[byte2 & 7]) Flag_OF = 0; //при вычитании из ноля
 			--(*ptr_r8[byte2 & 7]);
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = 0;
 			else Flag_ZF = 1;
@@ -3930,15 +3927,15 @@ void INC_RM_8()		// INC R/M 8bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Flag_AF = (((memory_2[New_Addr_32] & 0x0F) - 1) >> 4) & 1;
-			Flag_OF = ((memory_2[New_Addr_32] & 0x7F) - 1) >> 7;
-			if (!memory_2[New_Addr_32]) Flag_OF = 0;
-			memory_2[New_Addr_32]--;
-			if (memory_2[New_Addr_32]) Flag_ZF = 0;
+			Flag_AF = (((memory.read(New_Addr_32) & 0x0F) - 1) >> 4) & 1;
+			Flag_OF = ((memory.read(New_Addr_32) & 0x7F) - 1) >> 7;
+			if (!memory.read(New_Addr_32)) Flag_OF = 0;//при вычитании из ноля
+			memory.write(New_Addr_32, memory.read(New_Addr_32) - 1);
+			if (memory.read(New_Addr_32)) Flag_ZF = 0;
 			else Flag_ZF = 1;
-			Flag_SF = (memory_2[New_Addr_32] >> 7) & 1;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
-			if (log_to_console) cout << "DEC M" << OPCODE_comment << " = " << (int)memory_2[New_Addr_32];
+			Flag_SF = (memory.read(New_Addr_32) >> 7) & 1;
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
+			if (log_to_console) cout << "DEC M" << OPCODE_comment << " = " << (int)memory.read(New_Addr_32);
 
 			Instruction_Pointer += 2 + additional_IPs;
 		}
@@ -3957,14 +3954,14 @@ void INC_RM_8()		// INC R/M 8bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			new_IP = memory_2[New_Addr_32];
+			new_IP = memory.read(New_Addr_32);
 		}
 
 		old_IP = Instruction_Pointer;
 		stack_addr = SS_data * 16 + Stack_Pointer - 1;
 		Stack_Pointer--;
 		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
+		memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
 
 		Instruction_Pointer = new_IP;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
@@ -3987,22 +3984,22 @@ void INC_RM_8()		// INC R/M 8bit
 			mod_RM_3(byte2);
 		}
 
-		new_IP = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		new_IP = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		//new_IP = new_IP + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		//new_IP = new_IP + memory.read(operand_RM_seg * 16 + operand_RM_offset) * 256;
 		operand_RM_offset++;
-		new_CS = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		new_CS = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		//new_CS = new_CS + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		//new_CS = new_CS + memory.read(operand_RM_seg * 16 + operand_RM_offset) * 256;
 
 		Stack_Pointer--;
-		//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = CS_data >> 8;
+		//memory.read(SS_data * 16 + Stack_Pointer) = CS_data >> 8;
 		Stack_Pointer--;
-		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = CS_data & 255;
+		memory.write(SS_data * 16 + Stack_Pointer, CS_data & 255);
 		Stack_Pointer--;
-		//memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = (Instruction_Pointer + 2 + additional_IPs) >> 8;
+		//memory.read(SS_data * 16 + Stack_Pointer) = (Instruction_Pointer + 2 + additional_IPs) >> 8;
 		Stack_Pointer--;
-		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = (Instruction_Pointer + 2 + additional_IPs) & 255;
+		memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
 
 		Instruction_Pointer = new_IP;
 		*CS = new_CS;
@@ -4024,7 +4021,7 @@ void INC_RM_8()		// INC R/M 8bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Instruction_Pointer = memory_2[New_Addr_32];
+			Instruction_Pointer = memory.read(New_Addr_32);
 		}
 
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
@@ -4044,8 +4041,8 @@ void INC_RM_8()		// INC R/M 8bit
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 		}
 
-		Instruction_Pointer = memory_2[New_Addr_32];
-		*CS = memory_2[New_Addr_32 + 2];
+		Instruction_Pointer = memory.read(New_Addr_32);
+		*CS = memory.read(New_Addr_32 + 2);
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 		if (log_to_console) cout << "UNDOC! Indirect Intersegment Jump to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -4058,7 +4055,7 @@ void INC_RM_8()		// INC R/M 8bit
 			//пушим в стек регистр
 			Stack_Pointer--;
 			Stack_Pointer--;
-			memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = *ptr_r8[byte2 & 7];
+			memory.write(SS_data * 16 + Stack_Pointer, *ptr_r8[byte2 & 7]);
 			cout << "Undoc PUSH " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ")";
 			Instruction_Pointer += 2;
 		}
@@ -4071,8 +4068,8 @@ void INC_RM_8()		// INC R/M 8bit
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			Stack_Pointer--;
 			Stack_Pointer--;
-			memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = memory_2[New_Addr_32];
-			cout << "Undoc PUSH " << OPCODE_comment << "(" << (int)memory_2[New_Addr_32] << ") IP " << (int)memory_2[CS_data * 16 + Instruction_Pointer] << " " << (int)memory_2[CS_data * 16 + Instruction_Pointer + 1] <<endl;
+			memory.write(SS_data * 16 + Stack_Pointer, memory.read(New_Addr_32));
+			cout << "Undoc PUSH " << OPCODE_comment << "(" << (int)memory.read(New_Addr_32) << ") IP " << (int)memory.read(CS_data * 16 + Instruction_Pointer) << " " << (int)memory.read(CS_data * 16 + Instruction_Pointer + 1) <<endl;
 			Instruction_Pointer += 2 + additional_IPs;
 		}
 		break;
@@ -4094,7 +4091,7 @@ void INC_RM_8()		// INC R/M 8bit
 }
 void INC_Reg()			//  INC reg 16 bit
 {
-	uint8 reg = memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7;//регистр
+	uint8 reg = memory.read(Instruction_Pointer + *CS * 16) & 7;//регистр
 	Flag_AF = (((*ptr_r16[reg] & 0x0F) + 1) >> 4) & 1;
 	Flag_OF = (((*ptr_r16[reg] & 0x7FFF) + 1) >> 15);
 	(*ptr_r16[reg])++;
@@ -4173,7 +4170,7 @@ void DAA()				//  DAA = Decimal Adjust for Add
 
 void SUB_RM_from_RM_8()			// SUB R from R/M 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	if (log_to_console) cout << "SUB " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") from ";
@@ -4203,16 +4200,16 @@ void SUB_RM_from_RM_8()			// SUB R from R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] - *ptr_r8[(byte2 >> 3) & 7];
-		Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		Result = memory.read(New_Addr_32) - *ptr_r8[(byte2 >> 3) & 7];
+		Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		Flag_CF = Result >> 8;
-		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory_2[New_Addr_32] = Result;
+		memory.write(New_Addr_32, Result);
 		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 255);
 
 		Instruction_Pointer += 2 + additional_IPs;
@@ -4220,7 +4217,7 @@ void SUB_RM_from_RM_8()			// SUB R from R/M 8bit
 }
 void SUB_RM_from_RM_16()		// SUB R from R/M 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	if (log_to_console) cout << "SUB " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") from ";
@@ -4246,15 +4243,15 @@ void SUB_RM_from_RM_16()		// SUB R from R/M 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7];
 		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
@@ -4268,7 +4265,7 @@ void SUB_RM_from_RM_16()		// SUB R from R/M 16bit
 }
 void SUB_RM_from_R_8()			// SUB R/M -> R 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем 1-й операнд
@@ -4293,16 +4290,16 @@ void SUB_RM_from_R_8()			// SUB R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = -memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7];
+		Result = -memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "SUB M" << OPCODE_comment << " from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (-(memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((-(memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		Flag_AF = ((-(memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 
 		Instruction_Pointer += 2 + additional_IPs;
@@ -4310,7 +4307,7 @@ void SUB_RM_from_R_8()			// SUB R/M -> R 8bit
 }
 void SUB_RM_from_R_16()			// SUB R/M -> R 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	//определяем 1-й операнд
@@ -4334,9 +4331,9 @@ void SUB_RM_from_R_16()			// SUB R/M -> R 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "SUB M" << OPCODE_comment << " from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
@@ -4356,7 +4353,7 @@ void SUB_RM_from_R_16()			// SUB R/M -> R 16bit
 void SUB_IMM_from_ACC_8()		// SUB ACC  8bit - IMM -> ACC
 {
 	uint16 Result = 0;
-	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 	bool OF_Carry = 0;
 
 	if (log_to_console) cout << "SUB IMM (" << (int)imm << ") from AL(" << setw(2) << (int)*ptr_AL << ") = ";
@@ -4380,9 +4377,9 @@ void SUB_IMM_from_ACC_16()		// SUB ACC 16bit - IMM -> ACC
 	bool OF_Carry = 0;
 	operand_RM_offset = Instruction_Pointer;
 	operand_RM_offset++;
-	uint16 imm = memory_2[(operand_RM_offset + *CS * 16) & 0xFFFFF];
+	uint16 imm = memory.read(operand_RM_offset + *CS * 16);
 	operand_RM_offset++;
-	imm += memory.read_2(operand_RM_offset + *CS * 16) * 256;
+	imm += memory.read(operand_RM_offset + *CS * 16) * 256;
 	if (log_to_console) cout << "SUB IMM (" << (int)imm << ") from AX(" << (int)AX << ") = ";
 	Result = AX - imm;
 	OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF)) >> 15;
@@ -4402,7 +4399,7 @@ void SUB_IMM_from_ACC_16()		// SUB ACC 16bit - IMM -> ACC
 
 void SBB_RM_from_RM_8()			// SBB R/M -> R/M 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	if (log_to_console) cout << "SBB " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") (CF=" << (int)Flag_CF << ") from ";
@@ -4432,24 +4429,24 @@ void SBB_RM_from_RM_8()			// SBB R/M -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] - *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
-		Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
-		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		Result = memory.read(New_Addr_32) - *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
 		Flag_CF = Result >> 8;
 		Flag_OF = Flag_CF ^ OF_Carry;
-		if(!memory_2[New_Addr_32]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		if(!memory.read(New_Addr_32)) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		Flag_SF = ((Result >> 7) & 1);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory_2[New_Addr_32] = Result;
+		memory.write(New_Addr_32, Result);
 		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 255);
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }
 void SBB_RM_from_RM_16()		// SBB R/M -> R/M 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	if (log_to_console) cout << "SBB " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") (CF=" << (int)Flag_CF << ") from ";
@@ -4475,9 +4472,9 @@ void SBB_RM_from_RM_16()		// SBB R/M -> R/M 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
 		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
 		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
@@ -4488,16 +4485,16 @@ void SBB_RM_from_RM_16()		// SBB R/M -> R/M 16bit
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 0xFFFF);
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }
 void SBB_RM_from_R_8()			// SBB R/M -> R 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем 1-й операнд
@@ -4523,9 +4520,9 @@ void SBB_RM_from_R_8()			// SBB R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = -memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
-		OF_Carry = (-(memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
-		Flag_AF = ((-(memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
+		Result = -memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		Flag_AF = ((-(memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
 		if (log_to_console) cout << "SBB M" << OPCODE_comment << " (CF=" << (int)Flag_CF << ") from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
@@ -4542,7 +4539,7 @@ void SBB_RM_from_R_8()			// SBB R/M -> R 8bit
 }
 void SBB_RM_from_R_16()			// SBB R/M -> R 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	//определяем 1-й операнд
@@ -4566,9 +4563,9 @@ void SBB_RM_from_R_16()			// SBB R/M -> R 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
 		if (log_to_console) cout << "SBB M" << OPCODE_comment << " (CF=" << (int)Flag_CF << ") from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
@@ -4588,7 +4585,7 @@ void SBB_RM_from_R_16()			// SBB R/M -> R 16bit
 void SBB_IMM_from_ACC_8()		// SBB ACC  8bit - IMM -> ACC
 {
 	uint16 Result = 0;
-	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 	bool OF_Carry = 0;
 	if (log_to_console) cout << "SBB IMM (" << (int)imm << ") from AL(" << setw(2) << (int)*ptr_AL << ") = ";
 	OF_Carry = ((AX & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
@@ -4609,7 +4606,7 @@ void SBB_IMM_from_ACC_16()		// SBB ACC 16bit - IMM -> ACC
 {
 	uint32 Result = 0;
 	bool OF_Carry = 0;
-	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	if (log_to_console) cout << "SBB IMM (" << (int)imm << ") from AX(" << (int)AX << ") = ";
 	OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF) - Flag_CF) >> 15;
 	Flag_AF = (((AX & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
@@ -4629,7 +4626,7 @@ void SBB_IMM_from_ACC_16()		// SBB ACC 16bit - IMM -> ACC
 
 void DEC_Reg()			//  DEC reg 16 bit
 {
-	uint8 reg = memory_2[(Instruction_Pointer + *CS * 16) & 0xFFFFF] & 7;//регистр
+	uint8 reg = memory.read(Instruction_Pointer + *CS * 16) & 7;//регистр
 	Flag_AF = (((*ptr_r16[reg] & 0x0F) - 1) >> 4) & 1;
 	Flag_OF = (((*ptr_r16[reg] & 0x7FFF) - 1) >> 15);
 	if (!*ptr_r16[reg]) Flag_OF = 0;
@@ -4646,7 +4643,7 @@ void DEC_Reg()			//  DEC reg 16 bit
 
 void CMP_Reg_RM_8()		//  CMP Reg with R/M 8 bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	if (log_to_console) cout << "CMP " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") with ";
@@ -4676,16 +4673,16 @@ void CMP_Reg_RM_8()		//  CMP Reg with R/M 8 bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] - *ptr_r8[(byte2 >> 3) & 7];
-		Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		Result = memory.read(New_Addr_32) - *ptr_r8[(byte2 >> 3) & 7];
+		Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		Flag_CF = Result >> 8;
-		OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		//memory_2[New_Addr_32] = Result;
+		//memory.write(New_Addr_32, Result);
 		if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(Result & 255);
 
 		Instruction_Pointer += 2 + additional_IPs;
@@ -4693,7 +4690,7 @@ void CMP_Reg_RM_8()		//  CMP Reg with R/M 8 bit
 }
 void CMP_Reg_RM_16()	//  CMP Reg with R/M 16 bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	if (log_to_console) cout << "CMP " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") with ";
@@ -4718,9 +4715,9 @@ void CMP_Reg_RM_16()	//  CMP Reg with R/M 16 bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7];
 		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
@@ -4738,7 +4735,7 @@ void CMP_Reg_RM_16()	//  CMP Reg with R/M 16 bit
 //доработать
 void CMP_RM_Reg_8()		//  CMP R/M with Reg 8 bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем 1-й операнд
@@ -4763,16 +4760,16 @@ void CMP_RM_Reg_8()		//  CMP R/M with Reg 8 bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = -memory_2[New_Addr_32] + *ptr_r8[(byte2 >> 3) & 7];
+		Result = -memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "CMP M" << OPCODE_comment << " with " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (-(memory_2[New_Addr_32] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_OF = Flag_CF ^ OF_Carry;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		Flag_AF = ((-(memory_2[New_Addr_32] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		Flag_AF = ((-(memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		//*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
 
 		Instruction_Pointer += 2 + additional_IPs;
@@ -4780,7 +4777,7 @@ void CMP_RM_Reg_8()		//  CMP R/M with Reg 8 bit
 }
 void CMP_RM_Reg_16()	//  CMP R/M with Reg 16 bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	//определяем 1-й операнд
@@ -4803,9 +4800,9 @@ void CMP_RM_Reg_16()	//  CMP R/M with Reg 16 bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "CMP M" << OPCODE_comment << "(" << (int)*ptr_Src << ") with " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
@@ -4823,7 +4820,7 @@ void CMP_RM_Reg_16()	//  CMP R/M with Reg 16 bit
 void CMP_IMM_with_ACC_8()		// CMP IMM  8bit - ACC
 {
 	uint16 Result = 0;
-	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 
 	if (log_to_console) cout << "CMP IMM (" << (int)(imm) << ") with AL(" << (int)*ptr_AL << ") = ";
 
@@ -4845,7 +4842,7 @@ void CMP_IMM_with_ACC_16()		// CMP IMM 16bit - ACC
 {
 	uint32 Result = 0;
 	
-	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	
 	if (log_to_console) cout << "CMP IMM (" << (int)(imm) << ") with AX(" << (int)AX << ") = ";
 
@@ -4920,7 +4917,7 @@ void DAS() //DAS = Decimal Adjust for Subtract
 }
 void AAM() //AAM = ASCII Adjust for Multiply
 {
-	uint8 base = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 base = memory.read(Instruction_Pointer + 1 + *CS * 16);
 
 	if (log_to_console) cout << "AAM AX =  ";
 	if (base == 0)
@@ -4953,7 +4950,7 @@ void AAM() //AAM = ASCII Adjust for Multiply
 
 void AAD() //AAD = ASCII Adjust for Divide
 {
-	uint8 base = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 base = memory.read(Instruction_Pointer + 1 + *CS * 16);
 	if (log_to_console) cout << "AAD[" << dec << (int)base << hex << "] AX =  ";
 	/*
 	if (base == 0)
@@ -5000,7 +4997,7 @@ void CWD() //CWD = Convert Word to Double Word
 // TEST/NOT/NEG/MUL/IMUL/DIV/IDIV  R/M 8 bit
 void Invert_RM_8()			
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16);//второй байт
 	uint16 disp = 0;		//смещение
 	uint16 Src = 0;		//источник данных
 	uint8 imm = 0;
@@ -5017,7 +5014,7 @@ void Invert_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "TEST IMM(" << (int)imm << ") AND ";
 			Result = *ptr_r8[byte2 & 7] & imm;
 			Flag_CF = 0;
@@ -5033,9 +5030,9 @@ void Invert_RM_8()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			imm = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];//IMM
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);//IMM
 			if (log_to_console) cout << "TEST IMM(" << (int)imm << ") AND ";
-			Result = memory_2[New_Addr_32] & imm;
+			Result = memory.read(New_Addr_32) & imm;
 			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)Result;
 			Flag_CF = 0;
 			Flag_OF = 0;
@@ -5061,9 +5058,9 @@ void Invert_RM_8()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			if (log_to_console) cout << "Invert M" << OPCODE_comment << "(" << (int)memory_2[New_Addr_32] << ") -> ";
-			memory_2[New_Addr_32] = ~memory_2[New_Addr_32];
-			if (log_to_console) cout << (int)memory_2[New_Addr_32];
+			if (log_to_console) cout << "Invert M" << OPCODE_comment << "(" << (int)memory.read(New_Addr_32) << ") -> ";
+			memory.write(New_Addr_32, ~memory.read(New_Addr_32));
+			if (log_to_console) cout << (int)memory.read(New_Addr_32);
 			Instruction_Pointer += 2 + additional_IPs;
 		}
 		break;
@@ -5094,18 +5091,18 @@ void Invert_RM_8()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			if (memory_2[New_Addr_32]) Flag_CF = 1;
+			if (memory.read(New_Addr_32)) Flag_CF = 1;
 			else Flag_CF = 0;
-			if (memory_2[New_Addr_32] == 0x80) Flag_OF = 1;
+			if (memory.read(New_Addr_32) == 0x80) Flag_OF = 1;
 			else Flag_OF = 0;
-			memory_2[New_Addr_32] = ~memory_2[New_Addr_32] + 1;
-			Flag_SF = (memory_2[New_Addr_32] >> 7) & 1;
-			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			memory.write(New_Addr_32, ~memory.read(New_Addr_32) + 1);
+			Flag_SF = (memory.read(New_Addr_32) >> 7) & 1;
+			if (memory.read(New_Addr_32)) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
-			if (memory_2[New_Addr_32] & 15) Flag_AF = 1;
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
+			if (memory.read(New_Addr_32) & 15) Flag_AF = 1;
 			else Flag_AF = 0;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(memory_2[New_Addr_32]);
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)(memory.read(New_Addr_32));
 			Instruction_Pointer += 2 + additional_IPs;
 		}
 		break;
@@ -5125,7 +5122,7 @@ void Invert_RM_8()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Src = memory_2[New_Addr_32];
+			Src = memory.read(New_Addr_32);
 			if (log_to_console) cout << "M" << OPCODE_comment << "=";
 		}
 
@@ -5158,7 +5155,7 @@ void Invert_RM_8()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Src = memory_2[New_Addr_32];
+			Src = memory.read(New_Addr_32);
 			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
 		}
 
@@ -5190,7 +5187,7 @@ void Invert_RM_8()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Src = memory_2[New_Addr_32];
+			Src = memory.read(New_Addr_32);
 			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
 		}
 
@@ -5235,7 +5232,7 @@ void Invert_RM_8()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Src = memory_2[New_Addr_32];
+			Src = memory.read(New_Addr_32);
 			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
 		}
 
@@ -5277,7 +5274,7 @@ void Invert_RM_8()
 // TEST/NOT/NEG/MUL/IMUL/DIV/IDIV   16 bit
 void Invert_RM_16()		
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16);//второй байт
 	uint16 disp = 0;		//смещение
 	uint16 Result = 0;
 	uint32 Result_32 = 0;
@@ -5295,9 +5292,9 @@ void Invert_RM_16()
 			operand_RM_offset = Instruction_Pointer;
 			operand_RM_offset++;
 			operand_RM_offset++;
-			*ptr_Src_L = memory_2[(operand_RM_offset + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_offset + *CS * 16);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_offset + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_offset + *CS * 16);
 			if (log_to_console) cout << "TEST IMM[" << (int)*ptr_Src << "] AND ";
 			Result = *ptr_r16[byte2 & 7] & Src;
 			Flag_CF = 0;
@@ -5317,11 +5314,11 @@ void Invert_RM_16()
 			operand_RM_offset = Instruction_Pointer;
 			operand_RM_offset++;
 			operand_RM_offset++;
-			*ptr_Src_L = memory_2[(operand_RM_offset + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_offset + additional_IPs + *CS * 16);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_offset + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_offset + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "TEST IMM[" << (int)*ptr_Src << "] AND ";
-			Result = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & *ptr_Src;
+			Result = (memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & *ptr_Src;
 			if (log_to_console) cout << " M" << OPCODE_comment << " = " << (int)Result;
 			Flag_CF = 0;
 			Flag_OF = 0;
@@ -5348,10 +5345,10 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = ~memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, ~memory.read(operand_RM_seg * 16 + operand_RM_offset));
 			operand_RM_offset++;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = ~memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
-			if (log_to_console) cout << "Invert M" << OPCODE_comment << " = " << (int)(memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256);
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, ~memory.read(operand_RM_seg * 16 + operand_RM_offset));
+			if (log_to_console) cout << "Invert M" << OPCODE_comment << " = " << (int)(memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256);
 			Instruction_Pointer += 2 + additional_IPs;
 		}
 		
@@ -5382,17 +5379,17 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			//New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			if (*ptr_Src) Flag_CF = 1;
 			else Flag_CF = 0;
 			if (*ptr_Src == 0x8000) Flag_OF = 1;
 			else Flag_OF = 0;
 			*ptr_Src = ~(*ptr_Src) + 1;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_H;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_H);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_L);
 			Flag_SF = (*ptr_Src_H) >> 7;
 			if (*ptr_Src) Flag_ZF = false;
 			else Flag_ZF = true;
@@ -5419,9 +5416,9 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			//New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
 			Result_32 = AX * (*ptr_Src);
 		}
@@ -5458,9 +5455,9 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			//New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Result_32 = ((__int16)AX * (__int16)*ptr_Src);
 			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
 			Instruction_Pointer += 2 + additional_IPs;
@@ -5500,9 +5497,9 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Src = *ptr_Src;
 			if (log_to_console) cout << "M" << OPCODE_comment << " = ";
 			Instruction_Pointer += 2 + additional_IPs;
@@ -5547,9 +5544,9 @@ void Invert_RM_16()
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Src = *ptr_Src;
 			if (log_to_console) cout << "M" << OPCODE_comment << "(" << (int)Src << ") = ";
 		}
@@ -5590,7 +5587,7 @@ void Invert_RM_16()
 }
 void SHL_ROT_8()			// Shift/ROL	8bit / once
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint8 Result = 0;
 	uint16 Src = 0;
 	uint8 MSB = 0;
@@ -5612,9 +5609,9 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Flag_CF = (memory_2[New_Addr_32] >> 7) & 1;
-			memory_2[New_Addr_32] = (memory_2[New_Addr_32] << 1) | Flag_CF;
-			Flag_OF = (memory_2[New_Addr_32] >> 7) ^ Flag_CF;
+			Flag_CF = (memory.read(New_Addr_32) >> 7) & 1;
+			memory.write(New_Addr_32, (memory.read(New_Addr_32) << 1) | Flag_CF);
+			Flag_OF = (memory.read(New_Addr_32) >> 7) ^ Flag_CF;
 			if (log_to_console) cout << "ROL M" << OPCODE_comment << "";
 		}
 		break;
@@ -5633,9 +5630,9 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Flag_CF = memory_2[New_Addr_32] & 1;
-			memory_2[New_Addr_32] = (memory_2[New_Addr_32] >> 1) | (Flag_CF * 0x80);
-			Flag_OF = !parity_check[memory_2[New_Addr_32] & 0b11000000];
+			Flag_CF = memory.read(New_Addr_32) & 1;
+			memory.write(New_Addr_32, (memory.read(New_Addr_32) >> 1) | (Flag_CF * 0x80));
+			Flag_OF = !parity_check[memory.read(New_Addr_32) & 0b11000000];
 			if (log_to_console) cout << "ROR M" << OPCODE_comment << "";
 		}
 		break;
@@ -5655,9 +5652,9 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Src = (memory_2[New_Addr_32] << 1) | Flag_CF;
+			Src = (memory.read(New_Addr_32) << 1) | Flag_CF;
 			Flag_CF = (Src >> 8) & 1;
-			memory_2[New_Addr_32] = Src;
+			memory.write(New_Addr_32, Src);
 			Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
 			if (log_to_console) cout << "RCL M" << OPCODE_comment << "";
 		}
@@ -5678,9 +5675,9 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Src = (memory_2[New_Addr_32] >> 1) | (Flag_CF << 7);
-			Flag_CF = memory_2[New_Addr_32] & 1;
-			memory_2[New_Addr_32] = Src;
+			Src = (memory.read(New_Addr_32) >> 1) | (Flag_CF << 7);
+			Flag_CF = memory.read(New_Addr_32) & 1;
+			memory.write(New_Addr_32, Src);
 			Flag_OF = !parity_check[Src & 0b11000000];
 			if (log_to_console) cout << "RCR M" << OPCODE_comment << "";
 		}
@@ -5705,14 +5702,14 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Src = memory_2[New_Addr_32] << 1;
-			memory_2[New_Addr_32] = Src;
+			Src = memory.read(New_Addr_32) << 1;
+			memory.write(New_Addr_32, Src);
 			Flag_CF = (Src >> 8) & 1;
 			Flag_SF = (Src >> 7) & 1;
 			Flag_OF = !parity_check[Src >> 7];
-			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			if (memory.read(New_Addr_32)) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
 			if (log_to_console) cout << "Shift left M" << OPCODE_comment << "";
 		}
 		break;
@@ -5736,14 +5733,14 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Flag_CF = memory_2[New_Addr_32] & 1;
-			Src = memory_2[New_Addr_32] >> 1;
-			memory_2[New_Addr_32] = Src;
+			Flag_CF = memory.read(New_Addr_32) & 1;
+			Src = memory.read(New_Addr_32) >> 1;
+			memory.write(New_Addr_32, Src);
 			Flag_SF = 0;
 			Flag_OF = Src >> 6;
-			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			if (memory.read(New_Addr_32)) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
 			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << "";
 		}
 		break;
@@ -5766,13 +5763,13 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			memory_2[New_Addr_32] = 0xFF;
+			memory.write(New_Addr_32, 0xFF);
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = true;
 			Flag_ZF = false;
 			Flag_PF = true;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)memory_2[New_Addr_32];
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)memory.read(New_Addr_32);
 		}
 
 		Flag_AF = 0;
@@ -5797,14 +5794,14 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Flag_CF = memory_2[New_Addr_32] & 1;
-			MSB = memory_2[New_Addr_32] & 128;
-			memory_2[New_Addr_32] = (memory_2[New_Addr_32] >> 1) | MSB;
-			Flag_SF = ((memory_2[New_Addr_32] >> 7) & 1);
-			Flag_OF = !parity_check[memory_2[New_Addr_32] & 0b11000000];
-			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			Flag_CF = memory.read(New_Addr_32) & 1;
+			MSB = memory.read(New_Addr_32) & 128;
+			memory.write(New_Addr_32, (memory.read(New_Addr_32) >> 1) | MSB);
+			Flag_SF = ((memory.read(New_Addr_32) >> 7) & 1);
+			Flag_OF = !parity_check[memory.read(New_Addr_32) & 0b11000000];
+			if (memory.read(New_Addr_32)) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
 			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << "";
 		}
 		break;
@@ -5813,7 +5810,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 }
 void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Src = 0;
 	uint16 MSB = 0;
 	additional_IPs = 0;
@@ -5836,13 +5833,13 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			Flag_CF = (*ptr_Src >> 15) & 1;
 			*ptr_Src = (*ptr_Src << 1) | Flag_CF;
 			Flag_OF = (*ptr_Src >> 15) ^ Flag_CF;
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (log_to_console) cout << "ROL M" << OPCODE_comment << "";
 		}
 		break;
@@ -5861,12 +5858,12 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			Flag_CF = *ptr_Src & 1;
 			*ptr_Src = (*ptr_Src >> 1) | (Flag_CF * 0x8000);
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			Flag_OF = !parity_check[(*ptr_Src >> 8) & 0b11000000];
 			if (log_to_console) cout << "ROR M" << OPCODE_comment << "";
 		}
@@ -5887,13 +5884,13 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			Src = (*ptr_Src << 1) | Flag_CF;
 			Flag_CF = (Src >> 16) & 1;
 			*ptr_Src = Src;
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			Flag_OF = !parity_check[(Src >> 9) & 0b11000000];
 			if (log_to_console) cout << "RCL M" << OPCODE_comment << "";
 		}
@@ -5914,13 +5911,13 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			Src = (*ptr_Src >> 1) | (Flag_CF << 15);
 			Flag_CF = *ptr_Src & 1;
 			*ptr_Src = Src;
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
 			if (log_to_console) cout << "RCR M" << OPCODE_comment << "";
 		}
@@ -5945,12 +5942,12 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			Src = *ptr_Src << 1;
 			*ptr_Src = Src;
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			Flag_CF = (Src >> 16) & 1;
 			Flag_SF = (Src >> 15) & 1;
 			Flag_OF = !parity_check[Src >> 15];
@@ -5980,8 +5977,8 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			Flag_CF = *ptr_Src & 1;
 			Src = *ptr_Src >> 1;
 			*ptr_Src = Src;
@@ -5990,8 +5987,8 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			if (*ptr_Src) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_Src_L];
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << "";
 		}
 		break;
@@ -6014,8 +6011,8 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			memory_2[New_Addr_32] = 0xFF;
-			memory_2[New_Addr_32 + 1] = 0xFF;
+			memory.write(New_Addr_32, 0xFF);
+			memory.write(New_Addr_32 + 1, 0xFF);
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = true;
@@ -6046,8 +6043,8 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			Flag_CF = *ptr_Src & 1;
 			MSB = *ptr_Src & 0x8000;
 			*ptr_Src = (*ptr_Src >> 1) | MSB;
@@ -6056,20 +6053,20 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			if (*ptr_Src) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_Src & 255];
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << "";
 		}
 		break;
 		
 	default:
-		cout << "unknown OP = " << memory.read_2(Instruction_Pointer + *CS * 16);
+		cout << "unknown OP = " << memory.read(Instruction_Pointer + *CS * 16);
 	}
 	Instruction_Pointer += 2 + additional_IPs;
 }
 void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Src = 0;
 	uint16 Result = 0;
 	uint8 repeats = *ptr_CL;
@@ -6099,10 +6096,10 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			for (int i = 0; i < repeats; i++)
 			{
-				Flag_CF = (memory_2[New_Addr_32] >> 7) & 1;
-				memory_2[New_Addr_32] = (memory_2[New_Addr_32] << 1) | Flag_CF;
+				Flag_CF = (memory.read(New_Addr_32) >> 7) & 1;
+				memory.write(New_Addr_32, (memory.read(New_Addr_32) << 1) | Flag_CF);
 			}
-			if (repeats == 1) Flag_OF = (memory_2[New_Addr_32] >> 7) ^ Flag_CF;
+			if (repeats == 1) Flag_OF = (memory.read(New_Addr_32) >> 7) ^ Flag_CF;
 			if (log_to_console) cout << "ROL M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
@@ -6127,10 +6124,10 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			for (int i = 0; i < repeats; i++)
 			{
-				Flag_CF = memory_2[New_Addr_32] & 1;
-				memory_2[New_Addr_32] = (memory_2[New_Addr_32] >> 1) | (Flag_CF * 0x80);
+				Flag_CF = memory.read(New_Addr_32) & 1;
+				memory.write(New_Addr_32, (memory.read(New_Addr_32) >> 1) | (Flag_CF * 0x80));
 			}
-			if (repeats == 1) Flag_OF = !parity_check[memory_2[New_Addr_32] & 0b11000000];
+			if (repeats == 1) Flag_OF = !parity_check[memory.read(New_Addr_32) & 0b11000000];
 			if (log_to_console) cout << "ROR M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
@@ -6155,9 +6152,9 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			for (int i = 0; i < repeats; i++)
 			{
-				Src = (memory_2[New_Addr_32] << 1) | Flag_CF;
+				Src = (memory.read(New_Addr_32) << 1) | Flag_CF;
 				Flag_CF = (Src >> 8) & 1;
-				memory_2[New_Addr_32] = Src;
+				memory.write(New_Addr_32, Src);
 			}
 			if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
 			if (log_to_console) cout << "RCL M" << OPCODE_comment << " " << (int)repeats << " times";
@@ -6184,9 +6181,9 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			for (int i = 0; i < repeats; i++)
 			{
-				Src = (memory_2[New_Addr_32] >> 1) | (Flag_CF << 7);
-				Flag_CF = memory_2[New_Addr_32] & 1;
-				memory_2[New_Addr_32] = Src;
+				Src = (memory.read(New_Addr_32) >> 1) | (Flag_CF << 7);
+				Flag_CF = memory.read(New_Addr_32) & 1;
+				memory.write(New_Addr_32, Src);
 			}
 			if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
 			if (log_to_console) cout << "RCR M" << OPCODE_comment << " " << (int)repeats << " times";
@@ -6219,15 +6216,15 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			for (int i = 0; i < repeats; i++)
 			{
-				Src = memory_2[New_Addr_32] << 1;
-				memory_2[New_Addr_32] = Src;
+				Src = memory.read(New_Addr_32) << 1;
+				memory.write(New_Addr_32, Src);
 			}
 			Flag_CF = (Src >> 8) & 1;
 			Flag_SF = (Src >> 7) & 1;
 			if (repeats == 1) Flag_OF = !parity_check[Src >> 7];
-			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			if (memory.read(New_Addr_32)) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
 			if (log_to_console) cout << "Shift left M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
@@ -6258,15 +6255,15 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			for (int i = 0; i < repeats; i++)
 			{
-				Flag_CF = memory_2[New_Addr_32] & 1;
-				Src = memory_2[New_Addr_32] >> 1;
-				memory_2[New_Addr_32] = Src;
+				Flag_CF = memory.read(New_Addr_32) & 1;
+				Src = memory.read(New_Addr_32) >> 1;
+				memory.write(New_Addr_32, Src);
 			}
 			Flag_SF = 0;
 			if (repeats == 1) Flag_OF = Src >> 6;
-			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			if (memory.read(New_Addr_32)) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
 			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
@@ -6292,13 +6289,13 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			mod_RM_3(byte2);
 			if (!*ptr_CL) break;
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			memory_2[New_Addr_32] = 0xFF;
+			memory.write(New_Addr_32, 0xFF);
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = true;
 			Flag_ZF = false;
 			Flag_PF = true;
-			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)memory_2[New_Addr_32];
+			if (log_to_console) cout << "M" << OPCODE_comment << " = " << (int)memory.read(New_Addr_32);
 		}
 
 		Flag_AF = 0;
@@ -6330,27 +6327,27 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			for (int i = 0; i < repeats; i++)
 			{
-				Flag_CF = memory_2[New_Addr_32] & 1;
-				MSB = memory_2[New_Addr_32] & 128;
-				memory_2[New_Addr_32] = (memory_2[New_Addr_32] >> 1) | MSB;
+				Flag_CF = memory.read(New_Addr_32) & 1;
+				MSB = memory.read(New_Addr_32) & 128;
+				memory.write(New_Addr_32, (memory.read(New_Addr_32) >> 1) | MSB);
 			}
-			Flag_SF = ((memory_2[New_Addr_32] >> 7) & 1);
-			if (repeats == 1) Flag_OF = !parity_check[memory_2[New_Addr_32] & 0b11000000];
-			if (memory_2[New_Addr_32]) Flag_ZF = false;
+			Flag_SF = ((memory.read(New_Addr_32) >> 7) & 1);
+			if (repeats == 1) Flag_OF = !parity_check[memory.read(New_Addr_32) & 0b11000000];
+			if (memory.read(New_Addr_32)) Flag_ZF = false;
 			else Flag_ZF = true;
-			Flag_PF = parity_check[memory_2[New_Addr_32]];
+			Flag_PF = parity_check[memory.read(New_Addr_32)];
 			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
 	
 	default:
-		cout << "unknown OP = " << memory.read_2(Instruction_Pointer + *CS * 16);
+		cout << "unknown OP = " << memory.read(Instruction_Pointer + *CS * 16);
 	}
 	Instruction_Pointer += 2 + additional_IPs;
 }
 void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Src = 0;
 	uint32 Result = 0;
 	uint8 repeats = *ptr_CL;
@@ -6376,8 +6373,8 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			
 			for (int i = 0; i < repeats; i++)
 			{
@@ -6385,8 +6382,8 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 				*ptr_Src = (*ptr_Src << 1) | Flag_CF;
 			}
 			if (repeats == 1) Flag_OF = (*ptr_Src >> 15) ^ Flag_CF;
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (log_to_console) cout << "ROL M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
 		break;
@@ -6410,15 +6407,15 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			operand_RM_offset++;
 			New_Addr_32_2 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32_2];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32_2);
 			for (int i = 0; i < repeats; i++)
 			{
 				Flag_CF = *ptr_Src & 1;
 				*ptr_Src = (*ptr_Src >> 1) | (Flag_CF * 0x8000);
 			}
-			memory_2[New_Addr_32_2] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32_2, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (repeats == 1) Flag_OF = !parity_check[(*ptr_Src >> 8) & 0b11000000];
 			if (log_to_console) cout << "ROR M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
@@ -6442,16 +6439,16 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			for (int i = 0; i < repeats; i++)
 			{
 				Src = (*ptr_Src << 1) | Flag_CF;
 				Flag_CF = (Src >> 16) & 1;
 				*ptr_Src = Src;
 			}
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (repeats == 1) Flag_OF = !parity_check[(Src >> 9) & 0b11000000];
 			if (log_to_console) cout << "RCL M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
@@ -6475,16 +6472,16 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			for (int i = 0; i < repeats; i++)
 			{
 				Src = (*ptr_Src >> 1) | (Flag_CF << 15);
 				Flag_CF = *ptr_Src & 1;
 				*ptr_Src = Src;
 			}
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (repeats == 1) Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
 			if (log_to_console) cout << "RCR M" << OPCODE_comment << " " << (int)repeats << " times";
 		}
@@ -6515,15 +6512,15 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			mod_RM_3(byte2);
 			if (!repeats) break;
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			for (int i = 0; i < repeats; i++)
 			{
 				Src = *ptr_Src << 1;
 				*ptr_Src = Src;
 			}
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			Flag_CF = (Src >> 16) & 1;
 			Flag_SF = (Src >> 15) & 1;
 			if (repeats == 1) Flag_OF = !parity_check[Src >> 15];
@@ -6558,10 +6555,10 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			mod_RM_3(byte2);
 			if (!repeats) break;
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
+			*ptr_Src_L = memory.read(New_Addr_32);
 			operand_RM_offset++;
 			New_Addr_32_2 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_H = memory_2[New_Addr_32_2];
+			*ptr_Src_H = memory.read(New_Addr_32_2);
 			for (int i = 0; i < repeats; i++)
 			{
 				Flag_CF = *ptr_Src & 1;
@@ -6573,8 +6570,8 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			if (*ptr_Src) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_Src_L];
-			memory_2[New_Addr_32_2] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32_2, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (log_to_console) cout << "Shift(SHR) right M" << OPCODE_comment << "";
 		}
 		break;
@@ -6599,8 +6596,8 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			mod_RM_3(byte2);
 			if (*ptr_CL == 0) break;
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			memory_2[New_Addr_32] = 0xFF;
-			memory_2[New_Addr_32 + 1] = 0xFF;
+			memory.write(New_Addr_32, 0xFF);
+			memory.write(New_Addr_32 + 1, 0xFF);
 			Flag_CF = 0;
 			Flag_OF = 0;
 			Flag_SF = true;
@@ -6636,8 +6633,8 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			mod_RM_3(byte2);
 			if (!repeats) break;
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[New_Addr_32];
-			*ptr_Src_H = memory_2[New_Addr_32 + 1];
+			*ptr_Src_L = memory.read(New_Addr_32);
+			*ptr_Src_H = memory.read(New_Addr_32 + 1);
 			for (int i = 0; i < repeats; i++)
 			{
 				Flag_CF = *ptr_Src & 1;
@@ -6649,14 +6646,14 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			if (*ptr_Src) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_Src & 255];
-			memory_2[New_Addr_32 + 1] = *ptr_Src_H;
-			memory_2[New_Addr_32] = *ptr_Src_L;
+			memory.write(New_Addr_32 + 1, *ptr_Src_H);
+			memory.write(New_Addr_32, *ptr_Src_L);
 			if (log_to_console) cout << "Shift(SAR) right M" << OPCODE_comment << "";
 		}
 		break;
 	
 	default:
-		cout << "unknown OP = " << memory.read_2(Instruction_Pointer + *CS * 16);
+		cout << "unknown OP = " << memory.read(Instruction_Pointer + *CS * 16);
 	}
 	Instruction_Pointer += 2 + additional_IPs;
 }
@@ -6664,7 +6661,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 //AND
 void AND_RM_8()				// AND R + R/M -> R/M 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	if (log_to_console) cout << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") ";
@@ -6692,14 +6689,14 @@ void AND_RM_8()				// AND R + R/M -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] & *ptr_r8[(byte2 >> 3) & 7];
+		Result = memory.read(New_Addr_32) & *ptr_r8[(byte2 >> 3) & 7];
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = 0;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory_2[New_Addr_32] = Result;
+		memory.write(New_Addr_32, Result);
 		if (log_to_console) cout << " AND M" << OPCODE_comment << " = " << (int)(Result & 255);
 
 		Instruction_Pointer += 2 + additional_IPs;
@@ -6707,7 +6704,7 @@ void AND_RM_8()				// AND R + R/M -> R/M 8bit
 }
 void AND_RM_16()			// AND R + R/M -> R/M 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	if (log_to_console) cout << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
@@ -6731,13 +6728,13 @@ void AND_RM_16()			// AND R + R/M -> R/M 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src & *ptr_r16[(byte2 >> 3) & 7];
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = 0;
@@ -6751,7 +6748,7 @@ void AND_RM_16()			// AND R + R/M -> R/M 16bit
 }
 void AND_RM_R_8()			// AND R + R/M -> R 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем 1-й операнд
@@ -6774,7 +6771,7 @@ void AND_RM_R_8()			// AND R + R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] & *ptr_r8[(byte2 >> 3) & 7];
+		Result = memory.read(New_Addr_32) & *ptr_r8[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "M" << OPCODE_comment << " AND " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
@@ -6790,7 +6787,7 @@ void AND_RM_R_8()			// AND R + R/M -> R 8bit
 }
 void AND_RM_R_16()			// AND R + R/M -> R 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	//определяем 1-й операнд
@@ -6812,9 +6809,9 @@ void AND_RM_R_16()			// AND R + R/M -> R 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src & *ptr_r16[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "M" << OPCODE_comment << " AND " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = 0;
@@ -6833,7 +6830,7 @@ void AND_IMM_ACC_8()		//AND IMM to ACC 8bit
 	uint8 Result = 0;
 
 	//непосредственный операнд
-	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 
 	if (log_to_console) cout << "IMM(" << (int)imm << ") AND AL(" << (int)(AX & 255) << ") ";
 
@@ -6854,7 +6851,7 @@ void AND_IMM_ACC_16()		//AND IMM to ACC 16bit
 	uint16 Result = 0;
 
 	//непосредственный операнд
-	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 
 	if (log_to_console) cout << "IMM(" << (int)imm << ") AND AX(" << (int)AX << ")";
 
@@ -6875,7 +6872,7 @@ void AND_IMM_ACC_16()		//AND IMM to ACC 16bit
 
 void TEST_8()		  //TEST = AND Function to Flags
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint8 Result = 0;
 
 	//определяем источник
@@ -6897,7 +6894,7 @@ void TEST_8()		  //TEST = AND Function to Flags
 	{
 		//память
 		mod_RM_3(byte2);
-		Result = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] & *ptr_r8[(byte2 >> 3) & 7];
+		Result = memory.read(operand_RM_seg * 16 + operand_RM_offset) & *ptr_r8[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "TEST M" << OPCODE_comment << " AND " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = ";
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
@@ -6911,7 +6908,7 @@ void TEST_8()		  //TEST = AND Function to Flags
 }
 void TEST_16()       //TEST = AND Function to Flags
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем источник
@@ -6933,9 +6930,9 @@ void TEST_16()       //TEST = AND Function to Flags
 	{
 		//память
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src & *ptr_r16[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "TEST M" << OPCODE_comment << " AND " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = ";
 		Flag_CF = 0;
@@ -6953,10 +6950,10 @@ void TEST_IMM_ACC_8()		//TEST = AND Function to Flags
 	uint8 Src = 0;
 	uint8 Result = 0;
 
-	if (log_to_console) cout << "TEST IMM[" << (int)memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] << "] AND AL(" << (int)*ptr_AL << ") = ";
+	if (log_to_console) cout << "TEST IMM[" << (int)memory.read(Instruction_Pointer + 1 + *CS * 16) << "] AND AL(" << (int)*ptr_AL << ") = ";
 
 	//определяем объект назначения и результат операции
-	Result = *ptr_AL & memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	Result = *ptr_AL & memory.read(Instruction_Pointer + 1 + *CS * 16);
 	Flag_CF = 0;
 	Flag_OF = 0;
 	Flag_SF = ((Result >> 7) & 1);
@@ -6970,10 +6967,10 @@ void TEST_IMM_ACC_16()     //TEST = AND Function to Flags
 {
 	uint16 Result = 0;
 
-	if (log_to_console) cout << "TEST IMM[" << (int)(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256) << "] AND AX(" << (int)AX << ") = ";
+	if (log_to_console) cout << "TEST IMM[" << (int)(memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256) << "] AND AX(" << (int)AX << ") = ";
 
 	//определяем объект назначения и результат операции
-	Result = AX & (memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF] * 256);
+	Result = AX & (memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256);
 	Flag_CF = 0;
 	Flag_OF = 0;
 	Flag_SF = ((Result >> 15) & 1);
@@ -6987,7 +6984,7 @@ void TEST_IMM_ACC_16()     //TEST = AND Function to Flags
 //OR = Or
 void OR_RM_8()		// OR R + R/M -> R/M 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	if (log_to_console) cout << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") ";
@@ -7015,14 +7012,14 @@ void OR_RM_8()		// OR R + R/M -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] | *ptr_r8[(byte2 >> 3) & 7];
+		Result = memory.read(New_Addr_32) | *ptr_r8[(byte2 >> 3) & 7];
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = 0;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory_2[New_Addr_32] = Result;
+		memory.write(New_Addr_32, Result);
 		if (log_to_console) cout << " OR M" << OPCODE_comment << " = " << (int)(Result & 255);
 
 		Instruction_Pointer += 2 + additional_IPs;
@@ -7030,7 +7027,7 @@ void OR_RM_8()		// OR R + R/M -> R/M 8bit
 }
 void OR_RM_16()		// OR R + R/M -> R/M 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	if (log_to_console) cout << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
@@ -7054,13 +7051,13 @@ void OR_RM_16()		// OR R + R/M -> R/M 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src | *ptr_r16[(byte2 >> 3) & 7];
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = 0;
@@ -7074,7 +7071,7 @@ void OR_RM_16()		// OR R + R/M -> R/M 16bit
 }
 void OR_RM_R_8()		// OR R + R/M -> R 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем 1-й операнд
@@ -7097,7 +7094,7 @@ void OR_RM_R_8()		// OR R + R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] | *ptr_r8[(byte2 >> 3) & 7];
+		Result = memory.read(New_Addr_32) | *ptr_r8[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "M" << OPCODE_comment << " OR " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
@@ -7113,7 +7110,7 @@ void OR_RM_R_8()		// OR R + R/M -> R 8bit
 }
 void OR_RM_R_16()		// OR R + R/M -> R 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	//определяем 1-й операнд
@@ -7135,9 +7132,9 @@ void OR_RM_R_16()		// OR R + R/M -> R 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src | *ptr_r16[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "M" << OPCODE_comment << " OR " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = 0;
@@ -7156,7 +7153,7 @@ void OR_IMM_ACC_8()    //OR IMM to ACC 8bit
 	uint8 Result = 0;
 
 	//непосредственный операнд
-	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 
 	if (log_to_console) cout << "IMM(" << (int)imm << ") OR AL(" << (int)(AX & 255) << ") ";
 
@@ -7178,7 +7175,7 @@ void OR_IMM_ACC_16()   //OR IMM to ACC 16bit
 	uint16 Result = 0;
 
 	//непосредственный операнд
-	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 
 	if (log_to_console) cout << "IMM(" << (int)imm << ") OR AX(" << (int)AX << ")";
 
@@ -7198,7 +7195,7 @@ void OR_IMM_ACC_16()   //OR IMM to ACC 16bit
 //XOR
 void XOR_RM_8()		// XOR R + R/M -> R/M 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	if (log_to_console) cout << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") ";
@@ -7226,14 +7223,14 @@ void XOR_RM_8()		// XOR R + R/M -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] ^ *ptr_r8[(byte2 >> 3) & 7];
+		Result = memory.read(New_Addr_32) ^ *ptr_r8[(byte2 >> 3) & 7];
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
 		Flag_OF = 0;
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-		memory_2[New_Addr_32] = Result;
+		memory.write(New_Addr_32, Result);
 		if (log_to_console) cout << " XOR M" << OPCODE_comment << " = " << (int)(Result & 255);
 
 		Instruction_Pointer += 2 + additional_IPs;
@@ -7241,7 +7238,7 @@ void XOR_RM_8()		// XOR R + R/M -> R/M 8bit
 }
 void XOR_RM_16()		// XOR R + R/M -> R/M 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	if (log_to_console) cout << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") ";
@@ -7265,13 +7262,13 @@ void XOR_RM_16()		// XOR R + R/M -> R/M 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src ^ *ptr_r16[(byte2 >> 3) & 7];
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result >> 8;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
-		memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = Result;
+		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 15) & 1);
 		Flag_OF = 0;
@@ -7285,7 +7282,7 @@ void XOR_RM_16()		// XOR R + R/M -> R/M 16bit
 }
 void XOR_RM_R_8()		// XOR R + R/M -> R 8bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result = 0;
 
 	//определяем 1-й операнд
@@ -7308,7 +7305,7 @@ void XOR_RM_R_8()		// XOR R + R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = memory_2[New_Addr_32] ^ *ptr_r8[(byte2 >> 3) & 7];
+		Result = memory.read(New_Addr_32) ^ *ptr_r8[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "M" << OPCODE_comment << " XOR " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = 0;
 		Flag_SF = ((Result >> 7) & 1);
@@ -7324,7 +7321,7 @@ void XOR_RM_R_8()		// XOR R + R/M -> R 8bit
 }
 void XOR_RM_R_16()		// XOR R + R/M -> R 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint32 Result = 0;
 
 	//определяем 1-й операнд
@@ -7346,9 +7343,9 @@ void XOR_RM_R_16()		// XOR R + R/M -> R 16bit
 	else
 	{
 		mod_RM_3(byte2);
-		*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		Result = *ptr_Src ^ *ptr_r16[(byte2 >> 3) & 7];
 		if (log_to_console) cout << "M" << OPCODE_comment << " XOR " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = 0;
@@ -7366,7 +7363,7 @@ void XOR_RM_R_16()		// XOR R + R/M -> R 16bit
 //XOR/OR/AND/ADD/ADC/SBB/SUB IMM to Register/Memory
 void XOR_OR_IMM_RM_8()		
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint8 OP = (byte2 >> 3) & 7;
 	uint8 imm = 0;
 	uint8 Result = 0;
@@ -7379,7 +7376,7 @@ void XOR_OR_IMM_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "ADD IMM[" << (int)imm << "] + " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (imm & 15)) >> 4) & 1;
 			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (imm & 0x7F)) >> 7;
@@ -7399,12 +7396,12 @@ void XOR_OR_IMM_RM_8()
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "ADD IMM[" << (int)imm << "] + " << "M" << OPCODE_comment << " = ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) + (imm & 15)) >> 4) & 1;
-			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (imm & 0x7F)) >> 7;
-			Result_16 = memory_2[New_Addr_32] + imm;
-			memory_2[New_Addr_32] = Result_16 & 255;
+			Flag_AF = (((memory.read(New_Addr_32) & 15) + (imm & 15)) >> 4) & 1;
+			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (imm & 0x7F)) >> 7;
+			Result_16 = memory.read(New_Addr_32) + imm;
+			memory.write(New_Addr_32, Result_16 & 255);
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -7421,7 +7418,7 @@ void XOR_OR_IMM_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "IMM[" << (int)imm << "] OR " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
 			Result_16 = *ptr_r8[byte2 & 7] | imm;
 			Flag_CF = 0;
@@ -7439,10 +7436,10 @@ void XOR_OR_IMM_RM_8()
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "IMM[" << (int)imm << "] OR " << "M" << OPCODE_comment << " = ";
-			Result_16 = memory_2[New_Addr_32] | imm;
-			memory_2[New_Addr_32] = Result_16 & 255;
+			Result_16 = memory.read(New_Addr_32) | imm;
+			memory.write(New_Addr_32, Result_16 & 255);
 			Flag_CF = 0;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = 0;
@@ -7459,7 +7456,7 @@ void XOR_OR_IMM_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "ADC IMM[" << (int)imm << "] + " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") + CF (" << (int)Flag_CF << ") = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
 			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
@@ -7479,12 +7476,12 @@ void XOR_OR_IMM_RM_8()
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "ADC IMM[" << (int)imm << "] + " << "M" << OPCODE_comment << "+ CF (" << (int)Flag_CF << ") = ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
-			Result_16 = memory_2[New_Addr_32] + imm + Flag_CF;
-			memory_2[New_Addr_32] = Result_16 & 255;
+			Flag_AF = (((memory.read(New_Addr_32) & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
+			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
+			Result_16 = memory.read(New_Addr_32) + imm + Flag_CF;
+			memory.write(New_Addr_32, Result_16 & 255);
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -7501,7 +7498,7 @@ void XOR_OR_IMM_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "SBB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] - CF(" << (int)Flag_CF << ") = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
 			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
@@ -7509,7 +7506,7 @@ void XOR_OR_IMM_RM_8()
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!*ptr_r8[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			if (!(*ptr_r8[byte2 & 7])) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 			*ptr_r8[byte2 & 7] = Result_16 & 255;
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
@@ -7522,19 +7519,19 @@ void XOR_OR_IMM_RM_8()
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "SBB M" << OPCODE_comment << " IMM[" << (int)imm << "] - CF (" << (int)Flag_CF << ") = ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
-			Result_16 = memory_2[New_Addr_32] - imm - Flag_CF;
+			Flag_AF = (((memory.read(New_Addr_32) & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
+			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
+			Result_16 = memory.read(New_Addr_32) - imm - Flag_CF;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!memory_2[New_Addr_32]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			if (!memory.read(New_Addr_32)) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
-			memory_2[New_Addr_32] = Result_16 & 255;
+			memory.write(New_Addr_32, Result_16 & 255);
 			if (log_to_console) cout << (int)(Result_16 & 255);
 			Instruction_Pointer += 3 + additional_IPs;
 		}
@@ -7545,7 +7542,7 @@ void XOR_OR_IMM_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "IMM[" << (int)imm << "] AND " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
 			Result_16 = *ptr_r8[byte2 & 7] & imm;
 			Flag_CF = 0;
@@ -7563,10 +7560,10 @@ void XOR_OR_IMM_RM_8()
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "IMM[" << (int)imm << "] AND " << "M" << OPCODE_comment << " = ";
-			Result_16 = memory_2[New_Addr_32] & imm;
-			memory_2[New_Addr_32] = Result_16 & 255;
+			Result_16 = memory.read(New_Addr_32) & imm;
+			memory.write(New_Addr_32, Result_16 & 255);
 			Flag_CF = 0;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = 0;
@@ -7583,7 +7580,7 @@ void XOR_OR_IMM_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "SUB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15)) >> 4) & 1;
 			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F)) >> 7;
@@ -7591,7 +7588,7 @@ void XOR_OR_IMM_RM_8()
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!*ptr_r8[byte2 & 7]) Flag_OF = 0;
+			if (!(*ptr_r8[byte2 & 7])) Flag_OF = 0; //вычитание из 0
 			*ptr_r8[byte2 & 7] = Result_16 & 255;
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
@@ -7604,20 +7601,20 @@ void XOR_OR_IMM_RM_8()
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "SUB M" << OPCODE_comment << " IMM[" << (int)imm << "] = ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) - (imm & 15)) >> 4) & 1;
-			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (imm & 0x7F)) >> 7;
-			Result_16 = memory_2[New_Addr_32] - imm;
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - IMM[" << (int)imm << "] = ";
+			Flag_AF = (((memory.read(New_Addr_32) & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F)) >> 7;
+			Result_16 = memory.read(New_Addr_32) - imm;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!memory_2[New_Addr_32]) Flag_OF = 0;
+			if (!memory.read(New_Addr_32)) Flag_OF = 0;//вычитание из 0
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
 			if (log_to_console) cout << (int)(Result_16 & 255);
-			memory_2[New_Addr_32] = Result_16 & 255;
+			memory.write(New_Addr_32, Result_16 & 255);
 			Instruction_Pointer += 3 + additional_IPs;
 		}
 		break;
@@ -7627,7 +7624,7 @@ void XOR_OR_IMM_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "IMM[" << (int)imm << "] XOR " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
 			Result_16 = *ptr_r8[byte2 & 7] ^ imm;
 			Flag_CF = 0;
@@ -7645,10 +7642,10 @@ void XOR_OR_IMM_RM_8()
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "IMM[" << (int)imm << "] XOR " << "M" << OPCODE_comment << " = ";
-			Result_16 = memory_2[New_Addr_32] ^ imm;
-			memory_2[New_Addr_32] = Result_16 & 255;
+			Result_16 = memory.read(New_Addr_32) ^ imm;
+			memory.write(New_Addr_32, Result_16 & 255);
 			Flag_CF = 0;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = 0;
@@ -7665,7 +7662,7 @@ void XOR_OR_IMM_RM_8()
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			imm = memory.read_2(Instruction_Pointer + 2 + *CS * 16);
+			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "CMP " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15)) >> 4) & 1;
 			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F)) >> 7;
@@ -7684,11 +7681,11 @@ void XOR_OR_IMM_RM_8()
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
-			imm = memory.read_2(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if (log_to_console) cout << "CMP M" << OPCODE_comment << "("<< (int)memory_2[New_Addr_32] << ") IMM[" << (int)imm << "] = ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) - (imm & 15)) >> 4) & 1;
-			OF_Carry = ((memory_2[New_Addr_32] & 0x7F) - (imm & 0x7F)) >> 7;
-			Result_16 = memory_2[New_Addr_32] - imm;
+			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			if (log_to_console) cout << "CMP M" << OPCODE_comment << "("<< (int)memory.read(New_Addr_32) << ") IMM[" << (int)imm << "] = ";
+			Flag_AF = (((memory.read(New_Addr_32) & 15) - (imm & 15)) >> 4) & 1;
+			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F)) >> 7;
+			Result_16 = memory.read(New_Addr_32) - imm;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -7704,7 +7701,7 @@ void XOR_OR_IMM_RM_8()
 }
 void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint8 OP = (byte2 >> 3) & 7;
 	uint16 Result = 0;
 	additional_IPs = 0;
@@ -7717,8 +7714,8 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
 			if (log_to_console) cout << "ADD IMM(" << (int)*ptr_Src << ") + " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_Src & 15)) >> 4) & 1;
 			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
@@ -7736,14 +7733,14 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "ADD IMM(" << (int)*ptr_Src << ") + ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
-			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 + *ptr_Src;
-			memory_2[New_Addr_32] = Result_32 & 255;
-			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 + *ptr_Src;
+			memory.write(New_Addr_32, Result_32 & 255);
+			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -7759,8 +7756,8 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
 			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") OR " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
 			Result_32 = *ptr_r16[byte2 & 7] | *ptr_Src;
 			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
@@ -7777,12 +7774,12 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") OR ";
-			Result_32 = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) | *ptr_Src;
-			memory_2[New_Addr_32] = Result_32 & 255;
-			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Result_32 = (memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) | *ptr_Src;
+			memory.write(New_Addr_32, Result_32 & 255);
+			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = 0;
 			Flag_SF = (Result_32 >> 15) & 1;
 			Flag_OF = 0;
@@ -7798,8 +7795,8 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
 			if (log_to_console) cout << "ADC IMM(" << (int)*ptr_Src << ") + " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_Src & 15) + Flag_CF) >> 4) & 1;
 			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
@@ -7818,14 +7815,14 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "ADC IMM(" << (int)*ptr_Src << ") + ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) + (*ptr_Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
-			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 + *ptr_Src + Flag_CF;
-			memory_2[New_Addr_32] = Result_32 & 255;
-			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_Src & 15) + Flag_CF) >> 4) & 1;
+			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
+			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 + *ptr_Src + Flag_CF;
+			memory.write(New_Addr_32, Result_32 & 255);
+			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -7841,8 +7838,8 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
 			if (log_to_console) cout << "SBB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") - CF(" << (int)Flag_CF << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15) - Flag_CF) >> 4) & 1;
 			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
@@ -7861,14 +7858,14 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "SBB M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") - CF(" << (int)Flag_CF << ") = ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_Src & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
-			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 - *ptr_Src - Flag_CF;
-			memory_2[New_Addr_32] = Result_32 & 255;
-			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_Src & 15) - Flag_CF) >> 4) & 1;
+			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
+			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 - *ptr_Src - Flag_CF;
+			memory.write(New_Addr_32, Result_32 & 255);
+			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -7885,8 +7882,8 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
 			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") AND " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
 			Result_32 = *ptr_r16[byte2 & 7] & *ptr_Src;
 			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
@@ -7903,12 +7900,12 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") AND ";
-			Result_32 = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & *ptr_Src;
-			memory_2[New_Addr_32] = Result_32 & 255;
-			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Result_32 = (memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & *ptr_Src;
+			memory.write(New_Addr_32, Result_32 & 255);
+			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = 0;
 			Flag_SF = (Result_32 >> 15) & 1;
 			Flag_OF = 0;
@@ -7924,8 +7921,8 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
 			if (log_to_console) cout << "SUB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15)) >> 4) & 1;
 			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
@@ -7943,14 +7940,14 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") = ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
-			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 - *ptr_Src;
-			memory_2[New_Addr_32] = Result_32 & 255;
-			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 - *ptr_Src;
+			memory.write(New_Addr_32, Result_32 & 255);
+			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -7966,8 +7963,10 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			operand_RM_offset = Instruction_Pointer + 2;
+			*ptr_Src_L = memory.read(operand_RM_offset + *CS * 16);
+			operand_RM_offset++;
+			*ptr_Src_H = memory.read(operand_RM_offset + *CS * 16);
 			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") XOR " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
 			Result_32 = *ptr_r16[byte2 & 7] ^ *ptr_Src;
 			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
@@ -7982,14 +7981,17 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		}
 		else
 		{
+			
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			operand_RM_offset++;
+			uint32 New_Addr_32_1 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "IMM(" << (int)*ptr_Src << ") XOR ";
-			Result_32 = (memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) ^ *ptr_Src;
-			memory_2[New_Addr_32] = Result_32 & 255;
-			memory_2[New_Addr_32 + 1] = Result_32 >> 8;
+			Result_32 = (memory.read(New_Addr_32) + memory.read(New_Addr_32_1) * 256) ^ *ptr_Src;
+			memory.write(New_Addr_32, Result_32 & 255);
+			memory.write(New_Addr_32_1, Result_32 >> 8);
 			Flag_CF = 0;
 			Flag_SF = (Result_32 >> 15) & 1;
 			Flag_OF = 0;
@@ -8005,8 +8007,8 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		if ((byte2 >> 6) == 3)
 		{
 			// mod 11 источник - регистр
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
 			if (log_to_console) cout << "CMP " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15)) >> 4) & 1;
 			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
@@ -8023,12 +8025,12 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			*ptr_Src_L = memory_2[(Instruction_Pointer + 2 + additional_IPs + *CS * 16) & 0xFFFFF];
-			*ptr_Src_H = memory_2[(Instruction_Pointer + 3 + additional_IPs + *CS * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
 			if (log_to_console) cout << "CMP M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") = ";
-			Flag_AF = (((memory_2[New_Addr_32] & 15) - (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
-			Result_32 = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256 - *ptr_Src;
+			Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_Src & 15)) >> 4) & 1;
+			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 - *ptr_Src;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
@@ -8047,7 +8049,7 @@ void XOR_IMM_ACC_8()   //XOR IMM to ACC 8bit
 	uint8 Result = 0;
 
 	//непосредственный операнд
-	uint8 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 
 	if (log_to_console) cout << "XOR IMM(" << (int)imm << ") ^ ";
 
@@ -8068,7 +8070,7 @@ void XOR_IMM_ACC_16()  //XOR IMM to ACC 16bit
 	uint16 Result = 0;
 
 	//непосредственный операнд
-	uint16 imm = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 
 	if (log_to_console) cout << "XOR IMM(" << (int)imm << ") ^ AX(" << (int)AX << ") = ";
 
@@ -8088,7 +8090,7 @@ void XOR_IMM_ACC_16()  //XOR IMM to ACC 16bit
 
 void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 {
-	uint8 OP = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint8 OP = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result_16 = 0;
 	uint32 Result_32 = 0;
 	
@@ -8123,7 +8125,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "MOVES_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		if (CX)
 		{
-			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+			memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -8179,10 +8181,10 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "MOVES_W (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		if(CX)
 		{
-			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+			memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 			Destination_Index++;
 			Source_Index++;
-			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+			memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 
 			if (Flag_DF)
 			{
@@ -8238,24 +8240,24 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console)
 		{
 			cout << "[";
-			for (int i = 0; i < CX; i++) cout << memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+			for (int i = 0; i < CX; i++) cout << memory.read(Source_Index + operand_RM_seg * 16);
 			cout << "][";
-			for (int i = 0; i < CX; i++) cout << memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			for (int i = 0; i < CX; i++) cout << memory.read(Destination_Index + *ES * 16);
 			cout << "]" << endl;;
 		}
 		
 		if(CX)
 		{
 			//if (!CX) break;
-			Result_16 = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] - memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
-			OF_Carry = ((memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] & 0x7F) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 0x7F)) >> 7;
+			Result_16 = memory.read(Source_Index + operand_RM_seg * 16) - memory.read(Destination_Index + *ES * 16);
+			OF_Carry = ((memory.read(Source_Index + operand_RM_seg * 16) & 0x7F) - (memory.read(Destination_Index + *ES * 16) & 0x7F)) >> 7;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
-			Flag_AF = (((memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] & 0x0F) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 0x0F)) >> 4) & 1;
+			Flag_AF = (((memory.read(Source_Index + operand_RM_seg * 16) & 0x0F) - (memory.read(Destination_Index + *ES * 16) & 0x0F)) >> 4) & 1;
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -8318,12 +8320,12 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "CMPS_W (" << (int)CX << " word) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]" << endl;
 		if (CX)
 		{
-			Src = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
-			Dst = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			Src = memory.read(Source_Index + operand_RM_seg * 16);
+			Dst = memory.read(Destination_Index + *ES * 16);
 			Destination_Index++;
 			Source_Index++;
-			Src += memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF] * 256;
-			Dst += memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] * 256;
+			Src += memory.read(Source_Index + operand_RM_seg * 16) * 256;
+			Dst += memory.read(Destination_Index + *ES * 16) * 256;
 
 			Result_32 = Src - Dst;
 			if (log_to_console) cout << (int)Src << " - " << (int)Dst << " = " << (int)Result_32;
@@ -8376,15 +8378,15 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		
 		if (CX)
 		{
-			uint16 Result = *ptr_AL - memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
-			OF_Carry = ((*ptr_AL & 0x7F) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 0x7F)) >> 7;
+			uint16 Result = *ptr_AL - memory.read(Destination_Index + *ES * 16);
+			OF_Carry = ((*ptr_AL & 0x7F) - (memory.read(Destination_Index + *ES * 16) & 0x7F)) >> 7;
 			Flag_CF = (Result >> 8) & 1;
 			Flag_SF = ((Result >> 7) & 1);
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result & 255];
-			Flag_AF = (((*ptr_AL & 15) - (memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] & 15)) >> 4) & 1;
+			Flag_AF = (((*ptr_AL & 15) - (memory.read(Destination_Index + *ES * 16) & 15)) >> 4) & 1;
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -8423,9 +8425,9 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		
 		if(CX)
 		{
-			*ptr_Dst_L = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			*ptr_Dst_L = memory.read(Destination_Index + *ES * 16);
 			Destination_Index++;
-			*ptr_Dst_H = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			*ptr_Dst_H = memory.read(Destination_Index + *ES * 16);
 			Result_32 = AX - Dst;
 			OF_Carry = ((AX & 0x7FFF) - (Dst & 0x7FFF)) >> 15;
 			Flag_CF = (Result_32 >> 16) & 1;
@@ -8494,7 +8496,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "LODS_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
 		if (CX)
 		{
-			*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+			*ptr_AL = memory.read(Source_Index + operand_RM_seg * 16);
 			if (Flag_DF)
 			{
 				Source_Index--;
@@ -8545,9 +8547,9 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "LODS_B (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
 		if (CX)
 		{
-			*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+			*ptr_AL = memory.read(Source_Index + operand_RM_seg * 16);
 			Source_Index++;
-			*ptr_AH = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+			*ptr_AH = memory.read(Source_Index + operand_RM_seg * 16);
 			if (Flag_DF)
 			{
 				Source_Index -= 3;
@@ -8575,7 +8577,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "STOS_B (" << (int)CX << " bytes) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		if (CX)
 		{
-			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
+			memory.write(Destination_Index + *ES * 16, *ptr_AL);
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -8603,9 +8605,9 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		if (log_to_console) cout << "STOS_W (" << (int)CX << " words) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		if (CX)
 		{
-			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
+			memory.write(Destination_Index + *ES * 16, *ptr_AL);
 			Destination_Index++;
-			memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AH;
+			memory.write(Destination_Index + *ES * 16, *ptr_AH);
 			if (Flag_DF)
 			{
 				Destination_Index -= 3;
@@ -8632,9 +8634,9 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		Instruction_Pointer ++;
 		if (test_mode) repeat_test_op = 1;
 		//проверяем следующую команду F6 или F7 + mod 111 r/m
-		if (memory.read_2(Instruction_Pointer + *CS * 16) == 0xF6 || memory.read_2(Instruction_Pointer + *CS * 16) == 0xF7)
+		if (memory.read(Instruction_Pointer + *CS * 16) == 0xF6 || memory.read(Instruction_Pointer + *CS * 16) == 0xF7)
 		{
-			if ((memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] & 0b00111000) == 0b00111000) 
+			if ((memory.read(Instruction_Pointer + 1 + *CS * 16) & 0b00111000) == 0b00111000) 
 			{
 				negate_IDIV = true;
 				if (log_to_console) cout << "negate ON [seg over = " << (int)Flag_segment_override << "]";
@@ -8647,7 +8649,7 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 }
 void REP()			//REP = Repea while CX > 0			[F3]
 {
-	uint8 OP = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	uint8 OP = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result_16 = 0;
 	uint32 Result_32 = 0;
 	
@@ -8681,7 +8683,7 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		if (log_to_console) cout << "MOVES_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
+			memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -8724,10 +8726,10 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		if (log_to_console) cout << "MOVES_W (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
+			memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 			Destination_Index ++;
 			Source_Index ++;
-			memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
+			memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 			if (Flag_DF)
 			{
 				Destination_Index -= 3;
@@ -8774,14 +8776,14 @@ void REP()			//REP = Repea while CX > 0			[F3]
 			cout << "[";
 			for (int i = 0; i < CX; i++)
 			{
-				cout << memory.read_2(Source_Index + pos + operand_RM_seg * 16);
+				cout << memory.read(Source_Index + pos + operand_RM_seg * 16);
 				pos = pos + (1 + Flag_DF * -2);
 			}
 			cout << "][";
 			pos = 0;
 			for (int i = 0; i < CX; i++)
 			{
-				cout << memory.read_2(Destination_Index + pos + *ES * 16);
+				cout << memory.read(Destination_Index + pos + *ES * 16);
 				pos = pos + (1 + Flag_DF * -2);
 			}
 			cout << "]" << endl;
@@ -8789,8 +8791,8 @@ void REP()			//REP = Repea while CX > 0			[F3]
 
 		if(CX)
 		{
-			Result_16 = memory.read_2(Source_Index + operand_RM_seg * 16) - memory.read_2(Destination_Index + *ES * 16);
-			OF_Carry = ((memory.read_2(Source_Index + operand_RM_seg * 16) & 0x7F) - (memory.read_2(Destination_Index + *ES * 16) & 0x7F)) >> 7;
+			Result_16 = memory.read(Source_Index + operand_RM_seg * 16) - memory.read(Destination_Index + *ES * 16);
+			OF_Carry = ((memory.read(Source_Index + operand_RM_seg * 16) & 0x7F) - (memory.read(Destination_Index + *ES * 16) & 0x7F)) >> 7;
 			//if (log_to_console || 1) cout << " (" << memory.read_2(Source_Index + *DS * 16) << "-" << memory.read_2(Destination_Index + *ES * 16) << ") ";
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
@@ -8799,7 +8801,7 @@ void REP()			//REP = Repea while CX > 0			[F3]
 			else Flag_ZF = true;
 			//cout << (int)Flag_ZF << endl;
 			Flag_PF = parity_check[Result_16 & 255];
-			Flag_AF = (((memory.read_2(Source_Index + operand_RM_seg * 16) & 0x0F) - (memory.read_2(Destination_Index + *ES * 16) & 0x0F)) >> 4) & 1;
+			Flag_AF = (((memory.read(Source_Index + operand_RM_seg * 16) & 0x0F) - (memory.read(Destination_Index + *ES * 16) & 0x0F)) >> 4) & 1;
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -8862,12 +8864,12 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		do
 		{
 			if (!CX) break;
-			*ptr_Src_L = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
-			*ptr_Dst_L = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			*ptr_Src_L = memory.read(Source_Index + operand_RM_seg * 16);
+			*ptr_Dst_L = memory.read(Destination_Index + *ES * 16);
 			Destination_Index++;
 			Source_Index++;
-			*ptr_Src_H = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
-			*ptr_Dst_H = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			*ptr_Src_H = memory.read(Source_Index + operand_RM_seg * 16);
+			*ptr_Dst_H = memory.read(Destination_Index + *ES * 16);
 			Result_32 = Src - Dst;
 			if (log_to_console) cout << (int)Src << " - " << (int)Dst << " = " << (int)Result_32;
 			OF_Carry = ((Src & 0x7FFF) - (Dst & 0x7FFF)) >> 15;
@@ -8900,15 +8902,15 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		do
 		{
 			if (!CX) break;
-			Result_16 = (AX & 255) - memory.read_2(Destination_Index + *ES * 16);
-			OF_Carry = (((AX & 0x7F) - (memory.read_2(Destination_Index + *ES * 16) & 0x7F))) >> 7;
+			Result_16 = (AX & 255) - memory.read(Destination_Index + *ES * 16);
+			OF_Carry = (((AX & 0x7F) - (memory.read(Destination_Index + *ES * 16) & 0x7F))) >> 7;
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = (Result_16 >> 7) & 1;
 			Flag_OF = Flag_CF ^ OF_Carry;
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
-			Flag_AF = (((AX & 15) - (memory.read_2(Destination_Index + *ES * 16) & 15)) >> 4) & 1;
+			Flag_AF = (((AX & 15) - (memory.read(Destination_Index + *ES * 16) & 15)) >> 4) & 1;
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -8929,9 +8931,9 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		do
 		{
 			if (!CX) break;
-			*ptr_Dst_L = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			*ptr_Dst_L = memory.read(Destination_Index + *ES * 16);
 			Destination_Index++;
-			*ptr_Dst_H = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+			*ptr_Dst_H = memory.read(Destination_Index + *ES * 16);
 			Result_32 = AX - Dst;
 			OF_Carry = ((AX & 0x7FFF) - (Dst & 0x7FFF)) >> 15;
 			Flag_CF = (Result_32 >> 16) & 1;
@@ -8980,7 +8982,7 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		if (log_to_console) cout << "LODS_B (" << (int)CX << " bytes) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
 		while (CX)
 		{
-			*ptr_AL = memory.read_2(Source_Index + operand_RM_seg * 16);
+			*ptr_AL = memory.read(Source_Index + operand_RM_seg * 16);
 			if (Flag_DF)
 			{
 				Source_Index--;
@@ -9020,9 +9022,9 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		if (log_to_console) cout << "LODS_B (" << (int)CX << " words) from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "]";
 		while (CX)
 		{
-			*ptr_AL = memory.read_2(Source_Index + operand_RM_seg * 16);
+			*ptr_AL = memory.read(Source_Index + operand_RM_seg * 16);
 			Source_Index++;
-			*ptr_AH = memory.read_2(Source_Index + operand_RM_seg * 16);
+			*ptr_AH = memory.read(Source_Index + operand_RM_seg * 16);
 			if (Flag_DF)
 			{
 				Source_Index -= 3;
@@ -9040,7 +9042,7 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		if (log_to_console) cout << "STOS_B (" << (int)CX << " bytes) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, *ptr_AL);
+			memory.write(Destination_Index + *ES * 16, *ptr_AL);
 			if (Flag_DF)
 			{
 				Destination_Index--;
@@ -9058,9 +9060,9 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		if (log_to_console) cout << "STOS_W (" << (int)CX << " words) to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
 		while (CX)
 		{
-			memory.write_2(Destination_Index + *ES * 16, *ptr_AL);
+			memory.write(Destination_Index + *ES * 16, *ptr_AL);
 			Destination_Index++;
-			memory.write_2(Destination_Index + *ES * 16, *ptr_AH);
+			memory.write(Destination_Index + *ES * 16, *ptr_AH);
 			if (Flag_DF)
 			{
 				Destination_Index -= 3;
@@ -9077,9 +9079,9 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		Instruction_Pointer++;
 		if (test_mode) repeat_test_op = 1;
 		//проверяем следующую команду F6 или F7 + mod 111 r/m
-		if (memory.read_2(Instruction_Pointer + *CS * 16) == 0xF6 || memory.read_2(Instruction_Pointer + *CS * 16) == 0xF7)
+		if (memory.read(Instruction_Pointer + *CS * 16) == 0xF6 || memory.read(Instruction_Pointer + *CS * 16) == 0xF7)
 		{
-			if ((memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] & 0b00111000) == 0b00111000)
+			if ((memory.read(Instruction_Pointer + 1 + *CS * 16) & 0b00111000) == 0b00111000)
 			{
 				negate_IDIV = true;
 				if (log_to_console) cout << "negate ON [seg over = " << (int)Flag_segment_override << "]";
@@ -9116,8 +9118,8 @@ void MOVES_8()    //MOVS = Move String 8bit
 		break;
 	}
 	
-	if (log_to_console) cout << "MOVES_B("<< (int)memory.read_2(Source_Index + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-	memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+	if (log_to_console) cout << "MOVES_B("<< (int)memory.read(Source_Index + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+	memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 	if (Flag_DF)
 	{
 		Destination_Index--;
@@ -9155,11 +9157,11 @@ void MOVES_16()   //MOVS = Move String 16bit
 		operand_RM_seg = *DS;
 		break;
 	}
-	if (log_to_console) cout << "MOVES_W ("<< (int)memory.read_2(Source_Index + operand_RM_seg * 16) << (int)memory.read_2(Source_Index + 1 + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-	memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
+	if (log_to_console) cout << "MOVES_W ("<< (int)memory.read(Source_Index + operand_RM_seg * 16) << (int)memory.read(Source_Index + 1 + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+	memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 	Destination_Index++;
 	Source_Index++;
-	memory.write_2(Destination_Index + *ES * 16, memory.read_2(Source_Index + operand_RM_seg * 16));
+	memory.write(Destination_Index + *ES * 16, memory.read(Source_Index + operand_RM_seg * 16));
 	if (Flag_DF)
 	{
 		Destination_Index -= 3;
@@ -9197,9 +9199,9 @@ void CMPS_8()     //CMPS = Compare String
 		operand_RM_seg = *DS;
 		break;
 	}
-	if (log_to_console) cout << "CMPS_8 SOLO (" << memory.read_2(Source_Index + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << Source_Index << "] to [" << (int)*ES << "]:[" << Destination_Index << "]";
-	uint8 Src = memory.read_2(Source_Index + operand_RM_seg * 16);
-	uint8 Dst = memory.read_2(Destination_Index + *ES * 16);
+	if (log_to_console) cout << "CMPS_8 SOLO (" << memory.read(Source_Index + operand_RM_seg * 16) << ") from [" << (int)operand_RM_seg << "]:[" << Source_Index << "] to [" << (int)*ES << "]:[" << Destination_Index << "]";
+	uint8 Src = memory.read(Source_Index + operand_RM_seg * 16);
+	uint8 Dst = memory.read(Destination_Index + *ES * 16);
 	uint16 Result = Src - Dst;
 	bool OF_Carry = ((Src & 0x7F) - (Dst & 0x7F)) >> 7;
 	Flag_CF = (Result >> 8) & 1;
@@ -9246,13 +9248,13 @@ void CMPS_16()    //CMPS = Compare String
 		operand_RM_seg = *DS;
 		break;
 	}
-	if (log_to_console) cout << "CMPS_16 SOLO (" << (int)(memory.read_2(Source_Index + operand_RM_seg * 16) + memory.read_2(Source_Index + operand_RM_seg * 16)*256) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
-	*ptr_Src_L = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+	if (log_to_console) cout << "CMPS_16 SOLO (" << (int)(memory.read(Source_Index + operand_RM_seg * 16) + memory.read(Source_Index + operand_RM_seg * 16)*256) << ") from [" << (int)operand_RM_seg << "]:[" << (int)Source_Index << "] to [" << (int)*ES << "]:[" << (int)Destination_Index << "]";
+	*ptr_Src_L = memory.read(Source_Index + operand_RM_seg * 16);
 	Source_Index++;
-	*ptr_Src_H = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
-	*ptr_Dst_L = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+	*ptr_Src_H = memory.read(Source_Index + operand_RM_seg * 16);
+	*ptr_Dst_L = memory.read(Destination_Index + *ES * 16);
 	Destination_Index++;
-	*ptr_Dst_H = memory_2[(Destination_Index + *ES * 16) & 0xFFFFF];
+	*ptr_Dst_H = memory.read(Destination_Index + *ES * 16);
 	uint32 Result_32 = Src - Dst;
 	if (log_to_console) cout << " Res32 (" <<  (int)Src << " - " << (int)Dst << ") = " << (int)Result_32;
 	bool OF_Carry = ((Src & 0x7FFF) - (Dst & 0x7FFF)) >> 15;
@@ -9278,15 +9280,15 @@ void CMPS_16()    //CMPS = Compare String
 void SCAS_8()     //SCAS = Scan String
 {
 	if (log_to_console) cout << "SCAS 8 SOLO AL with string at [" << (int)*ES << "]:[" << Destination_Index << "]";
-	uint16 Result = (AX & 255) - memory.read_2(Destination_Index + *ES * 16);
-	bool OF_Carry = ((AX & 0x7F) - (memory.read_2(Destination_Index + *ES * 16) & 0x7F)) >> 7;
+	uint16 Result = (AX & 255) - memory.read(Destination_Index + *ES * 16);
+	bool OF_Carry = ((AX & 0x7F) - (memory.read(Destination_Index + *ES * 16) & 0x7F)) >> 7;
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = ((Result >> 7) & 1);
 	Flag_OF = Flag_CF ^ OF_Carry;
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
-	Flag_AF = (((AX & 0x0F) - (memory.read_2(Destination_Index + *ES * 16) & 0x0F)) >> 4) & 1;
+	Flag_AF = (((AX & 0x0F) - (memory.read(Destination_Index + *ES * 16) & 0x0F)) >> 4) & 1;
 	if (Flag_DF)
 	{
 		Destination_Index--;
@@ -9302,9 +9304,9 @@ void SCAS_8()     //SCAS = Scan String
 void SCAS_16()     //SCAS = Scan String
 {
 	if (log_to_console) cout << "SCAS 16 SOLO AX with string at [" << (int)*ES << "]:[" << Destination_Index << "]";
-	uint16 Dst = memory.read_2(Destination_Index + *ES * 16);
+	uint16 Dst = memory.read(Destination_Index + *ES * 16);
 	Destination_Index++;
-	Dst += memory.read_2(Destination_Index + *ES * 16) * 256;
+	Dst += memory.read(Destination_Index + *ES * 16) * 256;
 	uint32 Result_32 = AX - Dst;
 	bool OF_Carry = ((AX & 0x7FFF) - (Dst & 0x7FFF)) >> 15;
 	Flag_CF = (Result_32 >> 16) & 1;
@@ -9350,7 +9352,7 @@ void LODS_8()     //LODS = Load String
 		break;
 	}
 	if (log_to_console) cout << "LODS_8 SOLO from [" << (int)operand_RM_seg << "]:[" << Source_Index << "] to AL";
-	*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+	*ptr_AL = memory.read(Source_Index + operand_RM_seg * 16);
 	if (log_to_console) cout << "(" << (int)*ptr_AL << ")";
 	if (Flag_DF)
 	{
@@ -9388,9 +9390,9 @@ void LODS_16()    //LODS = Load String
 		break;
 	}
 	if (log_to_console) cout << "LODS_16 SOLO from [" << (int)operand_RM_seg << "]:[" << Source_Index << "] to AX";
-	*ptr_AL = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+	*ptr_AL = memory.read(Source_Index + operand_RM_seg * 16);
 	Source_Index++;
-	*ptr_AH = memory_2[(Source_Index + operand_RM_seg * 16) & 0xFFFFF];
+	*ptr_AH = memory.read(Source_Index + operand_RM_seg * 16);
 	if (log_to_console) cout << "("  << (int)AX << ")";
 	if (Flag_DF)
 	{
@@ -9405,7 +9407,7 @@ void LODS_16()    //LODS = Load String
 void STOS_8()     //STOS = Store String
 {
 	if (log_to_console) cout << "STOS_8 SOLO string from AL(" << (int)*ptr_AL  << ") to [" << (int)*ES << "]:[" << Destination_Index << "]";
-	memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
+	memory.write(Destination_Index + *ES * 16, *ptr_AL);
 	if (Flag_DF)
 	{
 		Destination_Index--;
@@ -9419,9 +9421,9 @@ void STOS_8()     //STOS = Store String
 void STOS_16()    //STOS = Store String
 {
 	if (log_to_console) cout << "STOS_16 SOLO string_w from AX (" << (int)AX << ") to [" << (int)*ES << "]:[" << Destination_Index << "]";
-	memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AL;
+	memory.write(Destination_Index + *ES * 16, *ptr_AL);
 	Destination_Index++;
-	memory_2[(Destination_Index + *ES * 16) & 0xFFFFF] = *ptr_AH;
+	memory.write(Destination_Index + *ES * 16, *ptr_AH);
 	if (Flag_DF)
 	{
 		Destination_Index -= 3;
@@ -9443,16 +9445,16 @@ void Call_Near()				//Direct Call within Segment
 	//else cout << "Direct Call within Segment. Ret to " << (int)*CS << ":" << Instruction_Pointer + 3 << endl;
 	if (log_to_console)SetConsoleTextAttribute(hConsole, 7);
 	Stack_Pointer--;
-	memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 3) >> 8);
+	memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 3) >> 8);
 	Stack_Pointer--;
-	memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 3) & 255);
+	memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 3) & 255);
 
-	Instruction_Pointer += DispCalc16(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256) + 3;
+	Instruction_Pointer += DispCalc16(memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256) + 3;
 }
 // INC/DEC/CALL/JUMP/PUSH
 void Call_Jump_Push()				//Indirect (4 operations)
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];//второй байт
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16);//второй байт
 	uint8 OP = (byte2 >> 3) & 7;
 	uint16 disp = 0;		//смещение
 	additional_IPs = 0;
@@ -9485,15 +9487,15 @@ void Call_Jump_Push()				//Indirect (4 operations)
 		else
 		{
 			mod_RM_3(byte2);
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Flag_AF = (((*ptr_Src & 0x0F) + 1) >> 4) & 1;
 			Flag_OF = (((*ptr_Src & 0x7FFF) + 1) >> 15) & 1;
 			++(*ptr_Src);
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_H;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_H);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_L);
 			if (*ptr_Src) Flag_ZF = 0;
 			else Flag_ZF = 1;
 			Flag_SF = (*ptr_Src >> 15) & 1;
@@ -9513,6 +9515,7 @@ void Call_Jump_Push()				//Indirect (4 operations)
 
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 0x0F) - 1) >> 4) & 1;
 			Flag_OF = (((*ptr_r16[byte2 & 7] & 0x7FFF) - 1) >> 15) & 1;
+			if (!*ptr_r16[byte2 & 7]) Flag_OF = 0; //при вычитании из ноля
 			--(*ptr_r16[byte2 & 7]);
 			if (*ptr_r16[byte2 & 7]) Flag_ZF = 0;
 			else Flag_ZF = 1;
@@ -9526,15 +9529,16 @@ void Call_Jump_Push()				//Indirect (4 operations)
 		else
 		{
 			mod_RM_3(byte2);
-			*ptr_Src_L = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
-			*ptr_Src_H = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			Flag_AF = (((*ptr_Src & 0x0F) - 1) >> 4) & 1;
 			Flag_OF = (((*ptr_Src & 0x7FFF) - 1) >> 15) & 1;
+			if(*ptr_Src ==0) Flag_OF = 0; //при вычитании из ноля
 			--(*ptr_Src);
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_H;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_H);
 			operand_RM_offset--;
-			memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] = *ptr_Src_L;
+			memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_L);
 			if (*ptr_Src) Flag_ZF = 0;
 			else Flag_ZF = 1;
 			Flag_SF = (*ptr_Src >> 15) & 1;
@@ -9558,15 +9562,15 @@ void Call_Jump_Push()				//Indirect (4 operations)
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			new_IP = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
+			new_IP = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256;
 		}
 
 		old_IP = Instruction_Pointer;
 		stack_addr = SS_data * 16 + Stack_Pointer - 1;
 		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) >> 8);
+		memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) >> 8);
 		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
+		memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
 		
 		Instruction_Pointer = new_IP;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
@@ -9590,22 +9594,22 @@ void Call_Jump_Push()				//Indirect (4 operations)
 		
 		if (log_to_console) New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 		
-		new_IP = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		new_IP = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		new_IP = new_IP + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		new_IP = new_IP + memory.read(operand_RM_seg * 16 + operand_RM_offset) * 256;
 		operand_RM_offset++;
-		new_CS = memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF];
+		new_CS = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
-		new_CS = new_CS + memory_2[(operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF] * 256;
+		new_CS = new_CS + memory.read(operand_RM_seg * 16 + operand_RM_offset) * 256;
 
 		Stack_Pointer--;
-		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = CS_data >> 8;
+		memory.write(SS_data * 16 + Stack_Pointer, CS_data >> 8);
 		Stack_Pointer--;
-		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] = CS_data & 255;
+		memory.write(SS_data * 16 + Stack_Pointer, CS_data & 255);
 		Stack_Pointer--;
-		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] =  (Instruction_Pointer + 2 + additional_IPs) >> 8;
+		memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) >> 8);
 		Stack_Pointer--;
-		memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] =  (Instruction_Pointer + 2 + additional_IPs) & 255;
+		memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 2 + additional_IPs) & 255);
 		
 		Instruction_Pointer = new_IP;
 		*CS = new_CS;
@@ -9626,7 +9630,7 @@ void Call_Jump_Push()				//Indirect (4 operations)
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Instruction_Pointer = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
+			Instruction_Pointer = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256;
 		}
 		
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
@@ -9646,8 +9650,8 @@ void Call_Jump_Push()				//Indirect (4 operations)
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 		}
 
-		Instruction_Pointer = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
-		*CS = memory_2[New_Addr_32 + 2] + memory_2[New_Addr_32 + 3] * 256;
+		Instruction_Pointer = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256;
+		*CS = memory.read(New_Addr_32 + 2) + memory.read(New_Addr_32 + 3) * 256;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Indirect Intersegment Jump to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9666,14 +9670,14 @@ void Call_Jump_Push()				//Indirect (4 operations)
 		{
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-			Src = memory_2[New_Addr_32] + memory_2[New_Addr_32 + 1] * 256;
+			Src = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256;
 			if (log_to_console) cout << "PUSH M" << OPCODE_comment;
 		}
 		//пушим число
 		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, Src >> 8);
+		memory.write(SS_data * 16 + Stack_Pointer, Src >> 8);
 		Stack_Pointer--;
-		memory.write_2(SS_data * 16 + Stack_Pointer, Src & 255);
+		memory.write(SS_data * 16 + Stack_Pointer, Src & 255);
 		Instruction_Pointer += 2 + additional_IPs;
 		break;
 	}
@@ -9681,21 +9685,21 @@ void Call_Jump_Push()				//Indirect (4 operations)
 void Call_dir_interseg()		//Direct Intersegment Call
 {
 	Stack_Pointer--;
-	memory.write_2(SS_data * 16 + Stack_Pointer, *CS >> 8);
+	memory.write(SS_data * 16 + Stack_Pointer, *CS >> 8);
 	Stack_Pointer--;
-	memory.write_2(SS_data * 16 + Stack_Pointer, (*CS) & 255);
+	memory.write(SS_data * 16 + Stack_Pointer, (*CS) & 255);
 	Stack_Pointer--;
-	memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 5) >> 8);
+	memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 5) >> 8);
 	Stack_Pointer--;
-	memory.write_2(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 5) & 255);
+	memory.write(SS_data * 16 + Stack_Pointer, (Instruction_Pointer + 5) & 255);
 	Instruction_Pointer++;
-	uint16 new_IP = memory.read_2(Instruction_Pointer + *CS * 16);
+	uint16 new_IP = memory.read(Instruction_Pointer + *CS * 16);
 	Instruction_Pointer++;
-	new_IP += memory.read_2(Instruction_Pointer + *CS * 16) * 256;
+	new_IP += memory.read(Instruction_Pointer + *CS * 16) * 256;
 	Instruction_Pointer++;
-	uint16 new_CS = memory.read_2(Instruction_Pointer + *CS * 16);
+	uint16 new_CS = memory.read(Instruction_Pointer + *CS * 16);
 	Instruction_Pointer++;
-	new_CS += memory.read_2(Instruction_Pointer + *CS * 16) * 256;
+	new_CS += memory.read(Instruction_Pointer + *CS * 16) * 256;
 	Instruction_Pointer = new_IP;
 	*CS = new_CS;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
@@ -9705,22 +9709,22 @@ void Call_dir_interseg()		//Direct Intersegment Call
 }
 void Jump_Near_8()				//Direct jump within Segment-Short
 {
-	Instruction_Pointer += DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+	Instruction_Pointer += DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 	if (log_to_console) cout << "Direct jump(8) within Segment-Short to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void Jump_Near_16()				//Direct jump within Segment-Short
 {
-	Instruction_Pointer += DispCalc16(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256) + 3;
+	Instruction_Pointer += DispCalc16(memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256) + 3;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 	if (log_to_console) cout << "Direct jump(16) within Segment-Short to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 void Jump_Far()					//Direct Intersegment Jump
 {
-	uint16 new_IP = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
-	*CS = memory.read_2(Instruction_Pointer + 3 + *CS * 16) + memory.read_2(Instruction_Pointer + 4 + *CS * 16) * 256;
+	uint16 new_IP = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
+	*CS = memory.read(Instruction_Pointer + 3 + *CS * 16) + memory.read(Instruction_Pointer + 4 + *CS * 16) * 256;
 	Instruction_Pointer = new_IP;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 	if (log_to_console) cout << "Direct Intersegment Jump to " << (int)*CS << ":" << (int)Instruction_Pointer;
@@ -9732,7 +9736,7 @@ void JE_JZ()			// JE/JZ = Jump on Equal/Zero
 {
 	if (Flag_ZF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Equal / Zero (JE/JZ) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9749,7 +9753,7 @@ void JL_JNGE()			// JL/JNGE = Jump on Less/Not Greater, or Equal
 {
 	if (Flag_SF ^ Flag_OF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Less/Not Greater, or Equal (JL/JNGE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9766,7 +9770,7 @@ void JLE_JNG()			// JLE/JNG = Jump on Less, or Equal/Not Greater
 {
 	if ((Flag_SF ^ Flag_OF) | Flag_ZF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Less, or Equal/Not Greater (JLE/JNG) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9783,7 +9787,7 @@ void JB_JNAE()			// JB/JNAE = Jump on Below/Not Above, or Equal
 {
 	if (Flag_CF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Below/Not Above, or Equal (JB/JNAE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9800,7 +9804,7 @@ void JBE_JNA()			// JBE/JNA = Jump on Below, or Equal/Not Above
 {
 	if ((Flag_ZF | Flag_CF))
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Below, or Equal/Not Above (JBE/JNA) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9817,7 +9821,7 @@ void JP_JPE()			// JP/JPE = Jump on Parity/Parity Even
 {
 	if (Flag_PF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Parity/Parity Even (JP/JPE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9834,7 +9838,7 @@ void JO()				// JO = Jump on Overflow
 {
 	if (Flag_OF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Overflow (JO) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9851,7 +9855,7 @@ void JS()				// JS = Jump on Sign
 {
 	if (Flag_SF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Sign (JS) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9868,7 +9872,7 @@ void JNE_JNZ()			// JNE/JNZ = Jump on Not Equal/Not Zero
 {
 	if (!Flag_ZF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Equal/Not Zero (JNE/JNZ) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9885,7 +9889,7 @@ void JNL_JGE()			// JNL/JGE = Jump on Not Less/Greater, or Equal
 {
 	if (!(Flag_SF ^ Flag_OF))
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Less/Greater, or Equal (JNL/JGE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9909,7 +9913,7 @@ void JNLE_JG()			// JNLE/JG = Jump on Not Less, or Equal/Greater
 	}
 	else
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Less, or Equal/Greater (JNLE/JG) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9919,7 +9923,7 @@ void JNB_JAE()			// JNB/JAE = Jump on Not Below/Above, or Equal
 {
 	if (!Flag_CF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Below/Above, or Equal (JNB/JAE) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9936,7 +9940,7 @@ void JNBE_JA()			// JNBE/JA = Jump on Not Below, or Equal/Above
 {
 	if (!(Flag_CF | Flag_ZF))
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Below, or Equal/Above (JNBE/JA) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9953,7 +9957,7 @@ void JNP_JPO()			// JNP/JPO = Jump on Not Parity/Parity Odd
 {
 	if (!Flag_PF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Parity/Parity Odd (JNP/JPO) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9970,7 +9974,7 @@ void JNO()				// JNO = Jump on Not Overflow
 {
 	if (!Flag_OF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Overflow (JNO) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -9987,7 +9991,7 @@ void JNS()				// JNS = Jump on Not Sign
 {
 	if (!Flag_SF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 14);
 		if (log_to_console) cout << "Jump on Not Sign (JNS) to " << (int)*CS << ":" << (int)Instruction_Pointer;
 		if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -10005,7 +10009,7 @@ void LOOP()			// LOOP = Loop CX Times
 	CX--;
 	if (CX)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(Instruction_Pointer + 1 + *CS * 16)) + 2;
 		if (log_to_console) cout << "Continue loop at " << Instruction_Pointer << " CX = " << (int)CX;
 	}
 	else
@@ -10019,7 +10023,8 @@ void LOOPZ_LOOPE()		// LOOPZ/LOOPE = Loop while Zero/Equal
 	CX--;
 	if (CX && Flag_ZF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		operand_RM_offset = Instruction_Pointer + 1;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(operand_RM_offset + *CS * 16)) + 2;
 		if (log_to_console) cout << "Continue loop CX = " << (int)CX << " ZF = " << Flag_ZF;
 	}
 	else
@@ -10033,7 +10038,8 @@ void LOOPNZ_LOOPNE()	// LOOPNZ/LOOPNE = Loop while Not Zero/Not Equal
 	CX--;
 	if (CX && !Flag_ZF)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		operand_RM_offset = Instruction_Pointer + 1;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(operand_RM_offset + *CS * 16)) + 2;
 		if (log_to_console) cout << "Continue loop CX = " << (int)CX << " ZF = " << Flag_ZF;
 	}
 	else
@@ -10046,7 +10052,8 @@ void JCXZ()			// JCXZ = Jump on CX Zero
 {
 	if (!CX)
 	{
-		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]) + 2;
+		operand_RM_offset = Instruction_Pointer + 1;
+		Instruction_Pointer = Instruction_Pointer + DispCalc8(memory.read(operand_RM_offset + *CS * 16)) + 2;
 		if (log_to_console) cout << "Jump on CX Zero to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	}
 	else
@@ -10060,9 +10067,10 @@ void JCXZ()			// JCXZ = Jump on CX Zero
 
 void RET_Segment()					//Return Within Segment
 {
-	uint32 stack_addr = SS_data * 16 + Stack_Pointer;
-	Instruction_Pointer = memory.read_2(stack_addr) + memory.read_2(stack_addr + 1) * 256;
-	Stack_Pointer += 2;
+	Instruction_Pointer = memory.read(SS_data * 16 + Stack_Pointer);
+	Stack_Pointer ++;
+	Instruction_Pointer += memory.read(SS_data * 16 + Stack_Pointer) * 256;
+	Stack_Pointer++;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console) cout << "Near RET to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	//else cout << "Near RET to " << (int)*CS << ":" << (int)Instruction_Pointer << endl;
@@ -10070,10 +10078,14 @@ void RET_Segment()					//Return Within Segment
 }
 void RET_Segment_IMM_SP()			//Return Within Segment Adding Immediate to SP
 {
-	uint16 pop_bytes = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
-	uint32 stack_addr = SS_data * 16 + Stack_Pointer;
-	Instruction_Pointer = memory.read_2(stack_addr) + memory.read_2(stack_addr + 1) * 256;
-	Stack_Pointer += 2 + pop_bytes;
+	Instruction_Pointer++;
+	uint16 pop_bytes = memory.read(Instruction_Pointer + *CS * 16);
+	Instruction_Pointer++;
+	pop_bytes += memory.read(Instruction_Pointer + *CS * 16) * 256;
+	Instruction_Pointer = memory.read(SS_data * 16 + Stack_Pointer);
+	Stack_Pointer++;
+	Instruction_Pointer += memory.read(SS_data * 16 + Stack_Pointer) * 256;
+	Stack_Pointer += 1 + pop_bytes;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console) cout << "Near RET to " << (int)*CS << ":" << (int)Instruction_Pointer << " + " << pop_bytes << " bytes popped";
 	//else  cout << "Near RET to " << (int)*CS << ":" << (int)Instruction_Pointer << " + " << pop_bytes << " bytes popped" << endl;
@@ -10081,11 +10093,16 @@ void RET_Segment_IMM_SP()			//Return Within Segment Adding Immediate to SP
 }
 void RET_Inter_Segment()			//Return Intersegment
 {
-	uint32 stack_addr = SS_data * 16 + Stack_Pointer;
-	Instruction_Pointer = memory.read_2(stack_addr) + memory.read_2(stack_addr + 1) * 256;
-	Stack_Pointer += 2;
-	*CS = memory.read_2(Stack_Pointer + SS_data * 16) + memory.read_2(Stack_Pointer + 1 + SS_data * 16) * 256;
-	Stack_Pointer += 2;
+	Instruction_Pointer = memory.read(Stack_Pointer + SS_data * 16);
+	Stack_Pointer++;
+	Instruction_Pointer += memory.read(Stack_Pointer + SS_data * 16) * 256;
+	Stack_Pointer++;
+
+	*CS = memory.read(Stack_Pointer + SS_data * 16);
+	Stack_Pointer++;
+	*CS += memory.read(Stack_Pointer + SS_data * 16) * 256;
+	Stack_Pointer++;
+
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console) cout << "Far RET to " << (int)*CS << ":" << (int)Instruction_Pointer;
 	//else cout << "Far RET to " << (int)*CS << ":" << (int)Instruction_Pointer << endl;
@@ -10093,16 +10110,16 @@ void RET_Inter_Segment()			//Return Intersegment
 }
 void RET_Inter_Segment_IMM_SP()		//Return Intersegment Adding Immediate to SP
 {
-	uint16 pop_bytes = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] + memory.read_2(Instruction_Pointer + 2 + *CS * 16) * 256;
+	uint16 pop_bytes = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	
-	Instruction_Pointer = memory.read_2(Stack_Pointer + SS_data * 16);
+	Instruction_Pointer = memory.read(Stack_Pointer + SS_data * 16);
 	Stack_Pointer ++;
-	Instruction_Pointer += memory.read_2(Stack_Pointer + SS_data * 16) * 256;
+	Instruction_Pointer += memory.read(Stack_Pointer + SS_data * 16) * 256;
 	Stack_Pointer++;
 	
-	*CS = memory.read_2(Stack_Pointer + SS_data * 16);
+	*CS = memory.read(Stack_Pointer + SS_data * 16);
 	Stack_Pointer++;
-	*CS += memory.read_2(Stack_Pointer + SS_data * 16) * 256;
+	*CS += memory.read(Stack_Pointer + SS_data * 16) * 256;
 	Stack_Pointer += 1 + pop_bytes;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
 	if (log_to_console || last_INT == 0x21) cout << "Far RET to " << (int)*CS << ":" << (int)Instruction_Pointer << " + " << pop_bytes << " bytes popped " << " AX(" << (int)AX << ") CF=" << (int)Flag_CF;
@@ -10115,37 +10132,37 @@ void RET_Inter_Segment_IMM_SP()		//Return Intersegment Adding Immediate to SP
 void INT_N()			//INT = Interrupt
 {
 	//перехват системных прерываний
-	//syscall(memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]);
+	//syscall(memory.read(Instruction_Pointer + 1 + *CS * 16));
 	//Instruction_Pointer += 2;
 	//return;
 
-	uint8 int_type = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF];
+	uint8 int_type = memory.read(Instruction_Pointer + 1 + *CS * 16);
 
 	last_INT = int_type;
 
 	//if (int_type == 0) cout << "int0!";
 
 	//определяем новый IP и CS
-	uint16 new_IP = memory.read_2(int_type * 4) + memory.read_2(int_type * 4 + 1) * 256;
-	uint16 new_CS = memory.read_2(int_type * 4 + 2) + memory.read_2(int_type * 4 + 3) * 256;
+	uint16 new_IP = memory.read(int_type * 4) + memory.read(int_type * 4 + 1) * 256;
+	uint16 new_CS = memory.read(int_type * 4 + 2) + memory.read(int_type * 4 + 3) * 256;
 	
 	//помещаем в стек флаги
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+	memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+	memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 	//помещаем в стек сегмент
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+	memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+	memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 	
 	//помещаем в стек IP
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 2) >> 8);
+	memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 2) >> 8);
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 2) & 255);
+	memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 2) & 255);
 
 	//передаем управление
 	Flag_IF = false;//запрет внешних прерываний
@@ -10236,6 +10253,7 @@ void INT_N()			//INT = Interrupt
 	{
 		if (*ptr_AH == 0 || *ptr_AH == 0xb) cout << "INT 10H from [" << (int)*CS << ":" << (int)Instruction_Pointer << "]" << " (AX=" << (int)AX << ") -> ";
 		if (*ptr_AH == 0 || *ptr_AH == 0xb) cout << get_int10_data() << endl;
+		//if (AX == 3) step_mode = 1;
 	}
 		
 	if (int_type == 0x19)
@@ -10248,26 +10266,26 @@ void INT_3()			//INT = Interrupt Type 3
 {
 	uint8 int_type = 3;
 	//определяем новый IP и CS
-	uint16 new_IP = memory.read_2(int_type * 4) + memory.read_2(int_type * 4 + 1) * 256;
-	uint16 new_CS = memory.read_2(int_type * 4 + 2) + memory.read_2(int_type * 4 + 3) * 256;
+	uint16 new_IP = memory.read(int_type * 4) + memory.read(int_type * 4 + 1) * 256;
+	uint16 new_CS = memory.read(int_type * 4 + 2) + memory.read(int_type * 4 + 3) * 256;
 
 	//помещаем в стек флаги
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+	memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+	memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 	//помещаем в стек сегмент
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+	memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+	memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 
 	//помещаем в стек IP
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) >> 8);
+	memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) >> 8);
 	Stack_Pointer--;
-	memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) & 255);
+	memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) & 255);
 	
 	//передаем управление
 	Flag_IF = false;//запрет внешних прерываний
@@ -10283,26 +10301,26 @@ void INT_O()			//INTO = Interrupt on Overflow
 	{
 		uint8 int_type = 4;
 		//определяем новый IP и CS
-		uint16 new_IP = memory.read_2(int_type * 4) + memory.read_2(int_type * 4 + 1) * 256;
-		uint16 new_CS = memory.read_2(int_type * 4 + 2) + memory.read_2(int_type * 4 + 3) * 256;
+		uint16 new_IP = memory.read(int_type * 4) + memory.read(int_type * 4 + 1) * 256;
+		uint16 new_CS = memory.read(int_type * 4 + 2) + memory.read(int_type * 4 + 3) * 256;
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+		memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+		memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 		//помещаем в стек сегмент
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 
 		//помещаем в стек IP
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer + 1) & 255);
 		
 		//передаем управление
 		Flag_IF = false;//запрет внешних прерываний
@@ -10319,21 +10337,21 @@ void INT_O()			//INTO = Interrupt on Overflow
 void I_RET()			//Interrupt Return
 {
 	//POP IP
-	Instruction_Pointer = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
+	Instruction_Pointer = memory.read(SS_data * 16 + Stack_Pointer);
 	Stack_Pointer++;
-	Instruction_Pointer += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
+	Instruction_Pointer += memory.read(SS_data * 16 + Stack_Pointer) * 256;
 	Stack_Pointer++;
 
 	//POP CS
-	*CS = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
+	*CS = memory.read(SS_data * 16 + Stack_Pointer);
 	Stack_Pointer++;
-	*CS += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
+	*CS += memory.read(SS_data * 16 + Stack_Pointer) * 256;
 	Stack_Pointer++;
 
 	//POP Flags
-	uint16 Flags = memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF];
+	uint16 Flags = memory.read(SS_data * 16 + Stack_Pointer);
 	Stack_Pointer++;
-	Flags += memory_2[(SS_data * 16 + Stack_Pointer) & 0xFFFFF] * 256;
+	Flags += memory.read(SS_data * 16 + Stack_Pointer) * 256;
 	Stack_Pointer++;
 
 	Flag_OF = (Flags >> 11) & 1;
@@ -10421,7 +10439,7 @@ void Lock()					//Bus lock prefix
 void Esc_8087()				//Call 8087
 {
 	//Декодируем инструкцию 8087
-	uint8 f_opcode = ((memory.read_2(Instruction_Pointer + *CS * 16) & 7) << 3) | ((memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF] >> 3) & 7);
+	uint8 f_opcode = ((memory.read(Instruction_Pointer + *CS * 16) & 7) << 3) | ((memory.read(Instruction_Pointer + 1 + *CS * 16) >> 3) & 7);
 	op_code_table_8087[f_opcode]();
 }
 
@@ -10439,7 +10457,7 @@ void CALC()
 
 void Esc_8087_001_000_Load()
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		//LOAD STi to ST0
@@ -10460,7 +10478,7 @@ void Esc_8087_001_000_Load()
 
 void Esc_8087_011_000_Load()
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal op" << endl;
@@ -10477,7 +10495,7 @@ void Esc_8087_011_000_Load()
 
 void Esc_8087_101_000_Load()
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal op" << endl;
@@ -10494,7 +10512,7 @@ void Esc_8087_101_000_Load()
 
 void Esc_8087_111_000_Load()
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal op" << endl;
@@ -10512,7 +10530,7 @@ void Esc_8087_111_000_Load()
 
 void Esc_8087_111_101_Load()  //LOAD long INT to ST0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal op" << endl;
@@ -10527,7 +10545,7 @@ void Esc_8087_111_101_Load()  //LOAD long INT to ST0
 }
 void Esc_8087_011_101_Load()	//LOAD temp real to ST0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal op" << endl;
@@ -10542,7 +10560,7 @@ void Esc_8087_011_101_Load()	//LOAD temp real to ST0
 }
 void Esc_8087_111_100_Load()	//LOAD BCD to ST0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal op" << endl;
@@ -10558,7 +10576,7 @@ void Esc_8087_111_100_Load()	//LOAD BCD to ST0
 
 void Esc_8087_001_010_Store()	//STORE ST0 to int/real
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		//FNOP = No Operation
@@ -10576,7 +10594,7 @@ void Esc_8087_001_010_Store()	//STORE ST0 to int/real
 
 void Esc_8087_011_010_Store()	//STORE ST0 to int/real
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal op" << endl;
@@ -10593,7 +10611,7 @@ void Esc_8087_011_010_Store()	//STORE ST0 to int/real
 }
 void Esc_8087_101_010_Store()	//STORE ST0 to int/real
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		//LOAD ST0 to STi
@@ -10610,7 +10628,7 @@ void Esc_8087_101_010_Store()	//STORE ST0 to int/real
 }
 void Esc_8087_111_010_Store()	//STORE ST0 to int/real
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal op" << endl;
@@ -10627,7 +10645,7 @@ void Esc_8087_111_010_Store()	//STORE ST0 to int/real
 
 void Esc_8087_001_011_StorePop() //FSTP = Store and Pop
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal" << endl;
@@ -10643,7 +10661,7 @@ void Esc_8087_001_011_StorePop() //FSTP = Store and Pop
 }
 void Esc_8087_011_011_StorePop() //FSTP = Store and Pop
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal" << endl;
@@ -10659,7 +10677,7 @@ void Esc_8087_011_011_StorePop() //FSTP = Store and Pop
 }
 void Esc_8087_101_011_StorePop() //FSTP = Store and Pop + ST0 to STi 
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		//StorePop ST0 to STi
@@ -10677,7 +10695,7 @@ void Esc_8087_101_011_StorePop() //FSTP = Store and Pop + ST0 to STi
 }
 void Esc_8087_111_011_StorePop() //FSTP = Store and Pop
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal" << endl;
@@ -10694,7 +10712,7 @@ void Esc_8087_111_011_StorePop() //FSTP = Store and Pop
 
 void Esc_8087_111_111_StorePop() //StorePop ST0 Long Int to MEM
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal" << endl;
@@ -10710,7 +10728,7 @@ void Esc_8087_111_111_StorePop() //StorePop ST0 Long Int to MEM
 }
 void Esc_8087_011_111_StorePop() //StorePop ST0 to TMP real mem
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal" << endl;
@@ -10726,7 +10744,7 @@ void Esc_8087_011_111_StorePop() //StorePop ST0 to TMP real mem
 }
 void Esc_8087_111_110_StorePop() //StorePop ST0 to BCD mem
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal" << endl;
@@ -10743,7 +10761,7 @@ void Esc_8087_111_110_StorePop() //StorePop ST0 to BCD mem
 
 void Esc_8087_001_001_FXCH()	//EXchange ST0 - STi
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 (EXchange ST0 - STi)" << endl;
@@ -10759,7 +10777,7 @@ void Esc_8087_001_001_FXCH()	//EXchange ST0 - STi
 
 void Esc_8087_000_010_FCOM()		//FCOM = Compare + STi to ST0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		//StorePop ST0 to STi
@@ -10777,7 +10795,7 @@ void Esc_8087_000_010_FCOM()		//FCOM = Compare + STi to ST0
 }
 void Esc_8087_010_010_FCOM()		//FCOM = Compare
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		Instruction_Pointer += 2;
@@ -10792,7 +10810,7 @@ void Esc_8087_010_010_FCOM()		//FCOM = Compare
 }
 void Esc_8087_100_010_FCOM()		//FCOM = Compare
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal" << endl;
@@ -10807,7 +10825,7 @@ void Esc_8087_100_010_FCOM()		//FCOM = Compare
 }
 void Esc_8087_110_010_FCOM()		//FCOM = Compare
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		if (log_to_console_8087) cout << "8087 illegal" << endl;
@@ -10822,7 +10840,7 @@ void Esc_8087_110_010_FCOM()		//FCOM = Compare
 }
 void Esc_8087_000_011_FCOM()		//FcomPop + STi to ST0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		//STi to ST0
@@ -10839,7 +10857,7 @@ void Esc_8087_000_011_FCOM()		//FcomPop + STi to ST0
 }
 void Esc_8087_010_011_FCOM()		//FcomPop
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		Instruction_Pointer += 2;
@@ -10847,7 +10865,7 @@ void Esc_8087_010_011_FCOM()		//FcomPop
 	else
 	{
 		//FCOMP
-		byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+		byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 		mod_RM_3(byte2);
 		Instruction_Pointer += 2 + additional_IPs;
 		if (log_to_console_8087) cout << "8087 FCOMP" << endl;
@@ -10855,7 +10873,7 @@ void Esc_8087_010_011_FCOM()		//FcomPop
 }
 void Esc_8087_100_011_FCOM()		//FcomPop
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		Instruction_Pointer += 2;
@@ -10863,7 +10881,7 @@ void Esc_8087_100_011_FCOM()		//FcomPop
 	else
 	{
 		//FCOMP
-		byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+		byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 		mod_RM_3(byte2);
 		Instruction_Pointer += 2 + additional_IPs;
 		if (log_to_console_8087) cout << "8087 FCOMP" << endl;
@@ -10871,7 +10889,7 @@ void Esc_8087_100_011_FCOM()		//FcomPop
 }
 void Esc_8087_110_011_FCOM()		//FcomPop + FCOMPP
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		//FCOMPP
@@ -10890,7 +10908,7 @@ void Esc_8087_110_011_FCOM()		//FcomPop + FCOMPP
 
 void Esc_8087_001_100_TEST()		//FTST/FXAM/FABS/FCHS
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -10944,7 +10962,7 @@ void Esc_8087_001_100_TEST()		//FTST/FXAM/FABS/FCHS
 
 void Esc_8087_000_000_FADD()		//FADD
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	
 	if ((byte2 >> 6) == 3)
 	{
@@ -10962,7 +10980,7 @@ void Esc_8087_000_000_FADD()		//FADD
 }
 void Esc_8087_010_000_FADD()		//FADD
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -10980,7 +10998,7 @@ void Esc_8087_010_000_FADD()		//FADD
 }
 void Esc_8087_100_000_FADD()		//FADD
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -10998,7 +11016,7 @@ void Esc_8087_100_000_FADD()		//FADD
 }
 void Esc_8087_110_000_FADD()		//FADD
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11018,7 +11036,7 @@ void Esc_8087_110_000_FADD()		//FADD
 
 void Esc_8087_000_100_FSUB()		//FSUB R = 0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11037,7 +11055,7 @@ void Esc_8087_000_100_FSUB()		//FSUB R = 0
 }
 void Esc_8087_000_101_FSUB()		//FSUB R = 1
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11056,7 +11074,7 @@ void Esc_8087_000_101_FSUB()		//FSUB R = 1
 }
 void Esc_8087_010_100_FSUB()		//FSUB R = 0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11075,7 +11093,7 @@ void Esc_8087_010_100_FSUB()		//FSUB R = 0
 }
 void Esc_8087_010_101_FSUB()		//FSUB R = 1
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11094,7 +11112,7 @@ void Esc_8087_010_101_FSUB()		//FSUB R = 1
 }
 void Esc_8087_100_100_FSUB()		//FSUB R = 0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11113,7 +11131,7 @@ void Esc_8087_100_100_FSUB()		//FSUB R = 0
 }
 void Esc_8087_100_101_FSUB()		//FSUB R = 1
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11132,7 +11150,7 @@ void Esc_8087_100_101_FSUB()		//FSUB R = 1
 }
 void Esc_8087_110_100_FSUB()		//FSUB R = 0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11151,7 +11169,7 @@ void Esc_8087_110_100_FSUB()		//FSUB R = 0
 }
 void Esc_8087_110_101_FSUB()		//FSUB R = 1
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11171,7 +11189,7 @@ void Esc_8087_110_101_FSUB()		//FSUB R = 1
 
 void Esc_8087_000_001_FMUL()		//FMUL
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11190,7 +11208,7 @@ void Esc_8087_000_001_FMUL()		//FMUL
 }
 void Esc_8087_010_001_FMUL()		//FMUL
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11209,7 +11227,7 @@ void Esc_8087_010_001_FMUL()		//FMUL
 }
 void Esc_8087_100_001_FMUL()		//FMUL
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11228,7 +11246,7 @@ void Esc_8087_100_001_FMUL()		//FMUL
 }
 void Esc_8087_110_001_FMUL()		//FMUL
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11248,7 +11266,7 @@ void Esc_8087_110_001_FMUL()		//FMUL
 
 void Esc_8087_000_110_FDIV()		//FDIV R = 0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11267,7 +11285,7 @@ void Esc_8087_000_110_FDIV()		//FDIV R = 0
 }
 void Esc_8087_000_111_FDIV()		//FDIV R = 1
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11286,7 +11304,7 @@ void Esc_8087_000_111_FDIV()		//FDIV R = 1
 }
 void Esc_8087_010_110_FDIV()		//FDIV R = 0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11305,7 +11323,7 @@ void Esc_8087_010_110_FDIV()		//FDIV R = 0
 }
 void Esc_8087_010_111_FDIV()		//FDIV R = 1
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11324,7 +11342,7 @@ void Esc_8087_010_111_FDIV()		//FDIV R = 1
 }
 void Esc_8087_100_110_FDIV()		//FDIV R = 0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11343,7 +11361,7 @@ void Esc_8087_100_110_FDIV()		//FDIV R = 0
 }
 void Esc_8087_100_111_FDIV()		//FDIV R = 1
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11362,7 +11380,7 @@ void Esc_8087_100_111_FDIV()		//FDIV R = 1
 }
 void Esc_8087_110_110_FDIV()		//FDIV R = 0
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11381,7 +11399,7 @@ void Esc_8087_110_110_FDIV()		//FDIV R = 0
 }
 void Esc_8087_110_111_FDIV()		//FDIV R = 1
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11401,7 +11419,7 @@ void Esc_8087_110_111_FDIV()		//FDIV R = 1
 
 void Esc_8087_001_111_FSQRT()		//FSQRT/FSCALE/FPREM/FRNDINIT/FYL2XP1/FSTCW
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11454,7 +11472,7 @@ void Esc_8087_001_111_FSQRT()		//FSQRT/FSCALE/FPREM/FRNDINIT/FYL2XP1/FSTCW
 
 void Esc_8087_001_110_FXTRACT()	//FXTRACT/FPTAN/F2XM1/FPATAN/FYL2X
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11528,7 +11546,7 @@ void Esc_8087_001_110_FXTRACT()	//FXTRACT/FPTAN/F2XM1/FPATAN/FYL2X
 
 void Esc_8087_001_101_FLDZ()		//FLDZ/FLD1/FLOPI/FLOL2T/FLOCW
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 
 	if ((byte2 >> 6) == 3)
 	{
@@ -11590,7 +11608,7 @@ void Esc_8087_001_101_FLDZ()		//FLDZ/FLD1/FLOPI/FLOL2T/FLOCW
 
 void Esc_8087_011_100_FINIT()		//FINIT/FENI/FDISI
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		switch (byte2 & 0b11000111)
@@ -11640,8 +11658,8 @@ void Esc_8087_011_100_FINIT()		//FINIT/FENI/FDISI
 
 void Esc_8087_101_111_FSTSW()		//FSTSW
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		Instruction_Pointer += 2;
@@ -11658,7 +11676,7 @@ void Esc_8087_101_111_FSTSW()		//FSTSW
 
 void Esc_8087_101_110_FSAVE()		//FSAVE
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		Instruction_Pointer += 2;
@@ -11675,7 +11693,7 @@ void Esc_8087_101_110_FSAVE()		//FSAVE
 
 void Esc_8087_101_100_FRSTOR()	//FRSTOR
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		Instruction_Pointer += 2;
@@ -11692,16 +11710,16 @@ void Esc_8087_101_100_FRSTOR()	//FRSTOR
 
 void op_code_8087_unknown()
 {
-	byte2 = memory_2[(Instruction_Pointer + 1 + *CS * 16) & 0xFFFFF]; //mod / reg / rm
+	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	if ((byte2 >> 6) == 3)
 	{
 		Instruction_Pointer += 2;
-		if (log_to_console_8087) cout << "Unknown 8087 operation IP = " << Instruction_Pointer << " OPCODE = " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16) << " + " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16) << endl;
+		if (log_to_console_8087) cout << "Unknown 8087 operation IP = " << Instruction_Pointer << " OPCODE = " << (bitset<8>)memory.read(Instruction_Pointer + *CS * 16) << " + " << (bitset<8>)memory.read(Instruction_Pointer + *CS * 16) << endl;
 	}
 	else
 	{
 		mod_RM_3(byte2);
-		if (log_to_console_8087) cout << "Unknown 8087 operation IP = " << Instruction_Pointer << " OPCODE = " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16) << " + " << (bitset<8>)memory.read_2(Instruction_Pointer + *CS * 16) << endl;
+		if (log_to_console_8087) cout << "Unknown 8087 operation IP = " << Instruction_Pointer << " OPCODE = " << (bitset<8>)memory.read(Instruction_Pointer + *CS * 16) << " + " << (bitset<8>)memory.read(Instruction_Pointer + *CS * 16) << endl;
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }

@@ -68,10 +68,12 @@ bool exeption_1 = 0;	//Trap
 
 Mem_Ctrl memory; //создаем контроллер памяти
 
-uint8 memory_2[1024 * 1024 + 1024 * 1024]; //память 2.0
+uint8 memory_array[1024 * 1024]; //оперативная память
 
 //создаем монитор
 Monitor monitor;
+
+//std::thread t(Monitor other_monitor);
 
 //экран для дебага (width, height, name, x_pos, y_pos)
 Dev_mon_device debug_monitor(870, 1240, "Debug Window", 1196, 0);
@@ -229,12 +231,14 @@ void (*backup_table[256])() = { 0 };
 void (*op_code_table_8087[64])() = { 0 };
 
 bool debug_key_1 = false;
-vector <uint16> command_history = { 0 };
-vector <uint16> command_history_1 = { 0 };
-vector <uint16> command_history_2 = { 0 };
 
 //кол-во циклов для замедления
 int empty_cycles = 0;
+
+//отдельный таймер для синхронизации реального времени
+std::chrono::high_resolution_clock Hi_Res_Clk;
+auto Hi_Res_t_start = Hi_Res_Clk.now();
+auto Hi_Res_t_end = Hi_Res_Clk.now();
 
 //предотвращение дребезга клавиш управления
 bool keys_up = true;
@@ -248,7 +252,7 @@ int main(int argc, char* argv[]) {
 	*ES = 0x40;
 
 	setlocale(LC_ALL, "Russian");
-
+	
 	//заполняем таблицу функций
 	opcode_table_init();
 	opcode_8087_table_init(); //8087
@@ -261,7 +265,6 @@ int main(int argc, char* argv[]) {
 	auto timer_end = steady_clock::now();
 	uint32 timer_video = 0;
 	uint32 timer_kb = 0;
-	uint32 timer_speaker = 0;
 
 	//настройка генератора RND для отладки
 	std::random_device rd; // Источник энтропии
@@ -284,6 +287,8 @@ int main(int argc, char* argv[]) {
 		service_counter++;		//счетчик для вызова служебных процедур
 		bp_mgr.check_points();	//проверка точек останова и печать комментариев к точкам
 
+		//if (memory.read(Instruction_Pointer) == 0x8c && memory.read(Instruction_Pointer + 1) == 0xd8 && memory.read(Instruction_Pointer + 2) == 0x5 && memory.read(Instruction_Pointer + 3) == 0x0 && memory.read(Instruction_Pointer + 4) == 0x10) step_mode = 1;
+
 		//переход в пошаговый режим при CX=0
 		if ((CX == 0) && run_until_CX0)
 		{
@@ -297,19 +302,18 @@ int main(int argc, char* argv[]) {
 		{
 			timer_end = steady_clock::now(); //останавливаем таймер
 			uint32 duration = duration_cast<microseconds>(timer_end - timer_start).count();
-			timer_video += duration;	//миллисекунды
-			timer_kb += duration;		//миллисекунды
-			timer_speaker += duration;
+			timer_video += duration;	//микросекунды
+			timer_kb += duration;		//микросекунды
 
 			//отрисовка экрана монитора
-			if (timer_video > 16700) //16700
+			if (timer_video > 30000) //16667
 			{
-				monitor.sync(timer_video); //синхроимпульс для монитора
-				debug_monitor.sync(timer_video); //синхроимпульс для монитора отладки
-				FDD_monitor.sync();				//синхроимпульс для монитора FDD
-				HDD_monitor.sync();				//синхроимпульс для монитора HDD
-				Audio_monitor.sync();			//мониторинг звука
-				Mem_monitor.sync();				//мониторинг памяти
+				monitor.update(timer_video);//синхроимпульс для монитора
+				debug_monitor.update(timer_video, op_counter);  //синхроимпульс для монитора отладки
+				FDD_monitor.update(0);				//синхроимпульс для монитора FDD
+				HDD_monitor.update(0);				//синхроимпульс для монитора HDD
+				Audio_monitor.update(0);			//мониторинг звука
+				Mem_monitor.update(0);				//мониторинг памяти
 				timer_video = 0;
 				op_counter = 0;
 			}
@@ -317,7 +321,7 @@ int main(int argc, char* argv[]) {
 			//опрос клавиатуры
 			if (timer_kb > 8350)
 			{
-				keyboard.poll_keys(timer_kb, monitor.has_focus());    //синхронизация клавиатуры (проверка нажатий)
+				keyboard.update(timer_kb, monitor.has_focus());    //синхронизация клавиатуры (проверка нажатий)
 				HDD.sync_data(timer_kb);		//синхронизация буфера HDD
 				joystick.sync(timer_kb);
 				timer_kb = 0;
@@ -335,6 +339,7 @@ int main(int argc, char* argv[]) {
 				process_debug_keys();	//обработка нажатий кнопок
 				
 				//процедура сравнения загруженных данных (удалить)
+				/*
 				if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F6) && keys_up && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
 				{
 					for (int a = 0; a < 0x10; a++)
@@ -343,12 +348,12 @@ int main(int argc, char* argv[]) {
 						uint16 err = 0;
 						for (int b = 0; b < 0x200; b++)
 						{
-							if (memory_2[0x600 + a * 512 + b] != FDD_A.sector_data[0x1600 + a * 512 + b]) err++;
+							if (memory.read(0x600 + a * 512 + b) != FDD_A.sector_data[0x1600 + a * 512 + b]) err++;
 						}
 						cout << " errors " << (int)err << endl;
 					}
 					std::this_thread::sleep_for(std::chrono::milliseconds(500));
-				}
+				}*/
 
 				if (!step_mode) {
 					go_forward = true;
@@ -356,33 +361,25 @@ int main(int argc, char* argv[]) {
 				}
 				else
 				{
-					monitor.sync(0);		//синхроимпульс для монитора
-					debug_monitor.sync(0);	//окно отладки
-					FDD_monitor.sync();
-					HDD_monitor.sync();
-					Audio_monitor.sync();			//мониторинг звука
-					Mem_monitor.sync();				//мониторинг памяти
+					monitor.update(0);				//синхроимпульс для монитора
+					debug_monitor.update(0,0);		//окно отладки
+					FDD_monitor.update(0);			//логи FDD
+					HDD_monitor.update(0);			//логи HDD
+					Audio_monitor.update(0);		//мониторинг звука
+					Mem_monitor.update(0);			//мониторинг памяти
 				}
 			};
 			
 			timer_start = steady_clock::now();//перезапускаем таймер
 		}
-		else
-		{
-			uint16 s = 0;
-			for (int r = 0; r < empty_cycles; r++) s = s + r; //замедление
-		}
 
 		pc_timer.sync();	//синхронизация таймера
-		//pc_timer.sync();
-		//pc_timer.sync();
-
-		//if (!(service_counter & 3)) FDD_A.sync();
+		pc_timer.sync();
+		pc_timer.sync();
 		FDD_A.sync();
 		HDD.sync();
 		dma_ctrl.sync();	//синхронизация DMA
 		keyboard.sync(); 	//синхронизация клавиатуры
-
 
 		//замедление работы в пошаговом режиме
 		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(30));
@@ -399,25 +396,25 @@ int main(int argc, char* argv[]) {
 				//выполняем аппаратное прерывание, меняя IP
 				//step_mode = true; log_to_console = true;
 				Stack_Pointer--;
-				memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+				memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 				Stack_Pointer--;
-				memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+				memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 				//помещаем в стек сегмент
 				Stack_Pointer--;
-				memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+				memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 				Stack_Pointer--;
-				memory.write_2(Stack_Pointer + SS_data * 16, *CS & 255);
+				memory.write(Stack_Pointer + SS_data * 16, *CS & 255);
 
 				//помещаем в стек IP
 				Stack_Pointer--;
-				memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+				memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 				Stack_Pointer--;
-				memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+				memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
 				
 				//определяем новый IP и CS
-				Instruction_Pointer = memory.read_2((hardware_int + 8) * 4) + memory.read_2((hardware_int + 8) * 4 + 1) * 256;
-				*CS = memory.read_2((hardware_int + 8) * 4 + 2) + memory.read_2((hardware_int + 8) * 4 + 3) * 256;
+				Instruction_Pointer = memory.read((hardware_int + 8) * 4) + memory.read((hardware_int + 8) * 4 + 1) * 256;
+				*CS = memory.read((hardware_int + 8) * 4 + 2) + memory.read((hardware_int + 8) * 4 + 3) * 256;
 
 				Flag_IF = false;//запрет внешних прерываний
 				Flag_TF = false;
@@ -440,16 +437,16 @@ int main(int argc, char* argv[]) {
 			cout << hex;
 			//cout << int_to_hex(memory.read_2(0x441, 0), 2) << "  " << int_to_hex(memory.read_2(0x442, 0), 2) << " ";
 			cout << std::setw(4) << *CS << ":" << std::setfill('0') << std::setw(4) << Instruction_Pointer << "  " <<
-				std::setfill('0') << std::setw(2) << (int)memory_2[Instruction_Pointer + *CS * 16] << "  " <<
-				std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 1) + *CS * 16] << "  " <<
-				std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 2) + *CS * 16] << "  " <<
-				std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 3) + *CS * 16] << "  " <<
-				std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 4) + *CS * 16] << "  " <<
-				std::setfill('0') << std::setw(2) << (int)memory_2[(Instruction_Pointer + 5) + *CS * 16] << "\t";
+				std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + *CS * 16) << "  " <<
+				std::setfill('0') << std::setw(2) << (int)memory.read((Instruction_Pointer + 1) + *CS * 16) << "  " <<
+				std::setfill('0') << std::setw(2) << (int)memory.read((Instruction_Pointer + 2) + *CS * 16) << "  " <<
+				std::setfill('0') << std::setw(2) << (int)memory.read((Instruction_Pointer + 3) + *CS * 16) << "  " <<
+				std::setfill('0') << std::setw(2) << (int)memory.read((Instruction_Pointer + 4) + *CS * 16) << "  " <<
+				std::setfill('0') << std::setw(2) << (int)memory.read((Instruction_Pointer + 5) + *CS * 16) << "\t";
 		}
 #endif
 		//исполнение команды
-		op_code_table[memory_2[Instruction_Pointer + *CS * 16]]();
+		op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 
 		if (keep_segment_override) { 
 			keep_segment_override = false; 
@@ -486,8 +483,8 @@ int main(int argc, char* argv[]) {
 		{
 			//помещаем в стек IP и переходим по адресу прерывания
 			//новые адреса
-			uint16 new_IP = memory.read_2(0) + memory.read_2(1) * 256;
-			uint16 new_CS = memory.read_2(2) + memory.read_2(3) * 256;
+			uint16 new_IP = memory.read(0) + memory.read(1) * 256;
+			uint16 new_CS = memory.read(2) + memory.read(3) * 256;
 
 			if (log_to_console)
 			{
@@ -498,21 +495,21 @@ int main(int argc, char* argv[]) {
 
 			//помещаем в стек флаги
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+			memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+			memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 			//помещаем в стек сегмент
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+			memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+			memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 
 			//помещаем в стек IP
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+			memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+			memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
 
 			//передаем управление
 			Flag_IF = false;//запрет внешних прерываний
@@ -525,8 +522,8 @@ int main(int argc, char* argv[]) {
 		{
 			//помещаем в стек IP и переходим по адресу прерывания
 			//новые адреса
-			uint16 new_IP = memory.read_2(4) + memory.read_2(4 + 1) * 256;
-			uint16 new_CS = memory.read_2(4 + 2) + memory.read_2(4 + 3) * 256;
+			uint16 new_IP = memory.read(4) + memory.read(4 + 1) * 256;
+			uint16 new_CS = memory.read(4 + 2) + memory.read(4 + 3) * 256;
 
 			if (log_to_console)
 			{
@@ -537,21 +534,21 @@ int main(int argc, char* argv[]) {
 
 			//помещаем в стек флаги
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+			memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+			memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 			//помещаем в стек сегмент
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+			memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+			memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 
 			//помещаем в стек IP
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+			memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 			Stack_Pointer--;
-			memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+			memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
 
 			//передаем управление
 			Flag_IF = false;//запрет внешних прерываний
@@ -576,22 +573,23 @@ halt_jump:
 
 		continue;
 	}
-	monitor.sync(1);
+	monitor.update(1);
 	cout << "Program ended. Press SPACE" << endl;
 	while (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space)) std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	return 0;
 }
 
 //контроллер памяти
-void Mem_Ctrl::write_2(uint32 address, uint8 data) //запись значений в ячейки
+void Mem_Ctrl::write(uint32 address, uint8 data) //запись значений в ячейки
 {
 	//if ((address & 0xF0000) == 0xF0000) return; //проверка на попадание в диапазон ПЗУ
-	memory_2[address & 0xFFFFF] = data;
+	memory_array[address & 0xFFFFF] = data;
+	//if (address == 0xb8007 && data == 7) step_mode = 1;
 	return;
 }
-uint8 Mem_Ctrl::read_2(uint32 address) //чтение данных из памяти
+uint8 Mem_Ctrl::read(uint32 address) //чтение данных из памяти
 {
-	return memory_2[address & 0xFFFFF];
+	return memory_array[address & 0xFFFFF];
 }
 
 //контроллер ввода-вывода
@@ -950,20 +948,29 @@ void IC8253::sync()
 	if (counters[2].signal_high) speaker.put_sample(1);
 	else speaker.put_sample(-1);
 
-	//отдельный таймер для синхронизации реального времени
+	static int delay = 800; //838 в идеале
+	
 	counters[3].count--;
 	if (counters[3].count == 0)
 	{
 		//синхронизируем скорость
-		timer_end = chrono::steady_clock::now(); //считываем время
-		duration = chrono::duration_cast<chrono::microseconds>(timer_end - timer_start).count();
-		timer_start = chrono::steady_clock::now(); //засекаем заново
-		if (duration > 65000) empty_cycles -= 50;
-		if (duration > 56000) empty_cycles -= 5;
-		if (duration < 44000) empty_cycles += 50;
-		if (duration < 55000) empty_cycles += 5;
-		//cout << (int)empty_cycles << "  ";
+		timer_end = Hi_Res_Clk.now(); //считываем время
+		int duration = chrono::duration_cast<chrono::microseconds>(timer_end - timer_start).count();
+		cycle_duration = delay;
+		if (duration > 54933) delay--;
+		if (duration < 54933) delay++;
+		timer_start = Hi_Res_Clk.now(); //засекаем заново
 	}
+
+loop:
+	Hi_Res_t_end = Hi_Res_Clk.now();
+	int duration = std::chrono::duration_cast<std::chrono::nanoseconds>(Hi_Res_t_end - Hi_Res_t_start).count();
+	if (duration < delay)
+	{
+		_mm_pause();
+		goto loop;  //830
+	}
+	Hi_Res_t_start = Hi_Res_Clk.now(); //перезапуск таймера
 }
 void IC8253::write_port(uint16 port, uint8 data)
 {
@@ -1480,9 +1487,9 @@ void IC8237::sync()
 
 					//берем данные из буфера IO
 					//канал 0 только для чтения
-					if (i == 1) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, mem_buffer); //буфер для M-to-M
-					if (i == 2) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.read_DMA_data()); //буфер FDD
-					if (i == 3) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, HDD.read_DMA_data()); //буфер HDD
+					if (i == 1) memory.write(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, mem_buffer); //буфер для M-to-M
+					if (i == 2) memory.write(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.read_DMA_data()); //буфер FDD
+					if (i == 3) memory.write(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, HDD.read_DMA_data()); //буфер HDD
 
 					if (cha_attribute[i].adress_decrement)	--cha_attribute[i].curr_address;
 					else ++cha_attribute[i].curr_address;
@@ -1502,10 +1509,10 @@ void IC8237::sync()
 
 					//берем данные из оперативной памяти
 					//cout << " - here - i = " << (int)i << endl;
-					if (i == 0) mem_buffer = memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256); //буфер для M-to-M
+					if (i == 0) mem_buffer = memory.read(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256); //буфер для M-to-M
 					//канал 1 только для записи
-					if (i == 2) FDD_A.write_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
-					if (i == 3) HDD.write_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер HDD
+					if (i == 2) FDD_A.write_DMA_data(memory.read(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
+					if (i == 3) HDD.write_DMA_data(memory.read(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер HDD
 
 					if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
 					else ++cha_attribute[i].curr_address;
@@ -1573,9 +1580,9 @@ void IC8237::sync()
 
 						//берем данные из буфера IO
 						//канал 0 только для чтения
-						if (i == 1) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, mem_buffer); //буфер для M-to-M
-						if (i == 2) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.read_DMA_data()); //буфер FDD
-						if (i == 3) memory.write_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, HDD.read_DMA_data()); //буфер HDD
+						if (i == 1) memory.write(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, mem_buffer); //буфер для M-to-M
+						if (i == 2) memory.write(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, FDD_A.read_DMA_data()); //буфер FDD
+						if (i == 3) memory.write(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256, HDD.read_DMA_data()); //буфер HDD
 
 						if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
 						else ++cha_attribute[i].curr_address;
@@ -1590,10 +1597,10 @@ void IC8237::sync()
 					{
 						//берем данные из буфера IO
 						
-						if (i == 0) mem_buffer = memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256); //буфер для M-to-M
+						if (i == 0) mem_buffer = memory.read(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256); //буфер для M-to-M
 						//канал 1 только для записи
-						if (i == 2) FDD_A.write_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
-						if (i == 3) HDD.write_DMA_data(memory.read_2(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер HDD
+						if (i == 2) FDD_A.write_DMA_data(memory.read(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер FDD
+						if (i == 3) HDD.write_DMA_data(memory.read(cha_attribute[i].curr_address + cha_attribute[i].page * 256 * 256)); //буфер HDD
 
 						if (cha_attribute[i].adress_decrement) --cha_attribute[i].curr_address;
 						else ++cha_attribute[i].curr_address;

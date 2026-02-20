@@ -315,7 +315,7 @@ uint8 process(string json_str)
 	if (test_log) cout << "Load RAM" << endl;
 	for (auto e : jsonData["initial"]["ram"])
 	{
-		memory.write_2((int)e[0], (int)e[1]);
+		memory.write((int)e[0], (int)e[1]);
 		if (test_log) cout << hex << setw(5) << (int)e[0] << " " << setw(2) << (int)e[1] << endl;
 	}
 	
@@ -362,15 +362,15 @@ test_rep:
 	{
 		cout << "Run..." << hex << endl;
 		cout << *CS << ":" << std::setfill('0') << std::setw(4) << Instruction_Pointer << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(Instruction_Pointer + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(uint16(Instruction_Pointer + 1) + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(uint16(Instruction_Pointer + 2) + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(uint16(Instruction_Pointer + 3) + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(uint16(Instruction_Pointer + 4) + *CS * 16) << "  " <<
-			std::setfill('0') << std::setw(2) << (int)memory.read_2(uint16(Instruction_Pointer + 5) + *CS * 16) << "\t";
+			std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(uint16(Instruction_Pointer + 1) + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(uint16(Instruction_Pointer + 2) + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(uint16(Instruction_Pointer + 3) + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(uint16(Instruction_Pointer + 4) + *CS * 16) << "  " <<
+			std::setfill('0') << std::setw(2) << (int)memory.read(uint16(Instruction_Pointer + 5) + *CS * 16) << "\t";
 	}
 	
-	op_code_table[memory.read_2(Instruction_Pointer + *CS * 16)]();
+	op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 	
 	//еще один круг
 	if (negate_IDIV)
@@ -379,15 +379,15 @@ test_rep:
 	}
 	//обрабока исключений
 
-	monitor.sync(1);
+	monitor.update(0);
 	if (test_log) cout << "\t ZF=" << Flag_ZF << " CF=" << Flag_CF << " AF=" << Flag_AF << " SF=" << Flag_SF << " PF=" << Flag_PF << " OF=" << Flag_OF << " IF=" << Flag_IF << endl;
 	
 	if (exeption_0)
 	{
 		//помещаем в стек IP и переходим по адресу прерывания
 		//новые адреса
-		uint16 new_IP = memory.read_2(0) + memory.read_2(1) * 256;
-		uint16 new_CS = memory.read_2(2) + memory.read_2(3) * 256;
+		uint16 new_IP = memory.read(0) + memory.read(1) * 256;
+		uint16 new_CS = memory.read(2) + memory.read(3) * 256;
 
 		if (log_to_console)
 		{
@@ -398,21 +398,21 @@ test_rep:
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+		memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+		memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 		//помещаем в стек сегмент
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 
 		//помещаем в стек IP
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
 
 		//передаем управление
 		Flag_IF = false;//запрет внешних прерываний
@@ -425,8 +425,8 @@ test_rep:
 	{
 		//помещаем в стек IP и переходим по адресу прерывания
 		//новые адреса
-		uint16 new_IP = memory.read_2(4) + memory.read_2(4 + 1) * 256;
-		uint16 new_CS = memory.read_2(4 + 2) + memory.read_2(4 + 3) * 256;
+		uint16 new_IP = memory.read(4) + memory.read(4 + 1) * 256;
+		uint16 new_CS = memory.read(4 + 2) + memory.read(4 + 3) * 256;
 
 		if (log_to_console)
 		{
@@ -437,21 +437,21 @@ test_rep:
 
 		//помещаем в стек флаги
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
+		memory.write(Stack_Pointer + SS_data * 16, 0xF0 | (Flag_OF * 8) | (Flag_DF * 4) | (Flag_IF * 2) | Flag_TF);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
+		memory.write(Stack_Pointer + SS_data * 16, 0x2 | (Flag_SF * 128) | (Flag_ZF * 64) | (Flag_AF * 16) | (Flag_PF * 4) | (Flag_CF));
 
 		//помещаем в стек сегмент
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, *CS >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, *CS >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (*CS) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (*CS) & 255);
 
 		//помещаем в стек IP
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) >> 8);
 		Stack_Pointer--;
-		memory.write_2(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
+		memory.write(Stack_Pointer + SS_data * 16, (Instruction_Pointer) & 255);
 
 		//передаем управление
 		Flag_IF = false;//запрет внешних прерываний
@@ -768,7 +768,7 @@ test_rep:
 	if (test_log) cout << "Checking RAM" << endl;
 	for (auto e : jsonData["final"]["ram"])
 	{
-		uint8 fact_ram = memory.read_2((int)e[0]);
+		uint8 fact_ram = memory.read((int)e[0]);
 		if (test_log) cout << hex << setw(5) << (int)e[0] << " " << setw(2) << (int)fact_ram << " supposed " << setw(2) << (int)e[1];
 		if (fact_ram == (int)e[1])
 		{
