@@ -70,6 +70,10 @@ private:
 
 	bool sectors_changed = 0; //флаг внесения измений в сектора
 
+	uint8 rom[4 * 1024] = { 0 }; //ПЗУ накопителя
+
+	bool flush_active = 0; //флаг сброса на диск
+
 public:
 
 	HDD_Ctrl();
@@ -93,4 +97,6 @@ public:
 	int get_drv();//получить номер текущего диска
 	std::string get_CSH(); //получить CSH
 	std::string get_state();//получить статус
+	void flash_rom(uint32 address, uint8 data);
+	uint8 read_rom(uint32 address);
 };

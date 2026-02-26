@@ -50,6 +50,7 @@ HDD_Ctrl::HDD_Ctrl()
 
 HDD_Ctrl::~HDD_Ctrl()
 {
+	while (flush_active); //ждем если активен сброс на диск
 	flush_buffer();
 	free(sector_data);
 }
@@ -79,6 +80,7 @@ void HDD_Ctrl::flush_buffer()
 	}
 	//file_HDD.flush();
 	file_HDD.close();
+	flush_active = 0;//снимаем флаг
 	//if (log_to_console_FDD) FDD_monitor.log("Buffer flushed to Disk#" + to_string(selected_drive + 1) + "(" + filename_FDD.at(selected_drive) + ")");
 }
 
@@ -198,7 +200,7 @@ void HDD_Ctrl::write_port(uint16 port, uint8 data)
 				HW_Status_REQ = 0;
 				drv_state = HDD_states::command_exec;
 				command = in_buffer.at(0);
-				if (log_to_console_HDD) HDD_monitor.log("HDD Ctrl -> EXE CMD #" + to_string(command) + " DRV #" + to_string((in_buffer.at(1) >> 5) & 1) + out_str);
+				//if (log_to_console_HDD) HDD_monitor.log("HDD Ctrl -> EXE CMD #" + to_string(command) + " DRV #" + to_string((in_buffer.at(1) >> 5) & 1) + out_str);
 				out_str = " params: ";
 				out_buffer.clear(); //очищаем выходной буфер
 			}
@@ -230,7 +232,7 @@ void HDD_Ctrl::write_port(uint16 port, uint8 data)
 
 				out_buffer.push_back(0); //код ошибки
 				drv_state = HDD_states::read_result; //ожидаем чтения статуса от хоста
-				if (log_to_console_HDD) HDD_monitor.log("HDD Ctrl -> Drive Params refreshed ");
+				//if (log_to_console_HDD) HDD_monitor.log("HDD Ctrl -> Drive Params refreshed ");
 			}
 			return;
 
@@ -288,7 +290,7 @@ void HDD_Ctrl::write_port(uint16 port, uint8 data)
 	{
 		if (!Ctrl_active) return; ////выход, если не было SELECT
 		//Write pattern to DMA and interrupt mask register
-		if (log_to_console_HDD) HDD_monitor.log("HDD Ctrl -> DMA/INT pattern -> IRQ_EN = " + to_string((data >> 1) & 1) + " DMA_EN = " + to_string(data & 1));
+		//if (log_to_console_HDD) HDD_monitor.log("HDD Ctrl -> DMA/INT pattern -> IRQ_EN = " + to_string((data >> 1) & 1) + " DMA_EN = " + to_string(data & 1));
 		//cout << ("HDD Ctrl -> DMA/INT pattern -> IRQ_EN = " + to_string((data >> 1) & 1) + " DMA_EN = " + to_string(data & 1)) << endl;
 		IRQ_EN = (data >> 1) & 1;
 		DMA_EN = data & 1;
@@ -362,11 +364,13 @@ void HDD_Ctrl::sync_data(int elapsed_ms)
 	static uint32 flush_timer = 0;   //таймер сброса на диск
 	if (sectors_changed) flush_timer += elapsed_ms;
 
-	if (flush_timer > 10000000)  //засекаем 10 сек
+	if (flush_timer > 2000000 && !flush_active)  //засекаем 2 сек
 	{
 		//сбрасываем данные на диск
+		flush_active = 1;
 		cout << "flush sectors to HDD" << endl;
-		flush_buffer();
+		std::thread t(&HDD_Ctrl::flush_buffer, this);
+		t.detach();
 		sectors_changed = 0; //сброс флага
 		flush_timer = 0;     //сброс таймера
 	}
@@ -462,7 +466,7 @@ void HDD_Ctrl::sync()
 			command_name = "WRITE LONG drv# " + to_string(selected_drive);
 			break;
 		}
-		if (log_to_console_HDD) HDD_monitor.log("EXEcuting command " + to_string(command) + " " + command_name);
+		//if (log_to_console_HDD) HDD_monitor.log("EXEcuting command " + to_string(command) + " " + command_name);
 
 		//TEST DRIVE READY
 		if (command == 0)
@@ -594,7 +598,7 @@ void HDD_Ctrl::sync()
 			buffer_pointer = 0; //внутренний буфер данных
 			in_buffer.clear();	//очищаем входной буффер
 			drv_state = HDD_states::read_sectors; //выполняем команду
-			if (log_to_console_HDD) HDD_monitor.log("READ DRV=" + to_string(selected_drive) + " head=" + to_string(head) + " cyl=" + to_string(cylinder) + " sector = " + to_string(sector) + " prt=" + to_string(data_ptr_current) + " buffer=" + to_string(data_left) + " bytes");
+			//if (log_to_console_HDD) HDD_monitor.log("READ DRV=" + to_string(selected_drive) + " head=" + to_string(head) + " cyl=" + to_string(cylinder) + " sector = " + to_string(sector) + " prt=" + to_string(data_ptr_current) + " buffer=" + to_string(data_left) + " bytes");
 			return;
 		}	
 			
@@ -627,7 +631,7 @@ void HDD_Ctrl::sync()
 			//cout << "data_ptr_current = " << dec << (int)data_ptr_current << endl;
 			//cout << "data_ptr_MAX = " << dec << (int)data_ptr_MAX << endl;
 			write_illegal_sector = 0; //сброс флага
-			if (log_to_console_HDD) HDD_monitor.log("WRITE DRV=" + to_string(selected_drive) + " head=" + to_string(head) + " cyl=" + to_string(cylinder) + " sector = " + to_string(sector) + " prt=" + to_string(data_ptr_current) + " buffer=" + to_string(data_left) + " bytes");
+			//if (log_to_console_HDD) HDD_monitor.log("WRITE DRV=" + to_string(selected_drive) + " head=" + to_string(head) + " cyl=" + to_string(cylinder) + " sector = " + to_string(sector) + " prt=" + to_string(data_ptr_current) + " buffer=" + to_string(data_left) + " bytes");
 			//cout << "WRITE HDD C/H/S = " << (int)cylinder << "/" << (int)head << "/" << (int)sector << " QTY = " << (int)(data_left / 512) << " ptr_begin = " << (int)data_ptr_current << endl;
 			//step_mode = 1;
 			return;
@@ -651,7 +655,7 @@ void HDD_Ctrl::sync()
 			out_buffer.clear();	//очищаем выходной буффер
 			out_buffer.push_back(selected_drive << 5); //статус для выбранного диска
 			drv_state = HDD_states::read_result; //чтение результатов
-			if (log_to_console_HDD) HDD_monitor.log("SEEK DRV=" + to_string(selected_drive) + " head=" + to_string(head) + " cyl=" + to_string(cylinder) + " sector = " + to_string(sector));
+			//if (log_to_console_HDD) HDD_monitor.log("SEEK DRV=" + to_string(selected_drive) + " head=" + to_string(head) + " cyl=" + to_string(cylinder) + " sector = " + to_string(sector));
 			return;
 		}
 
@@ -674,7 +678,7 @@ void HDD_Ctrl::sync()
 		//WRITE SECTOR BUFFER
 		if (command == 0xF)
 		{
-			if (log_to_console_HDD)  HDD_monitor.log("HDD - > Write buffer");
+			//if (log_to_console_HDD)  HDD_monitor.log("HDD - > Write buffer");
 			//step_mode = 1;
 			//выставляем биты статуса
 			HW_Status_IRQ = 0;		//IR request,	1 - контроллер ждет прерывания
@@ -915,4 +919,12 @@ string HDD_Ctrl::get_state()
 
 	}
 	return "unknown";
+}
+void HDD_Ctrl::flash_rom(uint32 address, uint8 data)
+{
+	rom[address] = data;
+}
+uint8 HDD_Ctrl::read_rom(uint32 address)
+{
+	return rom[address];
 }

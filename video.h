@@ -13,6 +13,67 @@ typedef unsigned __int32 uint32;
 //видеокарты
 enum class videocard_type { MDA, CGA, EGA, VGA };
 
+//MDA videocard
+class MDA_videocard
+{
+private:
+	sf::RenderWindow main_window;
+	bool visible = 0;		//наличие окна
+	uint16 my_display_H;
+	uint16 my_display_W;
+	uint16 GAME_WINDOW_X_RES;
+	uint16 GAME_WINDOW_Y_RES;
+	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
+	uint8 joy_sence_value = 0; //центральная точка джойстика
+	sf::Clock cursor_clock;				//таймер мигания курсора
+	bool cursor_flipflop = false;		//переменная для мигания
+	uint8 sel_reg = 0; //выбранный регистр для записи
+	uint8 registers[18] = { 0 }; // массив регистров
+	uint8 MDA_Mode_Select_Register = 0;
+	std::string window_title;		//заголовок окна
+	int window_pos_x;				//позиция окна
+	int window_pos_y;				//позиция окна
+	int window_size_x;				//размер окна
+	int window_size_y;				//размер окна
+	std::thread t;					//указатель на поток
+
+	//константы
+	sf::Color fg_color = sf::Color::Green;
+	sf::Color fg_color_bright = sf::Color::Yellow;
+	sf::Color fg_color_inverse = sf::Color::Black;
+	sf::Color bg_color = sf::Color::Black;
+	sf::Color bg_color_inverse = sf::Color::Green;
+	
+	bool do_render = 0;
+	int elapsed_ms = 0;				//период времени
+	//масштаб
+	float display_scale = 5;
+	bool do_resize = 0;
+
+	uint8 videomemory[4 * 1024];	//видеопамять
+
+public:
+	
+	MDA_videocard();
+	sf::Font font;
+	std::string debug_mess_1;
+	void write_port(uint16 port, uint8 data);	//запись в порт адаптера
+	uint8 read_port(uint16 port);				//чтение из порта адаптера
+	std::string get_mode_name();				//получить название режима для отладки
+	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
+	bool has_focus();							//проверить наличие фокуса
+	void main_loop();							//синхронизация
+	void render();
+	void show();								//создать окно
+	void hide();								//убрать окно
+	void update(int new_elapsed_ms);				//синхронизация
+	bool is_visible();							//проверка наличия окна
+	void scale_up();
+	void scale_down();
+	void mem_write(uint32 address, uint8 data); //запись в видеопамять
+	uint8 mem_read(uint32 address);				//чтение из видеопамяти
+};
+
 //CGA videocard
 class CGA_videocard
 {
@@ -77,6 +138,8 @@ private:
 	float display_scale = 5;
 	bool do_resize = 0;
 
+	uint8 videomemory[16 * 1024];	//видеопамять
+
 public:
 	sf::Font font;
 	//void select_register(uint8 data);	//команда контроллеру
@@ -108,7 +171,143 @@ public:
 	bool is_visible();							//проверка наличия окна
 	void scale_up();
 	void scale_down();
+	void mem_write(uint32 address, uint8 data); //запись в видеопамять
+	uint8 mem_read(uint32 address);				//чтение из видеопамяти
 };
+
+//EGA videocard
+class EGA_videocard
+{
+private:
+	sf::RenderWindow main_window;
+	bool visible = 0;		//наличие окна
+	int my_display_H;
+	int my_display_W;
+	uint16 GAME_WINDOW_X_RES;
+	uint16 GAME_WINDOW_Y_RES;
+	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
+	uint8 joy_sence_value = 0; //центральная точка джойстика
+	sf::Clock cursor_clock;				//таймер мигания курсора
+	bool cursor_flipflop = false;		//переменная для мигания
+
+	std::string window_title;		//заголовок окна
+	int window_pos_x;				//позиция окна
+	int window_pos_y;				//позиция окна
+	int window_size_x;				//размер окна
+	int window_size_y;				//размер окна
+
+	//регистры
+	uint8 MOR = 0;					//Miscelaneous Output Register
+	bool IOAddrSel = 0;
+	bool EnRAM = 0;
+	bool PageBit = 0;
+	bool DisplayEN = 0;
+	bool Lines_350 = 0;				//кол-во горизонтальных линий
+	bool ac_flipflop = 0;			//Attribute	Controller flip_flop 0 - address, 1 - value
+	uint8 On_board_switch_sel = 0;	//выбор считываемого переключателя на плате
+	bool High_pix_clock = 0;		//повышенная частота (720 пикселей)
+	bool use_2_char_gen = 0;		//использовать две таблицы знакогенератора
+
+	uint8 CRT_sel_reg = 0;			 //селектор для CRT Controller Registers
+	uint8 SEQ_sel_reg = 0;			 //выбранный регистр для записи
+	uint8 GC_sel_reg = 0;			 //селектор для Graphics Controller Registers
+	uint8 GP1_reg = 0;				 //Graphics 1 Position Register
+	uint8 GP2_reg = 0;				 //Graphics 2 Position Register
+	uint8 AC_sel_reg = 0;			 //селектор для Attribute Controller Registers
+
+	uint8 seq_registers[32] = { 0 }; // массив регистров
+	uint8 crt_registers[32] = { 0 }; // CRT Controller Registers
+	uint8 gc_registers[32] = { 0 };  // Graphics Controller Registers
+	uint8 ac_registers[32] = { 0 };  // Attribute Controller Registers
+	//отрегулировать размерности
+	
+	uint32 video_mem_base = 0;
+		
+	//палитра
+	sf::Color EGA_colors[16];		//массив цветов EGA 
+	sf::Color TXT_colors[16];		//массив цветов для текста
+	sf::Color TXT_BW_colors[16];	//массив ЧБ цветов для текста
+	int elapsed_ms = 0;				//период времени
+	std::thread t;					//указатель на поток
+	bool do_render = 0;
+
+	//масштаб
+	float display_scale = 5;
+	bool do_resize = 0;
+	
+	//память
+	uint8 videomemory[64 * 1024];	//видеопамять
+	uint8 rom[16 * 1024];			//ROM
+	uint8 latch_reg[4] = { 0 };		//регистры защелки
+
+	//контроль видеорежимов
+	enum class video_modes {EGA_01_200, EGA_01_350, EGA_23_200, EGA_23_350, EGA_7_720, EGA_45_320, EGA_6_640, EGA_D_320, EGA_E_200, EGA_F_350, EGA_10_350};
+	video_modes current_mode = video_modes::EGA_01_200; //текущий видеорежим
+
+public:
+
+	EGA_videocard();
+	sf::Font font;
+	std::string debug_mess_1;
+	void write_port(uint16 port, uint8 data);	//запись в порт адаптера
+	uint8 read_port(uint16 port);				//чтение из порта адаптера
+	std::string get_mode_name();				//получить название режима для отладки
+	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
+	void main_loop();
+	bool has_focus();							//проверить наличие фокуса
+	void update(int new_elapsed_ms);				//синхронизация
+	void render();								//рисуем содержимое
+	void show();								//создать окно
+	void hide();								//убрать окно
+	bool is_visible();							//проверка наличия окна
+	void scale_up();
+	void scale_down();
+	void mem_write(uint32 address, uint8 data); //запись в видеопамять
+	uint8 mem_read(uint32 address);				//чтение из видеопамяти
+	void flash_rom(uint32 address, uint8 data); //запись в ПЗУ
+	uint8 read_rom(uint32 address);
+	std::string get_debug_data(uint8 i);
+};
+
+//=================== СТАВИТЬ после определения видеокарт
+
+//монитор, включающий в себя видеокарты
+class Monitor
+{
+private:
+	videocard_type card_type = videocard_type::CGA;  //тип эмулируемой карты
+	CGA_videocard CGA_card;	   //CGA карта
+	MDA_videocard MDA_card;    //MDA карта
+	EGA_videocard EGA_card;    //EGA карта
+
+public:
+	//конструктор
+	Monitor();
+
+	//Шрифт для отладочных сообщений
+	sf::Font font;
+	
+	//установка режима видео
+	void set_card_type(videocard_type new_mode);
+	videocard_type get_card_type();
+
+	//функции для передачи данных далее
+	void write_port(uint16 port, uint8 data);	//запись в порт адаптера
+	uint8 read_port(uint16 port);				//чтение из порта адаптера
+	std::string get_mode_name();				//получить название режима для отладки
+	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
+	bool has_focus();							//проверить наличие фокуса
+	void update(int new_elapsed_ms);				//синхронизация
+	void scale_up();
+	void scale_down();
+	void mem_write(uint32 address, uint8 data);
+	uint8 mem_read(uint32 address);
+	void flash_rom(uint32 address, uint8 data);
+	uint8 read_rom(uint32 address);
+	std::string get_debug_data(uint8 i);
+};
+
+//==================== Вспомогательные мониторы==========
 
 //монитор отладки
 class Dev_mon_device
@@ -182,8 +381,8 @@ public:
 class Mem_mon_device : public Dev_mon_device
 {
 private:
-	uint16 segment = 0;
-	uint16 offset = 0x400;
+	uint16 segment = 0xb8000;;
+	uint16 offset = 0x0000;
 	uint8 cursor = 0;
 
 public:
@@ -195,171 +394,19 @@ public:
 	void update(int new_elapsed_ms);
 };
 
-//MDA videocard
-class MDA_videocard
+//Монитор видеокарты ega	
+class EGA_mon_device : public Dev_mon_device
 {
 private:
-	sf::RenderWindow main_window;
-	bool visible = 0;		//наличие окна
-	uint16 my_display_H;
-	uint16 my_display_W;
-	uint16 GAME_WINDOW_X_RES;
-	uint16 GAME_WINDOW_Y_RES;
-	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
-	uint8 joy_sence_value = 0; //центральная точка джойстика
-	sf::Clock cursor_clock;				//таймер мигания курсора
-	bool cursor_flipflop = false;		//переменная для мигания
-	uint8 sel_reg = 0; //выбранный регистр для записи
-	uint8 registers[18] = { 0 }; // массив регистров
-	uint8 MDA_Mode_Select_Register = 0;
-	std::string window_title;		//заголовок окна
-	int window_pos_x;				//позиция окна
-	int window_pos_y;				//позиция окна
-	int window_size_x;				//размер окна
-	int window_size_y;				//размер окна
-	std::thread t;					//указатель на поток
-
-	//константы
-	sf::Color fg_color = sf::Color::Green;
-	sf::Color fg_color_bright = sf::Color::Yellow;
-	sf::Color fg_color_inverse = sf::Color::Black;
-	sf::Color bg_color = sf::Color::Black;
-	sf::Color bg_color_inverse = sf::Color::Green;
-	
-	bool do_render = 0;
-	int elapsed_ms = 0;				//период времени
-	//масштаб
-	float display_scale = 5;
-	bool do_resize = 0;
 
 public:
-	
-	MDA_videocard();
-	sf::Font font;
-	std::string debug_mess_1;
-	void write_port(uint16 port, uint8 data);	//запись в порт адаптера
-	uint8 read_port(uint16 port);				//чтение из порта адаптера
-	std::string get_mode_name();				//получить название режима для отладки
-	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
-	bool has_focus();							//проверить наличие фокуса
-	void main_loop();							//синхронизация
-	void render();
-	void show();								//создать окно
-	void hide();								//убрать окно
-	void update(int new_elapsed_ms);				//синхронизация
-	bool is_visible();							//проверка наличия окна
-	void scale_up();
-	void scale_down();
-};
-
-//EGA videocard
-class EGA_videocard
-{
-private:
-	sf::RenderWindow main_window;
-	bool visible = 0;		//наличие окна
-	int my_display_H;
-	int my_display_W;
-	uint16 GAME_WINDOW_X_RES;
-	uint16 GAME_WINDOW_Y_RES;
-	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
-	uint8 joy_sence_value = 0; //центральная точка джойстика
-	sf::Clock cursor_clock;				//таймер мигания курсора
-	bool cursor_flipflop = false;		//переменная для мигания
-
-	std::string window_title;		//заголовок окна
-	int window_pos_x;				//позиция окна
-	int window_pos_y;				//позиция окна
-	int window_size_x;				//размер окна
-	int window_size_y;				//размер окна
-
-	//регистры
-	bool IOAddrSel = 0;
-	bool EnRAM = 0;
-	bool PageBit = 0;
-	bool DisplayEN = 0;
-	bool Lines_350 = 0;				//кол-во горизонтальных линий
-	bool ac_flipflop = 0;			//Attribute	Controller flip_flop 0 - address, 1 - value
-	uint8 On_board_switch_sel = 0;	//выбор считываемого переключателя на плате
-	bool use_2_char_gen = 0;		//использовать две таблицы знакогенератора
-
-	uint8 CRT_sel_reg = 0;			 //селектор для CRT Controller Registers
-	uint8 SEQ_sel_reg = 0;			 //выбранный регистр для записи
-	uint8 GC_sel_reg = 0;			 //селектор для Graphics Controller Registers
-	uint8 GP1_reg = 0;				 //Graphics 1 Position Register
-	uint8 GP2_reg = 0;				 //Graphics 2 Position Register
-	uint8 AC_sel_reg = 0;			 //селектор для Attribute Controller Registers
-
-	uint8 seq_registers[32] = { 0 }; // массив регистров
-	uint8 crt_registers[32] = { 0 }; // CRT Controller Registers
-	uint8 gc_registers[32] = { 0 };  // Graphics Controller Registers
-	uint8 ac_registers[32] = { 0 };  // Attribute Controller Registers
-
-	uint32 video_mem_base = 0;
-		
-	//палитра
-	sf::Color EGA_colors[16]; //массив цветов EGA для текста
-	int elapsed_ms = 0;				//период времени
-	std::thread t;					//указатель на поток
-	bool do_render = 0;
-
-	//отладка DELETE
-	uint8 CGA_Mode_Select_Register = 0;
-	uint8 CGA_Color_Select_Register = 0;
-	uint8 EGA_Mode_Select_Register = 0;
-
-	//масштаб
-	float display_scale = 5;
-	bool do_resize = 0;
-
-public:
-
-	EGA_videocard();
-	sf::Font font;
-	std::string debug_mess_1;
-	void write_port(uint16 port, uint8 data);	//запись в порт адаптера
-	uint8 read_port(uint16 port);				//чтение из порта адаптера
-	std::string get_mode_name();				//получить название режима для отладки
-	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
+	using Dev_mon_device::Dev_mon_device;
 	void main_loop();
-	bool has_focus();							//проверить наличие фокуса
-	void update(int new_elapsed_ms);				//синхронизация
-	void render();								//рисуем содержимое
-	void show();								//создать окно
-	void hide();								//убрать окно
-	bool is_visible();							//проверка наличия окна
-	void scale_up();
-	void scale_down();
+	void show();
+	void hide();
+	void render();
+	void update(int new_elapsed_ms);
 };
 
-//=================== СТАВИТЬ после определения видеокарт
 
-//монитор, включающий в себя видеокарты
-class Monitor
-{
-private:
-	videocard_type card_type = videocard_type::CGA;  //тип эмулируемой карты
-	CGA_videocard CGA_card;	   //CGA карта
-	MDA_videocard MDA_card;    //MDA карта
-	EGA_videocard EGA_card;    //EGA карта
 
-public:
-	//конструктор
-	Monitor();
-
-	//Шрифт для отладочных сообщений
-	sf::Font font;
-	
-	//установка режима видео
-	void set_card_type(videocard_type new_mode);
-
-	//функции для передачи данных далее
-	void write_port(uint16 port, uint8 data);	//запись в порт адаптера
-	uint8 read_port(uint16 port);				//чтение из порта адаптера
-	std::string get_mode_name();				//получить название режима для отладки
-	void show_joy_sence(uint8 central_point);	//отобразить информацию джойстика
-	bool has_focus();							//проверить наличие фокуса
-	void update(int new_elapsed_ms);				//синхронизация
-	void scale_up();
-	void scale_down();
-};

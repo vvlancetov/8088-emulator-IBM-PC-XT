@@ -27,8 +27,8 @@ void Breakpointer::load_breakpoints()
 {
 
 	//breakpoints.push_back({ 0xfe231,"POST[455]: KEYBOARD RESET" });
-	breakpoints.push_back({ 0xfe3d4,"POST[727]: KEYBOARD TEST" });
-	breakpoints.push_back({ 0xfe400,"POST[750]: READ KEYBOARD" });
+	//breakpoints.push_back({ 0xfe3d4,"POST[727]: KEYBOARD TEST" });
+	//breakpoints.push_back({ 0xfe400,"POST[750]: READ KEYBOARD" });
 	//breakpoints.push_back({ 0xfec5c,"POST[1048]: BEEP" });
 	//breakpoints.push_back({ 0xfe5c1,"POST[1037]: SETUP PRINTER AND RS232 " });
 	//breakpoints.push_back({ 0xff950,"POST[2047]: EXT ROM FOUND (CALL INIT) " });
@@ -40,6 +40,15 @@ void Breakpointer::load_breakpoints()
 	//breakpoints.push_back({0xc81d5,"HDD boot loader"}); 
 	//breakpoints.push_back({0xc8203,"HDD boot loader"}); 
 	//breakpoints.push_back({0xc820e,"HDD boot loader"});
+	//breakpoints.push_back({ 0xc0003,"EGA ROM boot" });
+	//breakpoints.push_back({ 0xc021d,"EGA CD_presence" });
+	//breakpoints.push_back({ 0xc02c0,"EGA Hor_sync_test" });
+	//breakpoints.push_back({ 0xc06c8,"EGA ERROR BEEP" });
+	//breakpoints.push_back({ 0xc03A0,"EGA POD14_4:" });
+	//breakpoints.push_back({ 0xc03c8,"EGA test vert" });
+	breakpoints.push_back({ 0xc03cc,"EGA POD14_75:" });
+	breakpoints.push_back({ 0x11eb0,"SB_START" });
+
 
 }
 

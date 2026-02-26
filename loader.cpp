@@ -33,14 +33,14 @@ extern sf::Texture CGA_320_texture;
 extern sf::Sprite CGA_320_palette_sprite;
 
 extern Mem_Ctrl memory; //контроллер памяти
-
-extern Monitor monitor;
+extern Monitor monitor;	//монитор
 
 extern Dev_mon_device debug_monitor;
 extern FDD_mon_device FDD_monitor;
 extern HDD_mon_device HDD_monitor;
 extern Audio_mon_device Audio_monitor;
 extern Mem_mon_device Mem_monitor;
+extern EGA_mon_device EGA_monitor;
 
 string filename_ROM;
 string filename_HDD_ROM;
@@ -53,6 +53,7 @@ extern HDD_Ctrl HDD;
 extern SoundMaker speaker;
 
 uint32 ROM_address = 0; //адрес загрузки файла ПЗУ
+uint32 EGA_ROM_address = 0; //адрес загрузки ПЗУ видеокарты
 extern uint16 Instruction_Pointer;
 extern uint16* CS;
 
@@ -233,6 +234,10 @@ void loader(int argc, char* argv[])
 	if (!Mem_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "MEM_MON: error loading font" << endl;
 	else cout << "MEM_MON: font " << path + "CousineR.ttf" << " loaded" << endl;
 
+	if (!EGA_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "EGA_MON: error loading font" << endl;
+	else cout << "EGA_MON: font " << path + "CousineR.ttf" << " loaded" << endl;
+
+
 #endif
 
 	//обрабатываем файл конфигурации
@@ -373,7 +378,7 @@ void loader(int argc, char* argv[])
 						char b;    //buffer
 						while (file_HDD_ROM.read(&b, 1)) {
 							// записываем виртуальный ROM
-							memory.write(0xC8000 + a, b);
+							memory.flash_rom(0xC8000 + a, b);
 							a++;
 							checksum += b;
 						};
@@ -418,6 +423,14 @@ void loader(int argc, char* argv[])
 					//выбираем видео BIOS
 					if (value != "") filename_v_rom = value;
 				}
+
+				if (parameter == "EGA_BIOS_ADDRESS") //адрес ПЗУ EGA карты
+				{
+					//выбираем видео BIOS
+					if (value != "" && stoi(value, 0, 16)) EGA_ROM_address = stoi(value, 0, 16);
+					cout << "EGA ROM address = 0x" << hex << (int)EGA_ROM_address << endl;
+				}
+
 			}
 		}
 		conf_file.close();
@@ -434,7 +447,7 @@ void loader(int argc, char* argv[])
 		char b;    //buffer
 		while (file.read(&b, 1)) {
 			// записываем виртуальный ROM
-			memory.write(ROM_address + a, b);
+			memory.flash_rom(ROM_address + a, b);
 			sum += b;
 			a++;
 		};
@@ -443,21 +456,23 @@ void loader(int argc, char* argv[])
 	}
 
 	//загружаем видео ПЗУ
-	if (filename_v_rom != "")
+	if (filename_v_rom != "" && monitor.get_card_type()==videocard_type::EGA)
 	{
 		fstream file_v_rom(path + filename_v_rom, ios::binary | ios::in);
 		if (!file_v_rom.is_open()) cout << "File " << filename_v_rom << " not found!" << endl;
 		else
 		{
-			int a = 0xC0000; //начальный адрес
+			int a = EGA_ROM_address; //начальный адрес
 			char b;    //buffer
+			uint8 sum = 0;
 			while (file_v_rom.read(&b, 1)) {
 				// записываем виртуальный ROM
-				memory.write(a, b);
+				memory.flash_rom(a, b);
 				a++;
+				sum += b;
 			};
 			file_v_rom.close();
-			cout << "Загружено " << (int)(a) << " байт данных в видео ПЗУ с адреса 0xC0000" << endl;
+			cout << "Загружено " << (int)(a - EGA_ROM_address) << " байт данных в ПЗУ EGA с адреса 0x" << (int)EGA_ROM_address << " checksum = 0x" << hex << (int)sum << endl;
 		}
 	}
 }

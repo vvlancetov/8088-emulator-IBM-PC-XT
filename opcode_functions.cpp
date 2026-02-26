@@ -2278,7 +2278,7 @@ void mov_R_to_RM_16() //Move 16 bit R->R/M
 		// mod 11 получатель - регистр
 		additional_IPs = 0; //обязательно обнулить
 		*ptr_r16[byte2 & 7] = *ptr_r16[(byte2 >> 3) & 7];
-		if (log_to_console) cout << reg16_name[(byte2 >> 3) & 7];
+		if (log_to_console) cout << reg16_name[byte2 & 7];
 	}
 	else
 	{
@@ -5603,7 +5603,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 			Flag_CF = (*ptr_r8[byte2 & 7] >> 7) & 1;
 			*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] << 1) | Flag_CF;
 			Flag_OF = (*ptr_r8[byte2 & 7] >> 7) ^ Flag_CF;
-			if (log_to_console) cout << "ROL " << reg8_name[byte2 & 7];
+			if (log_to_console) cout << "ROL " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") DEBUG Src=" << int_to_hex(Src, 16);
 		}
 		else
 		{
@@ -5624,7 +5624,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 			Flag_CF = *ptr_r8[byte2 & 7] & 1;
 			*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] >> 1) | (Flag_CF * 0x80);
 			Flag_OF = !parity_check[*ptr_r8[byte2 & 7] & 0b11000000];
-			if (log_to_console) cout << "ROR " << reg8_name[byte2 & 7];
+			if (log_to_console) cout << "ROR " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") DEBUG Src=" << int_to_hex(Src, 16);
 		}
 		else
 		{
@@ -5646,7 +5646,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 			Flag_CF = (Src >> 8) & 1;
 			*ptr_r8[byte2 & 7] = Src;
 			Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-			if (log_to_console) cout << "RCL " << reg8_name[byte2 & 7];
+			if (log_to_console) cout << "RCL " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") DEBUG Src=" << int_to_hex(Src, 16);
 		}
 		else
 		{
@@ -5669,7 +5669,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 			Flag_CF = *ptr_r8[byte2 & 7] & 1;
 			*ptr_r8[byte2 & 7] = Src;
 			Flag_OF = !parity_check[Src & 0b11000000];
-			if (log_to_console) cout << "RCR " << reg8_name[byte2 & 7];
+			if (log_to_console) cout << "RCR " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") DEBUG Src=" << int_to_hex(Src, 16);
 		}
 		else
 		{
@@ -5696,7 +5696,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
-			if (log_to_console) cout << "Shift left " << reg8_name[byte2 & 7];
+			if (log_to_console) cout << "Shift left " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") DEBUG Src=" << int_to_hex(Src, 16);
 		}
 		else
 		{
@@ -5727,7 +5727,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
-			if (log_to_console) cout << "Shift(SHR) right " << reg8_name[byte2 & 7];
+			if (log_to_console) cout << "Shift(SHR) right " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") DEBUG Src=" << int_to_hex(Src, 16);
 		}
 		else
 		{
@@ -5788,7 +5788,7 @@ void SHL_ROT_8()			// Shift/ROL	8bit / once
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
-			if (log_to_console) cout << "Shift(SAR) right " << reg8_name[byte2 & 7];
+			if (log_to_console) cout << "Shift(SAR) right " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") DEBUG Src=" << int_to_hex(Src, 16);
 		}
 		else
 		{
@@ -5827,7 +5827,7 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			Flag_CF = (*ptr_r16[byte2 & 7] >> 15) & 1;
 			*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] << 1) | Flag_CF;
 			Flag_OF = (*ptr_r16[byte2 & 7] >> 15) ^ Flag_CF;
-			if (log_to_console) cout << "ROL " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "ROL " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -5852,7 +5852,7 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			Flag_CF = *ptr_r16[byte2 & 7] & 1;
 			*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] >> 1) | (Flag_CF * 0x8000);
 			Flag_OF = !parity_check[(*ptr_r16[byte2 & 7] >> 8) & 0b11000000];
-			if (log_to_console) cout << "ROR " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "ROR " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -5878,7 +5878,7 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			Flag_CF = (Src >> 16) & 1;
 			*ptr_r16[byte2 & 7] = Src;
 			Flag_OF = !parity_check[(Src >> 9) & 0b11000000];
-			if (log_to_console) cout << "RCL " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "RCL " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -5905,7 +5905,7 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			Flag_CF = *ptr_r16[byte2 & 7] & 1;
 			*ptr_r16[byte2 & 7] = Src;
 			Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-			if (log_to_console) cout << "RCR " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "RCR " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -5936,7 +5936,7 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
-			if (log_to_console) cout << "Shift left " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "Shift left " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -5971,7 +5971,7 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
-			if (log_to_console) cout << "Shift(SHR) right " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "Shift(SHR) right " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6037,7 +6037,7 @@ void SHL_ROT_16()			// Shift Logical / Arithmetic Left / 16bit / once
 			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
-			if (log_to_console) cout << "Shift(SAR) right " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "Shift(SAR) right " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6088,7 +6088,7 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 				*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] << 1) | Flag_CF;
 			}
 			if (repeats == 1) Flag_OF = (*ptr_r8[byte2 & 7] >> 7) ^ Flag_CF;
-			if (log_to_console) cout << "ROL " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";
+			if (log_to_console) cout << "ROL " << reg8_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r8[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6116,7 +6116,7 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 				*ptr_r8[byte2 & 7] = (*ptr_r8[byte2 & 7] >> 1) | (Flag_CF * 0x80);
 			}
 			if (repeats == 1) Flag_OF = !parity_check[*ptr_r8[byte2 & 7] & 0b11000000];
-			if (log_to_console) cout << "ROR " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";;
+			if (log_to_console) cout << "ROR " << reg8_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r8[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6144,7 +6144,7 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 				*ptr_r8[byte2 & 7] = Src;
 			}
 			if (repeats == 1) Flag_OF = !parity_check[(Src >> 1) & 0b11000000];
-			if (log_to_console) cout << "RCL " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";
+			if (log_to_console) cout << "RCL " << reg8_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r8[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6173,7 +6173,7 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 				*ptr_r8[byte2 & 7] = Src;
 			}
 			if (repeats == 1) Flag_OF = !parity_check[Src & 0b11000000];
-			if (log_to_console) cout << "RCR " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";
+			if (log_to_console) cout << "RCR " << reg8_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r8[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6207,7 +6207,7 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
-			if (log_to_console) cout << "Shift left " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";
+			if (log_to_console) cout << "Shift left " << reg8_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r8[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6246,7 +6246,7 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
-			if (log_to_console) cout << "Shift(SHR) right AL" << " " << (int)repeats << " times";
+			if (log_to_console) cout << "Shift(SHR) right AL" << " " << (int)repeats << " times = (" << (int)*ptr_r8[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6318,7 +6318,7 @@ void SHL_ROT_8_mult()		// Shift Logical / Arithmetic Left / 8bit / CL
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r8[byte2 & 7]];
-			if (log_to_console) cout << "Shift(SAR) right " << reg8_name[byte2 & 7] << " " << (int)repeats << " times";;
+			if (log_to_console) cout << "Shift(SAR) right " << reg8_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r8[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6367,7 +6367,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 				*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] << 1) | Flag_CF;
 			}
 			if (repeats == 1) Flag_OF = (*ptr_r16[byte2 & 7] >> 15) ^ Flag_CF;
-			if (log_to_console) cout << "ROL " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";;
+			if (log_to_console) cout << "ROL " << reg16_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6399,7 +6399,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 				*ptr_r16[byte2 & 7] = (*ptr_r16[byte2 & 7] >> 1) | (Flag_CF * 0x8000);
 			}
 			if (repeats == 1) Flag_OF = !parity_check[(*ptr_r16[byte2 & 7] >> 8) & 0b11000000];
-			if (log_to_console) cout << "ROR " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";
+			if (log_to_console) cout << "ROR " << reg16_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6433,7 +6433,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 				*ptr_r16[byte2 & 7] = Src;
 			}
 			if (repeats == 1) Flag_OF = !parity_check[(Src >> 9) & 0b11000000];
-			if (log_to_console) cout << "RCL " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";
+			if (log_to_console) cout << "RCL " << reg16_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6466,7 +6466,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 				*ptr_r16[byte2 & 7] = Src;
 			}
 			if (repeats == 1) Flag_OF = !parity_check[(Src >> 8) & 0b11000000];
-			if (log_to_console) cout << "RCR " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";
+			if (log_to_console) cout << "RCR " << reg16_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6505,7 +6505,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
-			if (log_to_console) cout << "Shift left " << reg16_name[byte2 & 7] << " " << (int)repeats << " times";
+			if (log_to_console) cout << "Shift left " << reg16_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6548,7 +6548,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
-			if (log_to_console) cout << "Shift(SHR) right " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "Shift(SHR) right " << reg16_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -6626,7 +6626,7 @@ void SHL_ROT_16_mult()		// Shift Logical / Arithmetic Left / 16bit / CL
 			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[*ptr_r16[byte2 & 7] & 255];
-			if (log_to_console) cout << "Shift(SAR) right " << reg16_name[byte2 & 7];
+			if (log_to_console) cout << "Shift(SAR) right " << reg16_name[byte2 & 7] << " " << (int)repeats << " times = (" << (int)*ptr_r16[byte2 & 7] << ")";
 		}
 		else
 		{
@@ -8090,11 +8090,14 @@ void XOR_IMM_ACC_16()  //XOR IMM to ACC 16bit
 
 void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 {
+	
+re_enter_F2:
+
 	uint8 OP = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result_16 = 0;
 	uint32 Result_32 = 0;
 	
-	if (log_to_console) cout << "REPNE[F2] ";
+	if (log_to_console) cout << "REPNE[F2] CX=" << (int)CX << " ";
 	switch (OP)
 	{
 	case 0b10100100:  //MOVS 8
@@ -8630,6 +8633,23 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 		}
 		break;
 
+	case 0b00100110:  //segment override
+		Flag_segment_override = 1;
+		Instruction_Pointer++;
+		goto re_enter_F2;
+	case 0b00101110:  //segment override 
+		Flag_segment_override = 2;
+		Instruction_Pointer++;
+		goto re_enter_F2;
+	case 0b00110110:  //segment override 
+		Flag_segment_override = 3;
+		Instruction_Pointer++;
+		goto re_enter_F2;
+	case 0b00111110:  //segment override 
+		Flag_segment_override = 4;
+		Instruction_Pointer++;
+		goto re_enter_F2;
+
 	default:
 		Instruction_Pointer ++;
 		if (test_mode) repeat_test_op = 1;
@@ -8647,13 +8667,15 @@ void REPNE()		//REP = Repeat while ZF=0 and CX > 0   [F2]  для CMPS, SCAS
 	}
 	Instruction_Pointer += 2;
 }
-void REP()			//REP = Repea while CX > 0			[F3]
+void REP()			//REP = Repeat while CX > 0			[F3]
 {
+re_enter_F3:
+
 	uint8 OP = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
 	uint16 Result_16 = 0;
 	uint32 Result_32 = 0;
 	
-	if (log_to_console) cout << "REP[F3] ";
+	if (log_to_console) cout << "REP[F3] CX=" << (int)CX << " ";
 	switch (OP)
 	{
 	case 0b10100100:  //MOVS 8
@@ -9075,6 +9097,23 @@ void REP()			//REP = Repea while CX > 0			[F3]
 		}
 		break;
 	
+	case 0b00100110:  //segment override
+		Flag_segment_override = 1;
+		Instruction_Pointer++;
+		goto re_enter_F3;
+	case 0b00101110:  //segment override 
+		Flag_segment_override = 2;
+		Instruction_Pointer++;
+		goto re_enter_F3;
+	case 0b00110110:  //segment override 
+		Flag_segment_override = 3;
+		Instruction_Pointer++;
+		goto re_enter_F3;
+	case 0b00111110:  //segment override 
+		Flag_segment_override = 4;
+		Instruction_Pointer++;
+		goto re_enter_F3;
+
 	default:
 		Instruction_Pointer++;
 		if (test_mode) repeat_test_op = 1;
@@ -10264,6 +10303,12 @@ void INT_N()			//INT = Interrupt
 }
 void INT_3()			//INT = Interrupt Type 3
 {
+	//DEBUG
+	Instruction_Pointer++;
+	step_mode = 1;
+	return;
+
+	
 	uint8 int_type = 3;
 	//определяем новый IP и CS
 	uint16 new_IP = memory.read(int_type * 4) + memory.read(int_type * 4 + 1) * 256;

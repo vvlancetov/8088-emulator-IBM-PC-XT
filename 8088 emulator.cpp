@@ -33,7 +33,11 @@ typedef unsigned __int32 uint32;
 using namespace std;
 using namespace std::chrono;
 
+//декларация процедур
 void process_debug_keys();
+void speed_up();
+void speed_down();
+
 extern void tester();
 extern void tester2();
 extern void tester3();
@@ -68,12 +72,12 @@ bool exeption_1 = 0;	//Trap
 
 Mem_Ctrl memory; //создаем контроллер памяти
 
-uint8 memory_array[1024 * 1024]; //оперативная память
+uint8 ram_array[640 * 1024];	//оперативная память
+uint8 rom_array[64 * 1024];		//ПЗУ
+uint8 test_ram_array[1024 * 1024];	//оперативная память для теста
 
 //создаем монитор
 Monitor monitor;
-
-//std::thread t(Monitor other_monitor);
 
 //экран для дебага (width, height, name, x_pos, y_pos)
 Dev_mon_device debug_monitor(870, 1240, "Debug Window", 1196, 0);
@@ -88,7 +92,10 @@ HDD_mon_device HDD_monitor(1000, 1600, "HDD Window", 500, 200);
 Audio_mon_device Audio_monitor(1000, 200, "Audio Window", 0, 1650);
 
 //отладочное окно для памяти
-Mem_mon_device Mem_monitor(660, 1670, "Memory Window", 800, 300);
+Mem_mon_device Mem_monitor(910, 1670, "Memory Window", 800, 300);
+
+//отладочное окно для EGA
+EGA_mon_device EGA_monitor(1200, 1200, "EGA debug", 300, 0);
 
 //менеджер точек останова и комментариев
 Breakpointer bp_mgr;
@@ -220,6 +227,7 @@ bool show_fdd_window = true; //отладочное окно FDD
 bool show_hdd_window = true; //отладочное окно HDD
 bool show_audio_window = true; //отладочное окно звука
 bool show_memory_window = true; //отладочное окно памяти
+bool show_EGA_window = true; //отладочное окно EGA
 
 bool test_mode = 0; //влияет на память, режим тестов
 
@@ -232,8 +240,8 @@ void (*op_code_table_8087[64])() = { 0 };
 
 bool debug_key_1 = false;
 
-//кол-во циклов для замедления
-int empty_cycles = 0;
+//делитель скорости
+uint8 speed_div = 3;
 
 //отдельный таймер для синхронизации реального времени
 std::chrono::high_resolution_clock Hi_Res_Clk;
@@ -314,6 +322,7 @@ int main(int argc, char* argv[]) {
 				HDD_monitor.update(0);				//синхроимпульс для монитора HDD
 				Audio_monitor.update(0);			//мониторинг звука
 				Mem_monitor.update(0);				//мониторинг памяти
+				EGA_monitor.update(0);				//мониторинг EGA
 				timer_video = 0;
 				op_counter = 0;
 			}
@@ -373,16 +382,14 @@ int main(int argc, char* argv[]) {
 			timer_start = steady_clock::now();//перезапускаем таймер
 		}
 
-		pc_timer.sync();	//синхронизация таймера
-		pc_timer.sync();
-		pc_timer.sync();
+		for(int d = 0; d < speed_div; d++) pc_timer.sync();	//синхронизация таймера
 		FDD_A.sync();
 		HDD.sync();
 		dma_ctrl.sync();	//синхронизация DMA
 		keyboard.sync(); 	//синхронизация клавиатуры
 
 		//замедление работы в пошаговом режиме
-		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(30));
+		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
 		//проверка аппаратных прерываний
 		if (Flag_IF)
@@ -582,14 +589,112 @@ halt_jump:
 //контроллер памяти
 void Mem_Ctrl::write(uint32 address, uint8 data) //запись значений в ячейки
 {
-	//if ((address & 0xF0000) == 0xF0000) return; //проверка на попадание в диапазон ПЗУ
-	memory_array[address & 0xFFFFF] = data;
-	//if (address == 0xb8007 && data == 7) step_mode = 1;
-	return;
+	//режим тестирования команд
+	if (test_mode)
+	{
+		test_ram_array[address & 0xFFFFF] = data;
+		return;
+	}
+	
+	//запись в обычную память
+	if (address < 0xA0000)
+	{
+		ram_array[address] = data;
+		return;
+	}
+		
+	//запись в память MDA видеокарты
+	if (address >= 0xB0000 && address < 0xB4000)
+	{
+		monitor.mem_write(address, data);
+		return;
+	}
+
+	//запись в память CGA видеокарты
+	if (address >= 0xB8000 && address < 0xBC000)
+	{
+		monitor.mem_write(address, data);
+		return;
+	}
+
+	//запись в память EGA видеокарты
+	if (address >= 0xA0000 && address < 0xA4000)
+	{
+		monitor.mem_write(address, data);
+		return;
+	}
+
 }
 uint8 Mem_Ctrl::read(uint32 address) //чтение данных из памяти
 {
-	return memory_array[address & 0xFFFFF];
+	//режим тестирования команд
+	if (test_mode)	return test_ram_array[address & 0xFFFFF];
+	
+	//чтение из обычной памяти
+	if (address < 0xA0000)
+	{
+		return ram_array[address];
+	}
+
+	//чтение из памяти MDA видеокарты
+	if (address >= 0xB0000 && address < 0xB4000)
+	{
+		return monitor.mem_read(address);
+	}
+
+	//чтение из памяти CGA видеокарты
+	if (address >= 0xB8000 && address < 0xBC000)
+	{
+		return monitor.mem_read(address);
+	}
+
+	//чтение из памяти EGA видеокарты
+	if (address >= 0xA0000 && address < 0xA4000)
+	{
+		return monitor.mem_read(address);
+	}
+	
+	//чтение из ПЗУ компьютера
+	if (address >= 0xF0000 && address < 0x100000)
+	{
+		return rom_array[address - 0xF0000];
+	}
+
+	//чтение из ПЗУ HDD
+	if (address >= 0xC8000 && address < 0xC9000)
+	{
+		return HDD.read_rom(address - 0xC8000);
+	}
+
+	//чтение из ПЗУ EGA
+	if (address >= 0xC0000 && address < 0xC4000)
+	{
+		return monitor.read_rom(address);
+	}
+
+}
+void Mem_Ctrl::flash_rom(uint32 address, uint8 data)
+{
+	//запись в ПЗУ компьютера
+	if (address >= 0xF0000 && address < 0x100000)
+	{
+		rom_array[address - 0xF0000] = data;
+		return;
+	}
+
+	//запись в ПЗУ HDD
+	if (address >= 0xC8000 && address < 0xC9000)
+	{
+		HDD.flash_rom(address - 0xC8000, data);
+		return;
+	}
+
+	//запись в ПЗУ EGA
+	if (address >= 0xC0000 && address < 0xC4000)
+	{
+		monitor.flash_rom(address, data);
+		return;
+	}
 }
 
 //контроллер ввода-вывода
@@ -949,28 +1054,48 @@ void IC8253::sync()
 	else speaker.put_sample(-1);
 
 	static int delay = 800; //838 в идеале
-	
+	static int duration = 0;
+
 	counters[3].count--;
 	if (counters[3].count == 0)
 	{
-		//синхронизируем скорость
+		//синхронизируем скорость циклов по 55000 мкс
 		timer_end = Hi_Res_Clk.now(); //считываем время
-		int duration = chrono::duration_cast<chrono::microseconds>(timer_end - timer_start).count();
-		cycle_duration = delay;
+		duration = chrono::duration_cast<chrono::microseconds>(timer_end - timer_start).count();
+		timer_start = timer_end; // Hi_Res_Clk.now(); //засекаем заново
+		//cycle_duration = delay;
 		if (duration > 54933) delay--;
 		if (duration < 54933) delay++;
-		timer_start = Hi_Res_Clk.now(); //засекаем заново
+		
+		/*
+		//для тестирования
+		static uint32 tot_d = 0;
+		static uint32 tot_count = 0;
+
+		tot_d += duration;
+		tot_count += 256 * 256;
+		
+		if (0)
+		{
+			if (tot_d > 1193000)
+			{
+				cout << "counts = " << dec << (int)tot_count  << " time(mks) = " << (int)tot_d << " (emu_speed = " << (float)(floor((tot_count / 1193000.0 * 10000.0)/(tot_d / 1000000.0))/100) << "%) delay = " << (int)delay << endl;
+				tot_d = 0;
+				tot_count = 0;
+			}
+		}
+		*/
 	}
 
 loop:
 	Hi_Res_t_end = Hi_Res_Clk.now();
-	int duration = std::chrono::duration_cast<std::chrono::nanoseconds>(Hi_Res_t_end - Hi_Res_t_start).count();
+	duration = std::chrono::duration_cast<std::chrono::nanoseconds>(Hi_Res_t_end - Hi_Res_t_start).count();
 	if (duration < delay)
 	{
 		_mm_pause();
 		goto loop;  //830
 	}
-	Hi_Res_t_start = Hi_Res_Clk.now(); //перезапуск таймера
+	Hi_Res_t_start = Hi_Res_t_end; //перезапуск таймера
 }
 void IC8253::write_port(uint16 port, uint8 data)
 {
@@ -1087,7 +1212,7 @@ bool IC8253::is_count_enabled(uint8 n)
 }
 uint16 IC8253::get_time(uint8 number)
 {
-	if (number < 3)	return counters[number].count;
+	if (number < 4)	return counters[number].count;
 	else return 0;
 }
 string IC8253::get_ch_data(int channel)
@@ -2225,6 +2350,9 @@ void process_debug_keys()
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Equal) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMinus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl))
 		) keys_up = true;
@@ -2269,6 +2397,13 @@ void process_debug_keys()
 		else Mem_monitor.hide();
 		keys_up = false;
 	}
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		show_EGA_window = !show_EGA_window;
+		if (show_EGA_window) EGA_monitor.show();
+		else EGA_monitor.hide();
+		keys_up = false;
+	}
 	//изменения масштаба
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
@@ -2278,6 +2413,17 @@ void process_debug_keys()
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMinus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		monitor.scale_down();
+		keys_up = false;
+	}
+	//изменение скорости
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Hyphen) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		speed_down();
+		keys_up = false;
+	}
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Equal) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		speed_up();
 		keys_up = false;
 	}
 
@@ -2303,6 +2449,35 @@ void process_debug_keys()
 		log_to_console = true;
 	}
 }
-
-
-
+void speed_up()
+{
+	if (speed_div > 1) speed_div--;
+	switch (speed_div)
+	{
+	case 3:
+		cout << "Speed 1/3 (8088)" << endl;
+		break;
+	case 2:
+		cout << "Speed 1/2 (80286)" << endl;
+		break;
+	case 1:
+		cout << "Speed 1/1 (80386)" << endl;
+		break;
+	}
+}
+void speed_down()
+{
+	if (speed_div < 3) speed_div++;
+	switch (speed_div)
+	{
+	case 3:
+		cout << "Speed 1/3 (8088)" << endl;
+		break;
+	case 2:
+		cout << "Speed 1/2 (80286)" << endl;
+		break;
+	case 1:
+		cout << "Speed 1/1 (80386)" << endl;
+		break;
+	}
+}

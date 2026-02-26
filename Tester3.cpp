@@ -164,11 +164,10 @@ void tester3()
 	// 80.3  82.3 d4 F6.6 F6.7 F7.6 F7.7
 	
 	//string files[6] = {"tests2\\01.json","tests2\\01.json","tests2\\02.json","tests2\\03.json","tests2\\04.json","tests2\\05.json"};
-	string files[1] = { "tests2\\D4.json" };
-	//string files[14] = { "tests2\\C9.json",	"tests2\\A5.json","tests2\\A6.json" ,"tests2\\A7.json" ,"tests2\\AA.json" ,"tests2\\AB.json" ,"tests2\\AC.json" , "tests2\\AD.json" ,"tests2\\AE.json",	"tests2\\AF.json" , "tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json" };
-	//string files[3] = {"tests2\\A7.json" ,"tests2\\AE.json",	"tests2\\AF.json" };
+	//string files[1] = { "tests2\\D4.json" };
+	string files[14] = { "tests2\\A4.json","tests2\\A5.json","tests2\\A6.json" ,"tests2\\A7.json" ,"tests2\\AA.json" ,"tests2\\AB.json" ,"tests2\\AC.json" , "tests2\\AD.json" ,"tests2\\AE.json",	"tests2\\AF.json" , "tests2\\F6.6.json","tests2\\F6.7.json","tests2\\F7.6.json","tests2\\F7.6.json" };
 	
-	test_log = 1;
+	test_log = 0;
 		
 	//move - 88, 89, 8A, 8B, 8C, 8E, A0, A1, A2, A3, A4, A5, B0 - BF, C6, C7
 	//pop, push - 06, 07, 0E, 16, 17, 1E, 1F, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 5A, 5B, 5C, 5D, 5E, 5F, 8F, 9C, 9D, FF.6, FF.7
@@ -448,7 +447,7 @@ test_rep:
 			std::setfill('0') << std::setw(2) << (int)memory.read(Instruction_Pointer + 5 + *CS * 16) << "\t";
 	}
 	
-	op_code_table[memory.read((Instruction_Pointer + *CS * 16) & 0xFFFFF)]();
+	op_code_table[memory.read(Instruction_Pointer + *CS * 16)]();
 
 	if (keep_segment_override) { 
 		keep_segment_override = false; //сбрасываем флаг сохранения

@@ -43,6 +43,7 @@ public:
 	Mem_Ctrl() {};
 	void write(uint32 address, uint8 data); //запись значений в €чейки
 	uint8 read(uint32 address); //чтение данных из пам€ти
+	void flash_rom(uint32 address, uint8 data); //запись ѕ«”
 };
 
 class IO_Ctrl  //контроллер портов

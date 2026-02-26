@@ -29,18 +29,19 @@ void SoundMaker::beep_off()    //сигнал ВЫКЛ
 }
 void SoundMaker::put_sample(int16_t sample)
 {
-	//выравнивание частот таймера и сэмпла
-	static float pos = 0;
-	bool can_hear = 0;
-	if (wait_for_dispatch) return;
-	pos = pos + 0.0805;  // 0.0805 ОК
-	if (pos < 1.0) return;
-	else pos--;
-    
+	//усредняющий массив
 	avg_arr_ptr++;
 	if (avg_arr_ptr == 16) avg_arr_ptr = 0;
 	avg_arr[avg_arr_ptr] = sample * 32000 * volume / 100;
+
+	//выравнивание частот таймера и сэмпла
+	static float pos = 0;
+	bool can_hear = 0;
+	pos = pos + 0.0820;  // 0.0805 ОК
+	if (pos < 1.0) return;
+	else pos--;
 	
+	//расчет среднего по массиву
 	int16_t agv_sample = 0;
 	for (int i = 0; i < 16; i++) agv_sample = agv_sample + avg_arr[i]/16;
 		
@@ -82,7 +83,7 @@ void SoundMaker::put_sample(int16_t sample)
 
 	}
 
-	if (!wait_for_dispatch || next_byte_to_gen < 1000) next_byte_to_gen++; //если wait_for_dispatch, то генерация не далее 600
+	if (!wait_for_dispatch || next_byte_to_gen < 600) next_byte_to_gen++; //если wait_for_dispatch, то генерация не далее 600
 
 	if (next_byte_to_gen == sample_size) 
 	{
@@ -292,7 +293,7 @@ void Audio_mon_device::render()
 
 	sf::RectangleShape rectangle; //столбик
 	rectangle.setSize(sf::Vector2f(2, 2));
-	rectangle.setFillColor(sf::Color(200, 200, 200));
+	
 	//выводим данные
 	array_pointer_to_draw = array_pointer_next_el;
 	
@@ -300,7 +301,11 @@ void Audio_mon_device::render()
 	{
 		if (!array_pointer_to_draw) array_pointer_to_draw = 999;
 		else array_pointer_to_draw--;
+		rectangle.setFillColor(sf::Color(200, 200, 200));
 		rectangle.setPosition(sf::Vector2f(x, 100 - sample_array[array_pointer_to_draw] / 10));
+		main_window.draw(rectangle);
+		rectangle.setFillColor(sf::Color(255, 0, 0));
+		rectangle.setPosition(sf::Vector2f(x, 100));
 		main_window.draw(rectangle);
 	}
 	//if (sample_array[0]) step_mode = 1;  //останов для отладки
