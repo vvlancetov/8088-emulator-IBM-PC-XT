@@ -45,7 +45,8 @@ extern EGA_mon_device EGA_monitor;
 string filename_ROM;
 string filename_HDD_ROM;
 string filename_HDD;
-string filename_v_rom;
+string filename_v_rom;		//биос видеокарты
+string filename_opt_rom_1;  //Биос часов
 
 
 extern FDD_Ctrl FDD_A;
@@ -54,6 +55,7 @@ extern SoundMaker speaker;
 
 uint32 ROM_address = 0; //адрес загрузки файла ПЗУ
 uint32 EGA_ROM_address = 0; //адрес загрузки ПЗУ видеокарты
+uint32 Opt_ROM_1_address = 0; //адрес загрузки ПЗУ часов
 extern uint16 Instruction_Pointer;
 extern uint16* CS;
 
@@ -431,6 +433,18 @@ void loader(int argc, char* argv[])
 					cout << "EGA ROM address = 0x" << hex << (int)EGA_ROM_address << endl;
 				}
 
+				if (parameter == "OPTION_ROM_1") //ROM от EGA карты
+				{
+					//выбираем видео BIOS
+					if (value != "") filename_opt_rom_1 = value;
+				}
+
+				if (parameter == "OPTION_ROM_1_BIOS_ADDRESS") //адрес ПЗУ EGA карты
+				{
+					//выбираем видео BIOS
+					if (value != "" && stoi(value, 0, 16)) Opt_ROM_1_address = stoi(value, 0, 16);
+					cout << "EGA ROM address = 0x" << hex << (int)Opt_ROM_1_address << endl;
+				}
 			}
 		}
 		conf_file.close();
@@ -473,6 +487,27 @@ void loader(int argc, char* argv[])
 			};
 			file_v_rom.close();
 			cout << "Загружено " << (int)(a - EGA_ROM_address) << " байт данных в ПЗУ EGA с адреса 0x" << (int)EGA_ROM_address << " checksum = 0x" << hex << (int)sum << endl;
+		}
+	}
+
+	//загружаем  ПЗУ часов реального времени
+	if (filename_opt_rom_1 != "")
+	{
+		fstream file_opt_rom_1(path + filename_opt_rom_1, ios::binary | ios::in);
+		if (!file_opt_rom_1.is_open()) cout << "File " << filename_opt_rom_1 << " not found!" << endl;
+		else
+		{
+			int a = Opt_ROM_1_address; //начальный адрес
+			char b;    //buffer
+			uint8 sum = 0;
+			while (file_opt_rom_1.read(&b, 1)) {
+				// записываем виртуальный ROM
+				memory.flash_rom(a, b);
+				a++;
+				sum += b;
+			};
+			file_opt_rom_1.close();
+			cout << "Загружено " << (int)(a - Opt_ROM_1_address) << " байт данных в ПЗУ RTC с адреса 0x" << (int)Opt_ROM_1_address << " checksum = 0x" << hex << (int)sum << endl;
 		}
 	}
 }

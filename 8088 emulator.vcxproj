@@ -161,8 +161,11 @@
     <ClCompile Include="joystick.cpp" />
     <ClCompile Include="keyboard.cpp" />
     <ClCompile Include="loader.cpp" />
+    <ClCompile Include="mouse.cpp" />
     <ClCompile Include="opcode_functions.cpp" />
     <ClCompile Include="hdd.cpp" />
+    <ClCompile Include="rtc.cpp" />
+    <ClCompile Include="serial_port.cpp" />
     <ClCompile Include="tester.cpp" />
     <ClCompile Include="tester2.cpp" />
     <ClCompile Include="tester3.cpp" />
@@ -177,7 +180,10 @@
     <ClInclude Include="joystick.h" />
     <ClInclude Include="keyboard.h" />
     <ClInclude Include="loader.h" />
+    <ClInclude Include="mouse.h" />
     <ClInclude Include="opcode_functions.h" />
+    <ClInclude Include="rtc.h" />
+    <ClInclude Include="serial_port.h" />
     <ClInclude Include="video.h" />
   </ItemGroup>
   <ItemGroup>

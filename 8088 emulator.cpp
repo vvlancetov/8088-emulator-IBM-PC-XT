@@ -29,6 +29,9 @@ typedef unsigned __int32 uint32;
 #include "hdd.h"
 #include "loader.h"
 #include "breakpointer.h"
+#include "rtc.h"
+#include "mouse.h"
+#include "serial_port.h"
 
 using namespace std;
 using namespace std::chrono;
@@ -103,6 +106,12 @@ Breakpointer bp_mgr;
 // создаем клавиатуру
 KBD keyboard;
 
+//Создаем COM1
+SerialPort COM1;
+
+//создем мышь
+Mouse ms_mouse;
+
 // создаем динамик
 SoundMaker speaker;
 
@@ -123,6 +132,9 @@ HDD_Ctrl HDD;
 
 //джойстик
 game_controller joystick;
+
+//часы
+Rtc real_clock;
 
 //переключатели на плате
 //uint8 MB_switches = 0b01101101; //CGA + 2FDD
@@ -291,6 +303,9 @@ int main(int argc, char* argv[]) {
 
 	while (cont_exec)
 	{
+		//if ((Instruction_Pointer + *CS * 16) >= 0xd4800 || (Instruction_Pointer + *CS * 16) < 0xd4000) log_to_console = 0;
+		//else log_to_console = 1;
+		
 		op_counter++;			//счетчик операций
 		service_counter++;		//счетчик для вызова служебных процедур
 		bp_mgr.check_points();	//проверка точек останова и печать комментариев к точкам
@@ -333,6 +348,7 @@ int main(int argc, char* argv[]) {
 				keyboard.update(timer_kb, monitor.has_focus());    //синхронизация клавиатуры (проверка нажатий)
 				HDD.sync_data(timer_kb);		//синхронизация буфера HDD
 				joystick.sync(timer_kb);
+				ms_mouse.sync();
 				timer_kb = 0;
 			}
 
@@ -569,8 +585,6 @@ int main(int argc, char* argv[]) {
 		if (Flag_TF)
 		{
 			exeption_1 = 1; //прерывание 1
-			//Flag_TF = 0;
-			//step_mode = 1;
 		}
 
 halt_jump:
@@ -672,6 +686,13 @@ uint8 Mem_Ctrl::read(uint32 address) //чтение данных из памят
 		return monitor.read_rom(address);
 	}
 
+	//чтение из ПЗУ часов
+	if (address >= 0xD4000 && address < 0xD4800)
+	{
+		return real_clock.read_rom(address - 0xD4000);
+	}
+
+
 }
 void Mem_Ctrl::flash_rom(uint32 address, uint8 data)
 {
@@ -693,6 +714,13 @@ void Mem_Ctrl::flash_rom(uint32 address, uint8 data)
 	if (address >= 0xC0000 && address < 0xC4000)
 	{
 		monitor.flash_rom(address, data);
+		return;
+	}
+
+	//запись в ПЗУ часов реального времени
+	if (address >= 0xD4000 && address < 0xD48000)
+	{
+		real_clock.flash_rom(address - 0xD4000, data);
 		return;
 	}
 }
@@ -773,7 +801,18 @@ void IO_Ctrl::output_to_port_8(uint16 address, uint8 data)	//вывод в по�
 		HDD.write_port(address, data);
 		//deferred_msg = "write HDD port 0x" + int_to_hex(address, 4); + "-> 0x" + int_to_hex(data, 2);
 	}
+	
+	//RTC
+	if (address >= 0x70 && address <= 0x71)
+	{
+		return real_clock.write_port(address, data);
+	}
 
+	//COM1
+	if (address >= 0x3F8 && address <= 0x3FF)
+	{
+		COM1.write_port(address, data);
+	}
 }
 void IO_Ctrl::output_to_port_16(uint16 address, uint16 data)
 {
@@ -837,6 +876,18 @@ uint8 IO_Ctrl::input_from_port_8(uint16 address)				//ввод из порта, 
 		deferred_msg = "READ HDD port 0x" + int_to_hex(address, 4) + " <- 0x" + int_to_hex(d, 2);
 		//cout << deferred_msg << endl;
 		return d;
+	}
+
+	//RTC
+	if (address >= 0x70 && address <= 0x71)
+	{
+		return real_clock.read_port(address);
+	}
+
+	//COM1
+	if (address >= 0x3F8 && address <= 0x3FF)
+	{
+		return COM1.read_port(address);
 	}
 
 	return 0;
@@ -1044,15 +1095,18 @@ void IC8253::sync()
 		}
 	}
 	
+	//speaker
 	if (counters[2].enabled)
 	{
-		//место для счетчика 2
-	}
+		//генерация звука
+		if (counters[2].signal_high) speaker.put_sample(1);
+		else speaker.put_sample(-1);
+	} 
+	else speaker.put_sample(0);
 
-	//генерация звука
-	if (counters[2].signal_high) speaker.put_sample(1);
-	else speaker.put_sample(-1);
 
+
+	//таймер синхронизации эмулятора
 	static int delay = 800; //838 в идеале
 	static int duration = 0;
 

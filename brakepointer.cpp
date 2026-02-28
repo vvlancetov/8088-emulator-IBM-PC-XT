@@ -48,6 +48,7 @@ void Breakpointer::load_breakpoints()
 	//breakpoints.push_back({ 0xc03c8,"EGA test vert" });
 	breakpoints.push_back({ 0xc03cc,"EGA POD14_75:" });
 	breakpoints.push_back({ 0x11eb0,"SB_START" });
+	breakpoints.push_back({ 0xd4003,"rtc" });
 
 
 }

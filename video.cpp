@@ -777,6 +777,20 @@ uint8 CGA_videocard::mem_read(uint32 address)
 {
 	return videomemory[address];
 }
+sf::Vector2i CGA_videocard::get_mouse_pos()
+{
+	sf::Vector2i localPosition = sf::Mouse::getPosition(main_window); // window is a sf::Window
+	
+	int pos_x = localPosition.x;
+	int pos_y = localPosition.y;
+
+	if (pos_x < 0) pos_x = 0;
+	if (pos_x >= main_window.getSize().x) pos_x = main_window.getSize().x - 1;
+	if (pos_y < 0) pos_y = 0;
+	if (pos_y >= main_window.getSize().y) pos_y = main_window.getSize().y - 1;
+
+	return sf::Vector2i({pos_x,pos_y});
+}
 
 //отладочные экраны
 
@@ -2303,6 +2317,10 @@ uint8 MDA_videocard::mem_read(uint32 address)
 {
 	return videomemory[address];
 }
+sf::Vector2i MDA_videocard::get_mouse_pos()
+{
+	return sf::Vector2i({ 0,0 });
+}
 
 //==================== EGA videocard =============
 
@@ -3747,6 +3765,10 @@ std::string EGA_videocard::get_debug_data(uint8 i)
 
 	return " no data";
 }
+sf::Vector2i EGA_videocard::get_mouse_pos()
+{
+	return sf::Vector2i({ 0,0 });
+}
 
 //====================== Monitor =================
 
@@ -3995,6 +4017,24 @@ uint8 Monitor::read_rom(uint32 address)
 std::string Monitor::get_debug_data(uint8 i)
 {
 	return EGA_card.get_debug_data(i);
+}
+sf::Vector2i Monitor::get_mouse_pos()
+{
+	//читаем данные из флеш ПЗУ 
+	switch (card_type)
+	{
+	case videocard_type::CGA:
+		return CGA_card.get_mouse_pos();
+		break;
+	case videocard_type::MDA:
+		return MDA_card.get_mouse_pos();
+		break;
+	case videocard_type::EGA:
+		return EGA_card.get_mouse_pos();
+		break;
+	}
+	return sf::Vector2i({ 0,0 });
+
 }
 Monitor::Monitor()
 {

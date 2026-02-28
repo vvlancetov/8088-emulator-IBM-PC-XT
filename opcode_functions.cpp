@@ -5137,6 +5137,10 @@ void Invert_RM_8()
 		}
 
 		Flag_AF = 0; //undefined
+		Flag_PF = parity_check[*ptr_AH];
+		if (*ptr_AH) Flag_ZF = 0;
+		else Flag_ZF = 1;
+				
 		if (log_to_console) cout << (int)(AX);
 		Instruction_Pointer += 2 + additional_IPs;
 		break;
@@ -5436,6 +5440,8 @@ void Invert_RM_16()
 		Flag_SF = ((DX >> 8) >> 7) & 1;
 		Flag_PF = parity_check[(DX & 255)];
 		Flag_AF = 0; //undefined
+		if (*ptr_DX) Flag_ZF = 0;
+		else Flag_ZF = 1;
 		if (log_to_console) cout << (uint32)(Result_32);
 		Instruction_Pointer += 2 + additional_IPs;
 		break;

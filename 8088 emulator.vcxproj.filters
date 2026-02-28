@@ -54,6 +54,15 @@
     <ClCompile Include="brakepointer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="rtc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="mouse.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="serial_port.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="opcode_functions.h">
@@ -84,6 +93,15 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="breakpointer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="rtc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="mouse.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="serial_port.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
