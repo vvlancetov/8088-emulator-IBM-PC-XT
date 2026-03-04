@@ -37,7 +37,7 @@ void SoundMaker::put_sample(int16_t sample)
 	//выравнивание частот таймера и сэмпла
 	static float pos = 0;
 	bool can_hear = 0;
-	pos = pos + 0.0820;  // 0.0805 ОК
+	pos = pos + 0.0805;  // 0.0805 ОК
 	if (pos < 1.0) return;
 	else pos--;
 	

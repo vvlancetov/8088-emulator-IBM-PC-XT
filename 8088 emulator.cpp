@@ -1057,7 +1057,18 @@ void IC8253::sync()
 			if (counters[n].mode == 3)
 			{
 				//квадратный сигнал
-				if (counters[n].count == 0) counters[n].count = counters[n].initial_count;
+				if (counters[n].count == 0)
+				{
+					if (counters[n].mode_3_reload_ready)
+					{
+						//перезагружаем новые данные
+						counters[n].initial_count = counters[n].initial_count_mode_3;
+						counters[n].count = counters[n].initial_count_mode_3;
+						counters[n].mode_3_reload_ready = 0;
+						if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
+					}
+					else counters[n].count = counters[n].initial_count;
+				}
 				counters[n].count--;
 				if (counters[n].count > (counters[n].initial_count >> 1)) counters[n].signal_high = true;
 				else counters[n].signal_high = false;
@@ -1133,8 +1144,8 @@ void IC8253::sync()
 		if (duration > 54933) delay--;
 		if (duration < 54933) delay++;
 		
-		/*
 		//для тестирования
+		/*
 		static uint32 tot_d = 0;
 		static uint32 tot_count = 0;
 
@@ -1176,38 +1187,78 @@ void IC8253::write_port(uint16 port, uint8 data)
 		switch (counters[n].RL_mode)
 		{
 		case 1:
-			counters[n].initial_count = counters[n].count = data;
-			counters[n].enabled = true;
-			if (counters[n].mode == 0) counters[n].signal_high = false; //сброс выхода при перезагрузке
-			counters[n].wait_for_data = false; //отмена ожидания загрузки
-			if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
+			if (counters[n].mode != 3)
+			{
+				counters[n].initial_count = counters[n].count = data;
+				counters[n].enabled = true;
+				if (counters[n].mode == 0) counters[n].signal_high = false; //сброс выхода при перезагрузке
+				counters[n].wait_for_data = false; //отмена ожидания загрузки
+				if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
+			}
+			else
+			{
+				//отдельный подход для режима 3
+				counters[n].initial_count_mode_3 = data;
+				counters[n].enabled = true;
+				counters[n].wait_for_data = false; //отмена ожидания загрузки
+				counters[n].mode_3_reload_ready = 1;
+			}
+
 			break;
 		case 2:
-			counters[n].initial_count = counters[n].count = data * 256;
-			counters[n].enabled = true;
-			if (counters[n].mode == 0) counters[n].signal_high = false; //сброс выхода при перезагрузке
-			counters[n].wait_for_data = false; //отмена ожидания загрузки
-			if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
+			if (counters[n].mode != 3)
+			{
+				counters[n].initial_count = counters[n].count = data * 256;
+				counters[n].enabled = true;
+				if (counters[n].mode == 0) counters[n].signal_high = false; //сброс выхода при перезагрузке
+				counters[n].wait_for_data = false; //отмена ожидания загрузки
+				if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 считаем частоту звука
+			}
+			else
+			{
+				counters[n].initial_count_mode_3 = data * 256;
+				counters[n].enabled = true;
+				counters[n].wait_for_data = false; //отмена ожидания загрузки
+				counters[n].mode_3_reload_ready = 1;
+			}
 			break;
 		case 3:
 			if (!counters[n].second_byte)
 			{
-				counters[n].count = (counters[n].count & 0xFF00) | data;
-				counters[n].second_byte = true;
-				counters[n].enabled = false;  //stop
-				//cout << "LB = " << hex << (int)data << endl;
+				if (counters[n].mode != 3)
+				{
+					counters[n].count = (counters[n].count & 0xFF00) | data;
+					counters[n].second_byte = true;
+					counters[n].enabled = false;  //stop
+				}
+				else
+				{
+					counters[n].initial_count_mode_3 = data;
+					counters[n].second_byte = true;
+				}
 			}
 			else
 			{
 				//старший байт
-				counters[n].count = (counters[n].count & 0xFF) | (data * 256);
-				counters[n].initial_count = counters[n].count;
-				counters[n].second_byte = false;
-				counters[n].enabled = true;  //start
-				if (counters[n].mode == 0) counters[n].signal_high = false; // //сброс выхода при перезагрузке
-				counters[n].wait_for_data = false; //отмена ожидания загрузки
-				//cout << "HB = " << hex << (int)data << endl;
-				if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 рассчитываем частоту звука
+				if (counters[n].mode != 3)
+				{
+					counters[n].count = (counters[n].count & 0xFF) | (data * 256);
+					counters[n].initial_count = counters[n].count;
+					counters[n].second_byte = false;
+					counters[n].enabled = true;  //start
+					if (counters[n].mode == 0) counters[n].signal_high = false; // //сброс выхода при перезагрузке
+					counters[n].wait_for_data = false; //отмена ожидания загрузки
+					if (n == 2 && counters[n].initial_count) speaker.timer_freq = 1193000 / counters[n].initial_count; //если это порт №2 рассчитываем частоту звука
+				}
+				else
+				{
+					counters[n].initial_count_mode_3 += data * 256;
+					counters[n].second_byte = false;
+					counters[n].enabled = true;  //start
+					counters[n].wait_for_data = false; //отмена ожидания загрузки
+					counters[n].mode_3_reload_ready = 1; //ставим бит ожидания перезагрузки счетчика в режиме 3
+				}
+
 			}
 		}
 		//if (counters[n].mode == 0) counters[n].enabled;

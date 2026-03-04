@@ -160,6 +160,8 @@ struct t_counter
 	bool wait_for_data = false; //ожидание загрузки данных
 	bool signal_high = false;  //сигнал на выходе
 	bool one_shot_fired = false; //триггер для режима 0
+	uint16 initial_count_mode_3 = 0;
+	bool mode_3_reload_ready = 0;
 };
 
 //таймер

@@ -238,7 +238,6 @@ void SerialPort::receive_data(uint8 byte)
 
 		//меняем регистр управления модемом
 		//reg_modem_ctrl = reg_modem_ctrl & 0b11111101; //снимаем бит 1 - request to send, т.е. не слать биты
-		
 
 		if (reg_int_ctrl & 1) //проверка разрешения прерывания
 		{
@@ -315,19 +314,13 @@ void SerialPort::sync()
 	if (in_ctrl_state == com_port_states::IN_WAIT_HOST)
 	{
 		//ждем пока заберут данные
-
 	}
 
 	if (in_ctrl_state == com_port_states::IN_data_POPED)
 	{
 		//данные забрали
 		in_ctrl_state = com_port_states::IN_IDLE;
-		
-
-
 	}
-
-
 }
 
 std::string SerialPort::get_debug_data(uint8 id)
