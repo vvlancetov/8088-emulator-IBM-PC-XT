@@ -72,7 +72,7 @@ public:
 	void scale_down();
 	void mem_write(uint32 address, uint8 data); //запись в видеопамять
 	uint8 mem_read(uint32 address);				//чтение из видеопамяти
-	sf::Vector2i get_mouse_pos();
+	mouse_xy get_mouse_pos();
 };
 
 //CGA videocard
@@ -174,7 +174,7 @@ public:
 	void scale_down();
 	void mem_write(uint32 address, uint8 data); //запись в видеопамять
 	uint8 mem_read(uint32 address);				//чтение из видеопамяти
-	sf::Vector2i get_mouse_pos();
+	mouse_xy get_mouse_pos();
 };
 
 //EGA videocard
@@ -269,7 +269,7 @@ public:
 	void flash_rom(uint32 address, uint8 data); //запись в ПЗУ
 	uint8 read_rom(uint32 address);
 	std::string get_debug_data(uint8 i);
-	sf::Vector2i get_mouse_pos();
+	mouse_xy get_mouse_pos();
 };
 
 //=================== СТАВИТЬ после определения видеокарт
@@ -308,7 +308,7 @@ public:
 	void flash_rom(uint32 address, uint8 data);
 	uint8 read_rom(uint32 address);
 	std::string get_debug_data(uint8 i);
-	sf::Vector2i get_mouse_pos();
+	mouse_xy get_mouse_pos();
 };
 
 //==================== Вспомогательные мониторы==========
@@ -400,6 +400,20 @@ public:
 
 //Монитор видеокарты ega	
 class EGA_mon_device : public Dev_mon_device
+{
+private:
+
+public:
+	using Dev_mon_device::Dev_mon_device;
+	void main_loop();
+	void show();
+	void hide();
+	void render();
+	void update(int new_elapsed_ms);
+};
+
+//Монитор COM порта и мыши
+class COM_mon_device : public Dev_mon_device
 {
 private:
 

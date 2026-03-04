@@ -41,6 +41,7 @@ extern HDD_mon_device HDD_monitor;
 extern Audio_mon_device Audio_monitor;
 extern Mem_mon_device Mem_monitor;
 extern EGA_mon_device EGA_monitor;
+extern COM_mon_device COM_monitor;
 
 string filename_ROM;
 string filename_HDD_ROM;
@@ -238,7 +239,9 @@ void loader(int argc, char* argv[])
 
 	if (!EGA_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "EGA_MON: error loading font" << endl;
 	else cout << "EGA_MON: font " << path + "CousineR.ttf" << " loaded" << endl;
-
+	
+	if (!COM_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "COM_MON: error loading font" << endl;
+	else cout << "COM_MON: font " << path + "CousineR.ttf" << " loaded" << endl;
 
 #endif
 

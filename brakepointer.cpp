@@ -47,10 +47,9 @@ void Breakpointer::load_breakpoints()
 	//breakpoints.push_back({ 0xc03A0,"EGA POD14_4:" });
 	//breakpoints.push_back({ 0xc03c8,"EGA test vert" });
 	breakpoints.push_back({ 0xc03cc,"EGA POD14_75:" });
-	breakpoints.push_back({ 0x11eb0,"SB_START" });
-	breakpoints.push_back({ 0xd4003,"rtc" });
-
-
+	breakpoints.push_back({ 0x14465,"loop end" });
+	breakpoints.push_back({ 0x14469,"loop jump out" });
+	
 }
 
 void Breakpointer::load_comments()

@@ -649,7 +649,7 @@ void FDD_Ctrl::sync()
 				CMD_BUSY = 1;
 				FDD_busy_bits = FDD_busy_bits | (1 << selected_drive); //ставим признак занятости
 				//if (log_to_console_FDD) cout << " write BUFFER ready" << endl;
-				step_mode = 1;
+				//step_mode = 1;
 			}
 			return;
 		}
@@ -812,7 +812,7 @@ void FDD_Ctrl::sync()
 				CMD_BUSY = 1;
 				FDD_busy_bits = FDD_busy_bits | (1 << selected_drive); //ставим признак занятости
 				//if (log_to_console_FDD) cout << " read BUFFER ready" << endl;
-				step_mode = 1;
+				//step_mode = 1;
 				return;
 			}
 		}

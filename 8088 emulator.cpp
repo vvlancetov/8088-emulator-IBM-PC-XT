@@ -100,6 +100,9 @@ Mem_mon_device Mem_monitor(910, 1670, "Memory Window", 800, 300);
 //отладочное окно для EGA
 EGA_mon_device EGA_monitor(1200, 1200, "EGA debug", 300, 0);
 
+//отладочное окно для COM
+COM_mon_device COM_monitor(430, 840, "COM debug", 400, 0);
+
 //менеджер точек останова и комментариев
 Breakpointer bp_mgr;
 
@@ -240,6 +243,7 @@ bool show_hdd_window = true; //отладочное окно HDD
 bool show_audio_window = true; //отладочное окно звука
 bool show_memory_window = true; //отладочное окно памяти
 bool show_EGA_window = true; //отладочное окно EGA
+bool show_COM_window = true; //отладочное окно COM
 
 bool test_mode = 0; //влияет на память, режим тестов
 
@@ -338,6 +342,7 @@ int main(int argc, char* argv[]) {
 				Audio_monitor.update(0);			//мониторинг звука
 				Mem_monitor.update(0);				//мониторинг памяти
 				EGA_monitor.update(0);				//мониторинг EGA
+				COM_monitor.update(0);				//мониторинг EGA
 				timer_video = 0;
 				op_counter = 0;
 			}
@@ -348,7 +353,7 @@ int main(int argc, char* argv[]) {
 				keyboard.update(timer_kb, monitor.has_focus());    //синхронизация клавиатуры (проверка нажатий)
 				HDD.sync_data(timer_kb);		//синхронизация буфера HDD
 				joystick.sync(timer_kb);
-				ms_mouse.sync();
+				ms_mouse.poll_mouse();
 				timer_kb = 0;
 			}
 
@@ -392,9 +397,16 @@ int main(int argc, char* argv[]) {
 					HDD_monitor.update(0);			//логи HDD
 					Audio_monitor.update(0);		//мониторинг звука
 					Mem_monitor.update(0);			//мониторинг памяти
+					EGA_monitor.update(0);				//мониторинг EGA
+					//COM_monitor.update(0);				//мониторинг EGA
+					bp_mgr.load_breakpoints();		//перезагрузка точек
 				}
 			};
 			
+			//синхронизация COM порта и мыши
+			ms_mouse.sync();
+			COM1.sync();
+
 			timer_start = steady_clock::now();//перезапускаем таймер
 		}
 
@@ -405,7 +417,7 @@ int main(int argc, char* argv[]) {
 		keyboard.sync(); 	//синхронизация клавиатуры
 
 		//замедление работы в пошаговом режиме
-		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
 		//проверка аппаратных прерываний
 		if (Flag_IF)
@@ -2405,6 +2417,7 @@ void process_debug_keys()
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
+		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Equal) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
 		!(sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) &&
@@ -2456,6 +2469,13 @@ void process_debug_keys()
 		show_EGA_window = !show_EGA_window;
 		if (show_EGA_window) EGA_monitor.show();
 		else EGA_monitor.hide();
+		keys_up = false;
+	}
+	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
+	{
+		show_COM_window = !show_COM_window;
+		if (show_COM_window) COM_monitor.show();
+		else COM_monitor.hide();
 		keys_up = false;
 	}
 	//изменения масштаба

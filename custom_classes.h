@@ -145,7 +145,6 @@ public:
 	uint8 request_hw_dma(int channel); //запрос DMA от устройства
 };
 
-
 //внутренние счетчики таймера
 struct t_counter
 {
@@ -199,4 +198,14 @@ public:
 	{
 		scan_code_latch = code;
 	};
+};
+
+//координаты мыши
+struct mouse_xy
+{
+	int mouse_x;
+	int mouse_y;
+	int screen_size_x;
+	int screen_size_y;
+	float screen_scale;
 };

@@ -12,8 +12,8 @@ private:
 		std::string text;
 	};
 
-	void load_breakpoints();
-	void load_comments();
+	
+	
 	std::vector<comment> breakpoints;               // точки останова
 	std::vector<comment> comments;					//комментарии к программе
 	bool breakpoinst_ON = 0;		//активировать точки
@@ -31,6 +31,8 @@ public:
 	{
 		comments_ON = turn_on;
 	}
+	void load_breakpoints(); //загрузка точек
+	void load_comments();
 };
 
 

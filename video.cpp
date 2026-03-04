@@ -16,6 +16,8 @@
 #include "fdd.h"
 #include "hdd.h"
 #include "custom_classes.h"
+#include "serial_port.h"
+#include "mouse.h"
 
 typedef unsigned __int8 uint8;
 typedef unsigned __int16 uint16;
@@ -113,6 +115,8 @@ extern IC8237 dma_ctrl;
 extern FDD_Ctrl FDD_A;
 extern HDD_Ctrl HDD;
 extern IC8253 pc_timer;
+extern SerialPort COM1;
+extern Mouse ms_mouse;
 
 extern bool halt_cpu;		   //флаг остановки до получения прерывания
 
@@ -126,9 +130,6 @@ extern bool show_memory_window;//отладочное окно памяти
 //timer
 extern std::chrono::high_resolution_clock Hi_Res_Clk;
 
-//таймер ПК
-extern IC8253 pc_timer;
-
 //==================== CGA videocard =============
 
 void CGA_videocard::main_loop()   // синхронизация
@@ -138,7 +139,7 @@ void CGA_videocard::main_loop()   // синхронизация
 	main_window.setPosition({ window_pos_x, window_pos_y });
 	main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
 	main_window.setFramerateLimit(0);
-	main_window.setMouseCursorVisible(1);
+	main_window.setMouseCursorVisible(0);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -777,19 +778,19 @@ uint8 CGA_videocard::mem_read(uint32 address)
 {
 	return videomemory[address];
 }
-sf::Vector2i CGA_videocard::get_mouse_pos()
+mouse_xy CGA_videocard::get_mouse_pos()
 {
 	sf::Vector2i localPosition = sf::Mouse::getPosition(main_window); // window is a sf::Window
 	
-	int pos_x = localPosition.x;
-	int pos_y = localPosition.y;
+	mouse_xy mouse_data;  //пакет данных мыши
 
-	if (pos_x < 0) pos_x = 0;
-	if (pos_x >= main_window.getSize().x) pos_x = main_window.getSize().x - 1;
-	if (pos_y < 0) pos_y = 0;
-	if (pos_y >= main_window.getSize().y) pos_y = main_window.getSize().y - 1;
+	mouse_data.mouse_x = localPosition.x;
+	mouse_data.mouse_y = localPosition.y;
+	mouse_data.screen_size_x = window_size_x;
+	mouse_data.screen_size_y = window_size_y;
+	mouse_data.screen_scale = display_scale;
 
-	return sf::Vector2i({pos_x,pos_y});
+	return mouse_data;
 }
 
 //отладочные экраны
@@ -968,7 +969,7 @@ void Dev_mon_device::render()
 
 	for (int s = 0; s < 16; s++)
 	{
-		text.setString("[" + int_to_hex(*SS, 4) + ":" + int_to_hex(Stack_Pointer + s * 2, 4) + "] " + int_to_hex((int)(memory.read(Stack_Pointer + (s * 2) + SS_data * 16) + memory.read(Stack_Pointer + (s * 2) + 1 + SS_data * 16) * 256), 4));
+		text.setString("[" + int_to_hex(*SS, 4) + ":" + int_to_hex((Stack_Pointer + s * 2) & 0xFFFF, 4) + "] " + int_to_hex((int)(memory.read((Stack_Pointer + (s * 2)) & 0xFFFF + SS_data * 16) + memory.read((Stack_Pointer + (s * 2) + 1) & 0xFFFF + SS_data * 16) * 256), 4));
 		text.setPosition(sf::Vector2f(10, 700 + s * 30));
 		main_window.draw(text);
 	}
@@ -1945,6 +1946,161 @@ void EGA_mon_device::update(int new_elapsed_ms)
 	do_render = 1;				//обновить
 }
 
+void COM_mon_device::main_loop()
+{
+	//создаем окно
+	main_window.create(sf::VideoMode(sf::Vector2u(window_size_x, window_size_y)), window_title, sf::Style::Titlebar, sf::State::Windowed);
+	main_window.setPosition({ window_pos_x, window_pos_y });
+	main_window.setFramerateLimit(0);
+	main_window.setMouseCursorVisible(1);
+	main_window.setKeyRepeatEnabled(0);
+	main_window.setVerticalSyncEnabled(1);
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+	while (visible)
+	{
+		if (do_render)
+		{
+			//рисуем окно
+			render();
+			//события окна
+			while (main_window.pollEvent()) {};
+			do_render = 0;
+		}
+		else
+		{
+			//отдыхаем
+			_mm_pause();
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(5)); //задержка перед завершением
+	main_window.close();
+}
+void COM_mon_device::show()
+{
+	//признак видимости
+	visible = 1;
+
+	//создаем поток
+	std::thread new_t(&COM_mon_device::main_loop, this);
+	t = std::move(new_t);
+}
+void COM_mon_device::hide()
+{
+	//запоминаем координаты
+	sf::Vector2i p = main_window.getPosition();
+	window_pos_x = p.x;
+	window_pos_y = p.y;
+
+	//скрываем окно
+	visible = 0;
+	if (t.joinable()) t.join();
+}
+void COM_mon_device::render()
+{
+	main_window.setActive(1);
+	main_window.clear(sf::Color::Black);// очистка экрана
+
+	sf::Text text(font);				//обычный шрифт
+	text.setCharacterSize(20);
+	text.setFillColor(sf::Color::White);
+
+	//Регистры порта
+	text.setString(COM1.get_debug_data(1));
+	text.setPosition({ 3, 0 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(2));
+	text.setPosition({ 3, 20 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(3));
+	text.setPosition({ 3, 40 });
+	main_window.draw(text);
+	
+	text.setString(COM1.get_debug_data(4));
+	text.setPosition({ 3, 70 });
+	main_window.draw(text);
+	
+	text.setString(COM1.get_debug_data(12));
+	text.setPosition({ 3, 90 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(13));
+	text.setPosition({ 3, 110 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(14));
+	text.setPosition({ 3, 130 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(15));
+	text.setPosition({ 3, 150 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(5));
+	text.setPosition({ 3, 180 });
+	main_window.draw(text);
+	
+	text.setString(COM1.get_debug_data(16));
+	text.setPosition({ 3, 200 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(17));
+	text.setPosition({ 120, 200 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(6));
+	text.setPosition({ 3, 230 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(18));
+	text.setPosition({ 3, 250 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(19));
+	text.setPosition({ 3, 270 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(7));
+	text.setPosition({ 3, 300 });
+	main_window.draw(text);
+	
+	text.setString(COM1.get_debug_data(20));
+	text.setPosition({ 3, 320 });
+	main_window.draw(text);
+
+
+	text.setString(COM1.get_debug_data(8));
+	text.setPosition({ 3, 400 });
+	main_window.draw(text);
+	
+	text.setString(COM1.get_debug_data(21));
+	text.setPosition({ 3, 420 });
+	main_window.draw(text);
+
+	text.setString(COM1.get_debug_data(9));
+	text.setPosition({ 3, 590 });
+	main_window.draw(text);
+	
+	text.setString(COM1.get_debug_data(22));
+	text.setPosition({ 3, 610 });
+	main_window.draw(text);
+
+	text.setString(ms_mouse.get_debug_data(1));
+	text.setPosition({ 3, 800 });
+	main_window.draw(text);
+
+
+	main_window.display();
+	main_window.setActive(0);
+}
+void COM_mon_device::update(int new_elapsed_ms)
+{
+	do_render = 1;				//обновить
+}
+
 //==================== MDA videocard =============
 
 void MDA_videocard::main_loop()
@@ -2317,9 +2473,19 @@ uint8 MDA_videocard::mem_read(uint32 address)
 {
 	return videomemory[address];
 }
-sf::Vector2i MDA_videocard::get_mouse_pos()
+mouse_xy MDA_videocard::get_mouse_pos()
 {
-	return sf::Vector2i({ 0,0 });
+	sf::Vector2i localPosition = sf::Mouse::getPosition(main_window); // window is a sf::Window
+
+	mouse_xy mouse_data;  //пакет данных мыши
+
+	mouse_data.mouse_x = localPosition.x;
+	mouse_data.mouse_y = localPosition.y;
+	mouse_data.screen_size_x = window_size_x;
+	mouse_data.screen_size_y = window_size_y;
+	mouse_data.screen_scale = display_scale;
+
+	return mouse_data;
 }
 
 //==================== EGA videocard =============
@@ -3765,9 +3931,19 @@ std::string EGA_videocard::get_debug_data(uint8 i)
 
 	return " no data";
 }
-sf::Vector2i EGA_videocard::get_mouse_pos()
+mouse_xy EGA_videocard::get_mouse_pos()
 {
-	return sf::Vector2i({ 0,0 });
+	sf::Vector2i localPosition = sf::Mouse::getPosition(main_window); // window is a sf::Window
+
+	mouse_xy mouse_data;  //пакет данных мыши
+
+	mouse_data.mouse_x = localPosition.x;
+	mouse_data.mouse_y = localPosition.y;
+	mouse_data.screen_size_x = window_size_x;
+	mouse_data.screen_size_y = window_size_y;
+	mouse_data.screen_scale = display_scale;
+
+	return mouse_data;
 }
 
 //====================== Monitor =================
@@ -4018,7 +4194,7 @@ std::string Monitor::get_debug_data(uint8 i)
 {
 	return EGA_card.get_debug_data(i);
 }
-sf::Vector2i Monitor::get_mouse_pos()
+mouse_xy Monitor::get_mouse_pos()
 {
 	//читаем данные из флеш ПЗУ 
 	switch (card_type)
@@ -4033,7 +4209,7 @@ sf::Vector2i Monitor::get_mouse_pos()
 		return EGA_card.get_mouse_pos();
 		break;
 	}
-	return sf::Vector2i({ 0,0 });
+	return mouse_xy ({ 0,0,0,0,0 });
 
 }
 Monitor::Monitor()

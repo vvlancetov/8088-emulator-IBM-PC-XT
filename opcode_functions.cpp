@@ -10112,6 +10112,7 @@ void JCXZ()			// JCXZ = Jump on CX Zero
 
 void RET_Segment()					//Return Within Segment
 {
+	//step_mode = 1;
 	Instruction_Pointer = memory.read(SS_data * 16 + Stack_Pointer);
 	Stack_Pointer ++;
 	Instruction_Pointer += memory.read(SS_data * 16 + Stack_Pointer) * 256;
@@ -10123,6 +10124,7 @@ void RET_Segment()					//Return Within Segment
 }
 void RET_Segment_IMM_SP()			//Return Within Segment Adding Immediate to SP
 {
+	//step_mode = 1;
 	Instruction_Pointer++;
 	uint16 pop_bytes = memory.read(Instruction_Pointer + *CS * 16);
 	Instruction_Pointer++;
@@ -10138,6 +10140,7 @@ void RET_Segment_IMM_SP()			//Return Within Segment Adding Immediate to SP
 }
 void RET_Inter_Segment()			//Return Intersegment
 {
+	//step_mode = 1;
 	Instruction_Pointer = memory.read(Stack_Pointer + SS_data * 16);
 	Stack_Pointer++;
 	Instruction_Pointer += memory.read(Stack_Pointer + SS_data * 16) * 256;
@@ -10155,7 +10158,11 @@ void RET_Inter_Segment()			//Return Intersegment
 }
 void RET_Inter_Segment_IMM_SP()		//Return Intersegment Adding Immediate to SP
 {
-	uint16 pop_bytes = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
+	//step_mode = 1;
+	Instruction_Pointer++;
+	uint16 pop_bytes = memory.read(Instruction_Pointer + *CS * 16);
+	Instruction_Pointer++;
+	pop_bytes += memory.read(Instruction_Pointer + *CS * 16) * 256;
 	
 	Instruction_Pointer = memory.read(Stack_Pointer + SS_data * 16);
 	Stack_Pointer ++;
@@ -10185,7 +10192,7 @@ void INT_N()			//INT = Interrupt
 
 	last_INT = int_type;
 
-	//if (int_type == 0) cout << "int0!";
+	//if (int_type == 0x21 && AX == 0x3533) step_mode = 1;
 
 	//определяем новый IP и CS
 	uint16 new_IP = memory.read(int_type * 4) + memory.read(int_type * 4 + 1) * 256;
