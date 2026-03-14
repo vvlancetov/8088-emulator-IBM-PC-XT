@@ -31,8 +31,8 @@ void SoundMaker::put_sample(int16_t sample)
 {
 	//усредн€ющий массив
 	avg_arr_ptr++;
-	if (avg_arr_ptr == 16) avg_arr_ptr = 0;
-	avg_arr[avg_arr_ptr] = sample * 32000 * volume / 100;
+	if (avg_arr_ptr == 32) avg_arr_ptr = 0;
+	avg_arr[avg_arr_ptr] = sample * 20000 * volume / 100;
 
 	//выравнивание частот таймера и сэмпла
 	static float pos = 0;
@@ -43,7 +43,7 @@ void SoundMaker::put_sample(int16_t sample)
 	
 	//расчет среднего по массиву
 	int16_t agv_sample = 0;
-	for (int i = 0; i < 16; i++) agv_sample = agv_sample + avg_arr[i]/16;
+	for (int i = 0; i < 32; i++) agv_sample = agv_sample + avg_arr[i]/32;
 		
 	//получение сэмпла от таймера
 	if (timer_freq > 30 && timer_freq < 5000) can_hear = 1;
@@ -83,7 +83,7 @@ void SoundMaker::put_sample(int16_t sample)
 
 	}
 
-	if (!wait_for_dispatch || next_byte_to_gen < 600) next_byte_to_gen++; //если wait_for_dispatch, то генераци€ не далее 600
+	if (!wait_for_dispatch || next_byte_to_gen < 800) next_byte_to_gen++; //если wait_for_dispatch, то генераци€ не далее 600
 
 	if (next_byte_to_gen == sample_size) 
 	{
@@ -233,6 +233,7 @@ void SoundMaker::set_volume(uint8 vol)
 {
 	volume = vol;
 	if (volume > 100) volume = 100;
+	cout << "AUDIO: volume set to " << (int)volume << endl;
 }
 
 void Audio_mon_device::main_loop()
@@ -335,4 +336,15 @@ void Audio_mon_device::render()
 void Audio_mon_device::update(int new_elapsed_ms)
 {
 	do_render = 1;				//обновить
+}
+
+void SoundMaker::volume_up()
+{
+	if (volume < 100) volume++;
+	cout << "Audio: volume " << (int)volume << endl;
+}
+void SoundMaker::volume_down()
+{
+	if (volume) volume--;
+	cout << "Audio: volume " << (int)volume << endl;
 }

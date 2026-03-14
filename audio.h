@@ -48,7 +48,7 @@ private:
 	int16_t sound_sample_A[4800];		//массив для сэмплов (числа со знаком по модулю 32000)
 	int16_t sound_sample_B[4800];		//второй массив
 	
-	int16_t avg_arr[16];					//усредняющий массив
+	int16_t avg_arr[32];					//усредняющий массив
 	uint8 avg_arr_ptr = 0;				//указатель следующего элемента в массиве
 	int next_byte_to_gen = 0;			//позиция следующего байта для генерации
 	//int sample_to_gen = 0;				//текущий сэмпл 0 - A, 1 - B.
@@ -77,6 +77,8 @@ public:
 	uint32 raw_duration[8] = { 0 };
 	uint8 raw_duration_ptr = 0;
 	void set_volume(uint8 vol);
+	void volume_up();
+	void volume_down();
 	void change_to_A();	//подготовить сэмпл А
 	void change_to_B(); //подготовить сэмпл В
 	bool wait_for_dispatch = 0;

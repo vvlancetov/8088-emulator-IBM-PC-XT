@@ -9,6 +9,7 @@
 #include <sstream>
 #include <chrono>
 #include <thread>
+#include <algorithm>
 #include <memory>
 #include "video.h"
 #include "audio.h"
@@ -110,6 +111,7 @@ extern IC8259 int_ctrl;
 extern Mem_Ctrl memory;
 extern Mem_Ctrl memory; //контроллер памяти
 extern Monitor monitor;
+extern EGA_mon_device EGA_monitor;
 extern KBD keyboard;
 extern IC8237 dma_ctrl;
 extern FDD_Ctrl FDD_A;
@@ -207,7 +209,7 @@ void CGA_videocard::render()
 	main_window.clear();		// очистка экрана
 
 	//проверка бита включения экрана
-	if ((CGA_Mode_Select_Register & 8) == 0) goto exit; //карта отключена
+	if ((CGA_Mode_Select_Register & 8) == 0) goto exit_CGA; //карта отключена
 
 	//цикл отрисовки экрана
 	if (cursor_clock.getElapsedTime().asMicroseconds() > 300000) //мигание курсора
@@ -485,7 +487,7 @@ void CGA_videocard::render()
 	text.setOutlineThickness(3.1);
 	if (debug_mess_1 != "") main_window.draw(text);
 
-exit:
+exit_CGA:
 	main_window.display();
 	int_request = true;//устанавливаем флаг в конце кадра
 	main_window.setActive(0);
@@ -630,7 +632,7 @@ uint8 CGA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 		if (log_to_console) cout << "CGA: read PORT 0x3DA (CRT ray) -> ";
 		//считывание регистра состояния
 		//меняем для симуляции обратного хода луча
-		
+
 		uint8 out = 0;
 		//рассчитываем позицию луча
 		uint16 frame_pos = pc_timer.get_time(3) % (21845);
@@ -644,7 +646,7 @@ uint8 CGA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 		}
 
 		return out;
-		
+
 		/*
 		static bool CRT_flip_flop = 0;
 		CRT_flip_flop = !CRT_flip_flop;
@@ -778,10 +780,15 @@ uint8 CGA_videocard::mem_read(uint32 address)
 {
 	return videomemory[address];
 }
+uint8 CGA_videocard::direct_read(uint32 address)
+{
+	if (address < 16 * 1024) return videomemory[address];
+	else return 0;
+}
 mouse_xy CGA_videocard::get_mouse_pos()
 {
 	sf::Vector2i localPosition = sf::Mouse::getPosition(main_window); // window is a sf::Window
-	
+
 	mouse_xy mouse_data;  //пакет данных мыши
 
 	mouse_data.mouse_x = localPosition.x;
@@ -1643,7 +1650,9 @@ void Mem_mon_device::render()
 			//движение курсора влево
 			cursor -= 1;
 			if (cursor == 4) cursor = 3;
-			if (cursor == 255) cursor = 7;
+			if (cursor == 13) cursor = 8;
+			if (cursor == 255) cursor = 14;
+
 			keys_up = 0; //предотвращение залипания
 		}
 
@@ -1651,7 +1660,8 @@ void Mem_mon_device::render()
 		{
 			//движение курсора вправо
 			cursor += 1;
-			if (cursor == 9) cursor = 0;
+			if (cursor == 9) cursor = 14;
+			if (cursor == 15) cursor = 0;
 			if (cursor == 4) cursor = 5;
 			keys_up = 0; //предотвращение залипания
 		}
@@ -1667,7 +1677,7 @@ void Mem_mon_device::render()
 				segment = segment & ~(0xF << ((3 - cursor) * 4));
 				segment = segment | (d << ((3 - cursor) * 4));
 			}
-			if (cursor > 4)
+			if (cursor > 4 && cursor < 9)
 			{
 				uint8 d = ((offset >> ((8 - cursor) * 4)) & 0xF) + 1;//цифра под курсором
 				if (d == 16) d = 0;
@@ -1675,6 +1685,13 @@ void Mem_mon_device::render()
 				offset = offset & ~(0xF << ((8 - cursor) * 4));
 				offset = offset | (d << ((8 - cursor) * 4));
 			}
+			if (cursor == 14 && monitor.get_card_type() == videocard_type::EGA)
+			{
+				uint8 d = ega_page + 1;//цифра под курсором
+				if (d == 4) d = 0;
+				ega_page = d;
+			}
+
 			keys_up = 0; //предотвращение залипания
 		}
 
@@ -1690,7 +1707,7 @@ void Mem_mon_device::render()
 				segment = segment & ~(0xF << ((3 - cursor) * 4));
 				segment = segment | (d << ((3 - cursor) * 4));
 			}
-			if (cursor > 4)
+			if (cursor > 4 && cursor < 9)
 			{
 				uint8 d = ((offset >> ((8 - cursor) * 4)) & 0xF) - 1;//цифра под курсором
 
@@ -1699,6 +1716,13 @@ void Mem_mon_device::render()
 				offset = offset & ~(0xF << ((8 - cursor) * 4));
 				offset = offset | (d << ((8 - cursor) * 4));
 			}
+			if (cursor == 14 && monitor.get_card_type() == videocard_type::EGA)
+			{
+				uint8 d = ega_page - 1;//цифра под курсором
+				if (d > 3) d = 3;
+				ega_page = d;
+			}
+
 			keys_up = 0; //предотвращение залипания
 		}
 
@@ -1716,13 +1740,19 @@ void Mem_mon_device::render()
 	text.setPosition({ 3,2 });
 	//text.setStyle(sf::Text::Bold);
 	main_window.draw(text);
+	text.setString("page");
+	text.setPosition({ 460,2 });
+	//text.setStyle(sf::Text::Bold);
+	main_window.draw(text);
+
 
 	//выводим адрес по символам
-	string addr = int_to_hex(segment, 4) + ":" + int_to_hex(offset, 4);
+	string addr = int_to_hex(segment, 4) + ":" + int_to_hex(offset, 4) + " page" + to_string(ega_page);
 
-	for (int pos = 0; pos < 9; pos++)
+	for (int pos = 0; pos < 15; pos++)
 	{
 		if (pos == 4) continue;
+		if (pos > 8 && pos < 14) continue;
 		text.setString(addr.substr(pos, 1));
 		//text.setScale({ 1.5,1.0 });
 		//text.setStyle(sf::Text::Bold);
@@ -1750,7 +1780,18 @@ void Mem_mon_device::render()
 
 		for (int x = 0; x < 16; x++)  //столбцы
 		{
-			string s = int_to_hex(memory.read(segment * 16 + offset + y * 16 + x), 2);
+			string s = "";
+			if ((segment * 16 + offset + y * 16 + x >= 0xA0000) && (segment * 16 + offset + y * 16 + x < 0xB0000))	s = int_to_hex(monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xA0000 + ega_page * 0x10000), 2); //видеопамять
+			else
+			{
+				if ((segment * 16 + offset + y * 16 + x >= 0xB8000) && (segment * 16 + offset + y * 16 + x < 0xBC000))	s = int_to_hex(monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xB8000 + ega_page * 0x10000), 2); //видеопамять
+				else
+				{
+					if ((segment * 16 + offset + y * 16 + x >= 0xB0000) && (segment * 16 + offset + y * 16 + x < 0xB1000))	s = int_to_hex(monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xB0000 + ega_page * 0x10000), 2); //видеопамять
+					else s = int_to_hex(memory.read(segment * 16 + offset + y * 16 + x), 2); //обычная память
+				}
+			}
+
 			transform(s.begin(), s.end(), s.begin(), ::toupper);
 			text.setString(s);
 			//text.setScale({ 1.5,1.0 });
@@ -1761,8 +1802,38 @@ void Mem_mon_device::render()
 		ns = "| ";
 		for (int x = 0; x < 16; x++)  //столбцы
 		{
-			if ((memory.read(segment * 16 + offset + y * 16 + x)) < 32) ns += ".";
-			else ns += (char)memory.read(segment * 16 + offset + y * 16 + x);
+			if ((segment * 16 + offset + y * 16 + x >= 0xA0000) && (segment * 16 + offset + y * 16 + x < 0xB0000))
+			{
+				//видеопамять EGA
+				if (monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xA0000 + ega_page * 0x10000) < 32) ns += ".";
+				else ns += (char)monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xA0000 + ega_page * 0x10000);
+			}
+			else
+			{
+				if ((segment * 16 + offset + y * 16 + x >= 0xB8000) && (segment * 16 + offset + y * 16 + x < 0xBC000))
+				{
+					//видеопамять CGA
+					if (monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xB8000 + ega_page * 0x10000) < 32) ns += ".";
+					else ns += (char)monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xB8000 + ega_page * 0x10000);
+				}
+				else
+				{
+
+					if ((segment * 16 + offset + y * 16 + x >= 0xB0000) && (segment * 16 + offset + y * 16 + x < 0xB1000))
+					{
+						//видеопамять MGA
+						if (monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xB0000 + ega_page * 0x10000) < 32) ns += ".";
+						else ns += (char)monitor.direct_read(segment * 16 + offset + y * 16 + x - 0xB0000 + ega_page * 0x10000);
+					}
+					else
+					{
+						//обычная память
+						if ((memory.read(segment * 16 + offset + y * 16 + x)) < 32) ns += ".";
+						else ns += (char)memory.read(segment * 16 + offset + y * 16 + x);
+					}
+
+				}
+			}
 		}
 		text.setString(ns);
 		text.setPosition(sf::Vector2f(656, y * 25 + 25 + 20 + floor(y / 16) * 5));
@@ -1786,6 +1857,8 @@ void EGA_mon_device::main_loop()
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	//сжимаем
+	main_window.setSize({ 1000, 1200 });
 
 	while (visible)
 	{
@@ -1801,7 +1874,7 @@ void EGA_mon_device::main_loop()
 		{
 			//отдыхаем
 			_mm_pause();
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			//std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 	}
 	std::this_thread::sleep_for(std::chrono::milliseconds(5)); //задержка перед завершением
@@ -1830,8 +1903,13 @@ void EGA_mon_device::hide()
 void EGA_mon_device::render()
 {
 	main_window.setActive(1);
-	main_window.clear(sf::Color::Black);// очистка экрана
-
+	//main_window.clear(sf::Color(0,0,0,100));// очистка экрана
+	sf::RectangleShape clear_rec;
+	clear_rec.setFillColor(sf::Color(0, 0, 0, 100));
+	clear_rec.setSize(sf::Vector2f({ (float)window_size_x, (float)window_size_y }));
+	main_window.draw(clear_rec);			//угасание
+	
+	
 	sf::Text text(font);				//обычный шрифт
 	text.setCharacterSize(30);
 	text.setFillColor(sf::Color::White);
@@ -1840,6 +1918,12 @@ void EGA_mon_device::render()
 	text.setString("EGA registers (" + monitor.get_debug_data(6) + ")");
 	text.setPosition({ 3, 3 });
 	main_window.draw(text);
+
+	//текущий режим
+	text.setString("state: " + monitor.get_debug_data(55));
+	text.setPosition({ 730, 3 });
+	main_window.draw(text);
+
 
 	//Miscelaneous Output Register
 	text.setString(monitor.get_debug_data(0));
@@ -1863,7 +1947,7 @@ void EGA_mon_device::render()
 		text.setPosition({ 300, 110 + (float)i * 30 });
 		main_window.draw(text);
 	}
-		
+
 	//CRT controller
 	text.setString("CRT controller Registers");
 	text.setPosition({ 3, 270 });
@@ -1875,10 +1959,10 @@ void EGA_mon_device::render()
 	{
 		int p1 = monitor.get_debug_data(i + 7).find_first_of(":");
 		text.setString(monitor.get_debug_data(i + 7).substr(0, p1 + 1));
-		text.setPosition({ 3, 300 + (float)i*30 });
+		text.setPosition({ 3, 300 + (float)i * 30 });
 		main_window.draw(text);
 		text.setString(monitor.get_debug_data(i + 7).substr(p1 + 1, 20));
-		text.setPosition({300, 300 + (float)i * 30 });
+		text.setPosition({ 300, 300 + (float)i * 30 });
 		main_window.draw(text);
 	}
 
@@ -1899,10 +1983,10 @@ void EGA_mon_device::render()
 		text.setPosition({ 300, 960 + (float)i * 30 });
 		main_window.draw(text);
 	}
-	
+
 	//Grafics SI register
 	text.setString("Grafics SI Registers");
-	text.setPosition({600, 80 });
+	text.setPosition({ 600, 80 });
 	text.setFillColor(sf::Color::Yellow);
 	main_window.draw(text);
 	text.setFillColor(sf::Color::White);
@@ -1917,7 +2001,7 @@ void EGA_mon_device::render()
 		text.setPosition({ 900, 110 + (float)i * 30 });
 		main_window.draw(text);
 	}
-	
+
 	//Grafics controller register (block 2)
 	text.setString("Block 2");
 	text.setPosition({ 600, 930 });
@@ -1936,7 +2020,36 @@ void EGA_mon_device::render()
 		main_window.draw(text);
 	}
 
+	//Разное
+	text.setString("Misc data");
+	text.setFillColor(sf::Color::Yellow);
+	text.setPosition({ 600, 690 });
+	main_window.draw(text);
+	text.setFillColor(sf::Color::White);
 
+	text.setString(monitor.get_debug_data(56));
+	text.setPosition({ 600, 720 });
+	main_window.draw(text);
+
+	text.setString(monitor.get_debug_data(57));
+	text.setPosition({ 600, 750 });
+	main_window.draw(text);
+
+	text.setString(monitor.get_debug_data(58));
+	text.setPosition({ 600, 780 });
+	main_window.draw(text);
+
+	text.setString(monitor.get_debug_data(59));
+	text.setPosition({ 600, 810 });
+	main_window.draw(text);
+
+	text.setString(monitor.get_debug_data(60));
+	text.setPosition({ 600, 840 });
+	main_window.draw(text);
+
+	text.setString(monitor.get_debug_data(61));
+	text.setPosition({ 600, 870 });
+	main_window.draw(text);
 	
 	main_window.display();
 	main_window.setActive(0);
@@ -2018,11 +2131,11 @@ void COM_mon_device::render()
 	text.setString(COM1.get_debug_data(3));
 	text.setPosition({ 3, 40 });
 	main_window.draw(text);
-	
+
 	text.setString(COM1.get_debug_data(4));
 	text.setPosition({ 3, 70 });
 	main_window.draw(text);
-	
+
 	text.setString(COM1.get_debug_data(12));
 	text.setPosition({ 3, 90 });
 	main_window.draw(text);
@@ -2042,7 +2155,7 @@ void COM_mon_device::render()
 	text.setString(COM1.get_debug_data(5));
 	text.setPosition({ 3, 180 });
 	main_window.draw(text);
-	
+
 	text.setString(COM1.get_debug_data(16));
 	text.setPosition({ 3, 200 });
 	main_window.draw(text);
@@ -2066,7 +2179,7 @@ void COM_mon_device::render()
 	text.setString(COM1.get_debug_data(7));
 	text.setPosition({ 3, 300 });
 	main_window.draw(text);
-	
+
 	text.setString(COM1.get_debug_data(20));
 	text.setPosition({ 3, 320 });
 	main_window.draw(text);
@@ -2075,7 +2188,7 @@ void COM_mon_device::render()
 	text.setString(COM1.get_debug_data(8));
 	text.setPosition({ 3, 400 });
 	main_window.draw(text);
-	
+
 	text.setString(COM1.get_debug_data(21));
 	text.setPosition({ 3, 420 });
 	main_window.draw(text);
@@ -2083,7 +2196,7 @@ void COM_mon_device::render()
 	text.setString(COM1.get_debug_data(9));
 	text.setPosition({ 3, 590 });
 	main_window.draw(text);
-	
+
 	text.setString(COM1.get_debug_data(22));
 	text.setPosition({ 3, 610 });
 	main_window.draw(text);
@@ -2174,7 +2287,7 @@ void MDA_videocard::render()					//синхронизация
 	sf::Text text(font);		//обычный шрифт
 
 	//проверка бита включения экрана
-	if ((MDA_Mode_Select_Register & 8) == 0) goto exit; //карта отключена
+	if ((MDA_Mode_Select_Register & 8) == 0) goto exit_MDA; //карта отключена
 
 	//цикл отрисовки экрана
 	if (cursor_clock.getElapsedTime().asMicroseconds() > 300000) //мигание курсора
@@ -2321,7 +2434,7 @@ void MDA_videocard::render()					//синхронизация
 	text.setOutlineThickness(3.1);
 	if (debug_mess_1 != "") main_window.draw(text);
 
-exit:
+exit_MDA:
 	main_window.display();
 	do_render = 0;
 	main_window.setActive(0);
@@ -2487,6 +2600,11 @@ mouse_xy MDA_videocard::get_mouse_pos()
 
 	return mouse_data;
 }
+uint8 MDA_videocard::direct_read(uint32 address)
+{
+	if (address < 4 * 1024) return videomemory[address];
+	else return 0;
+}
 
 //==================== EGA videocard =============
 
@@ -2552,7 +2670,7 @@ EGA_videocard::EGA_videocard()							//конструктор
 	TXT_BW_colors[13] = sf::Color(0xAA, 0xAA, 0xAA);
 	TXT_BW_colors[14] = sf::Color(0xAA, 0xAA, 0xAA);
 	TXT_BW_colors[15] = sf::Color(0xFF, 0xFF, 0xFF);
-	
+
 	//цвета для графического режима
 	EGA_colors[0] = sf::Color(0, 0, 0);
 	EGA_colors[1] = sf::Color(0, 0, 0xAA);
@@ -2570,6 +2688,72 @@ EGA_videocard::EGA_videocard()							//конструктор
 	EGA_colors[13] = sf::Color(0xFF, 0x55, 0xFF);
 	EGA_colors[14] = sf::Color(0xFF, 0xFF, 0x55);
 	EGA_colors[15] = sf::Color(0xFF, 0xFF, 0xFF);
+
+	//64 цвета палитры
+	EGA_colors_64[0] = sf::Color(0, 0, 0);
+	EGA_colors_64[1] = sf::Color(0, 0, 0xAA);
+	EGA_colors_64[2] = sf::Color(0, 0xAA, 0);
+	EGA_colors_64[3] = sf::Color(0, 0xAA, 0xAA);
+	EGA_colors_64[4] = sf::Color(0xAA, 0, 0);
+	EGA_colors_64[5] = sf::Color(0xAA, 0, 0xAA);
+	EGA_colors_64[6] = sf::Color(0xAA, 0xAA, 0);
+	EGA_colors_64[7] = sf::Color(0xAA, 0xAA, 0xAA);
+	EGA_colors_64[8] = sf::Color(0x0, 0x0, 0x55);
+	EGA_colors_64[9] = sf::Color(0x0, 0x0, 0xFF);
+	EGA_colors_64[10] = sf::Color(0x0, 0xAA, 0x55);
+	EGA_colors_64[11] = sf::Color(0x0, 0xAA, 0xFF);
+	EGA_colors_64[12] = sf::Color(0xAA, 0x00, 0x55);
+	EGA_colors_64[13] = sf::Color(0xAA, 0x0, 0xEE);
+	EGA_colors_64[14] = sf::Color(0xAA, 0xAA, 0x55);
+	EGA_colors_64[15] = sf::Color(0xAA, 0xAA, 0xEE);
+	EGA_colors_64[16] = sf::Color(0x00, 0x55, 0x00);
+	EGA_colors_64[17] = sf::Color(0x00, 0x55, 0xAA);
+	EGA_colors_64[18] = sf::Color(0x00, 0xEE, 0x00);
+	EGA_colors_64[19] = sf::Color(0x00, 0xEE, 0xAA);
+	EGA_colors_64[20] = sf::Color(0xAA, 0x55, 0x00);
+	EGA_colors_64[21] = sf::Color(0xAA, 0x55, 0xAA);
+	EGA_colors_64[22] = sf::Color(0xAA, 0xEE, 0x00);
+	EGA_colors_64[23] = sf::Color(0xAA, 0xEE, 0xAA);
+	EGA_colors_64[24] = sf::Color(0x00, 0x55, 0x55);
+	EGA_colors_64[25] = sf::Color(0x00, 0x55, 0xEE);
+	EGA_colors_64[26] = sf::Color(0x00, 0xEE, 0x55);
+	EGA_colors_64[27] = sf::Color(0x00, 0xEE, 0xEE);
+	EGA_colors_64[28] = sf::Color(0xAA, 0x55, 0x55);
+	EGA_colors_64[29] = sf::Color(0xAA, 0x55, 0xEE);
+	EGA_colors_64[30] = sf::Color(0xAA, 0xEE, 0x55);
+	EGA_colors_64[31] = sf::Color(0xAA, 0xEE, 0xEE);
+	EGA_colors_64[32] = sf::Color(0x55, 00,00);
+	EGA_colors_64[33] = sf::Color(0x55, 00,0xAA);
+	EGA_colors_64[34] = sf::Color(0x55,0xAA,00);
+	EGA_colors_64[35] = sf::Color(0x55,0xAA,0xAA);
+	EGA_colors_64[36] = sf::Color(0xEE,00,00);
+	EGA_colors_64[37] = sf::Color(0xEE,00,0xAA);
+	EGA_colors_64[38] = sf::Color(0xEE,0xAA,00);
+	EGA_colors_64[39] = sf::Color(0xEE,0xAA,0xAA);
+	EGA_colors_64[40] = sf::Color(0x55,00,0x55);
+	EGA_colors_64[41] = sf::Color(0x55,00,0xEE);
+	EGA_colors_64[42] = sf::Color(0x55,0xAA,0x55);
+	EGA_colors_64[43] = sf::Color(0x55,0xAA,0xEE);
+	EGA_colors_64[44] = sf::Color(0xEE,00,0x55);
+	EGA_colors_64[45] = sf::Color(0xEE,00,0xEE);
+	EGA_colors_64[46] = sf::Color(0xEE,0xAA,0x55);
+	EGA_colors_64[47] = sf::Color(0xEE,0xAA,0xEE);
+	EGA_colors_64[48] = sf::Color(0x55,0x55,00);
+	EGA_colors_64[49] = sf::Color(0x55,0x55,0xAA);
+	EGA_colors_64[50] = sf::Color(0x55,0xEE,00);
+	EGA_colors_64[51] = sf::Color(0x55,0xEE,0xAA);
+	EGA_colors_64[52] = sf::Color(0xEE,0x55,00);
+	EGA_colors_64[53] = sf::Color(0xEE,0x55,0xAA);
+	EGA_colors_64[54] = sf::Color(0xEE,0xEE,00);
+	EGA_colors_64[55] = sf::Color(0xEE,0xEE,0xAA);
+	EGA_colors_64[56] = sf::Color(0x55,0x55,0x55);
+	EGA_colors_64[57] = sf::Color(0x55,0x55,0xEE);
+	EGA_colors_64[58] = sf::Color(0x55,0xEE,0x55);
+	EGA_colors_64[59] = sf::Color(0x55,0xEE,0xEE);
+	EGA_colors_64[60] = sf::Color(0xEE,0x55,0x55);
+	EGA_colors_64[61] = sf::Color(0xEE,0x55,0xEE);
+	EGA_colors_64[62] = sf::Color(0xEE,0xEE,0x55);
+	EGA_colors_64[63] = sf::Color(0xEE,0xEE,0xEE);
 }
 void EGA_videocard::show()
 {
@@ -2603,7 +2787,7 @@ void EGA_videocard::main_loop()
 	main_window.setPosition({ window_pos_x, window_pos_y });
 	main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
 	main_window.setFramerateLimit(0);
-	main_window.setMouseCursorVisible(1);
+	main_window.setMouseCursorVisible(0);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2649,22 +2833,22 @@ void EGA_videocard::write_port(uint16 port, uint8 data)	//запись в порт адаптера
 		EnRAM = (data >> 1) & 1;
 		On_board_switch_sel = (data >> 2) & 3; //выбор номера переключателя
 		High_pix_clock = (data >> 2) & 1; //повышенная частота (720 пикселей)
-		PageBit = (data >> 5) & 1;
+		PageBitOddEven = (data >> 5) & 1;
 		Lines_350 = (data >> 7) & 1;
 		if (log_to_console_EGA)
 		{
-			cout << "EGA: bit0(BW/COL)=" << (int)IOAddrSel << " En_RAM=" << (int)EnRAM << " PageBit=" << (int)PageBit;
+			cout << "EGA: bit0(BW/COL)=" << (int)IOAddrSel << " En_RAM=" << (int)EnRAM;
 			if (On_board_switch_sel == 0) cout << " clk=14MHz";
 			if (On_board_switch_sel == 1) cout << " clk=16MHz";
 			if (On_board_switch_sel == 2) cout << " clk=Ext";
-			cout << " IntDRV=" << (int)((data >> 4) & 1) << " 64K_page=" << (int)PageBit << " bit_6_7=" << (int)((data >> 6) & 3) << endl;
+			cout << " IntDRV=" << (int)((data >> 4) & 1) << " 64K_page=" << (int)PageBitOddEven << " bit_6_7=" << (int)((data >> 6) & 3) << endl;
 		}
 	}
 
 	if ((port == 0x3ba && !IOAddrSel) || (port == 0x3da && IOAddrSel)) //Feature Control Register
 	{
 		//управление доп разъемом
-		ac_flipflop = 0; //
+		
 	}
 
 	if (port == 0x3C4) //Sequencer Address Register
@@ -2681,10 +2865,10 @@ void EGA_videocard::write_port(uint16 port, uint8 data)	//запись в порт адаптера
 			if ((data & 3) != 3)
 			{
 				if (log_to_console_EGA) cout << "EGA Reset Sequencer" << endl;  //добавить сброс регистров
-				seq_registers[1] = 0;
-				seq_registers[2] = 0;
-				seq_registers[3] = 0;
-				seq_registers[4] = 0;
+				//seq_registers[1] = 0;
+				//seq_registers[2] = 0;
+				//seq_registers[3] = 0;
+				//seq_registers[4] = 0;
 			}
 		}
 		if (SEQ_sel_reg == 1 && log_to_console_EGA) cout << "EGA Clocking Mode Register" << (bitset<8>)data << endl;
@@ -2728,9 +2912,10 @@ void EGA_videocard::write_port(uint16 port, uint8 data)	//запись в порт адаптера
 
 	if (port == 0x3c0)  //Attribute controller register
 	{
-		if (ac_flipflop)
+		if (!ac_flipflop)
 		{
 			AC_sel_reg = data & 31; //выбор номера регистра
+			video_on = (data >> 5) & 1;
 			//if (log_to_console_EGA) cout << "EGA AC sel reg -> " << hex << (int)AC_sel_reg << " ";
 		}
 		else
@@ -2753,30 +2938,72 @@ uint8 EGA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 		switch (On_board_switch_sel)
 		{
 		case 0:
-			out = 0b00010000; //переключатель 1 = ON
+			out = 0b00000000; //переключатель 1 = ON
 			break;
 		case 1:
-			out = 0b00010000; //переключатель 2 = ON
+			out = 0b00010000; //переключатель 2 = OFF
 			break;
 		case 2:
-			out = 0b00010000; //переключатель 3 = ON
+			out = 0b00010000; //переключатель 3 = OFF
 			break;
 		case 3:
-			out = 0b00000000; //переключатель 4 = OFF
+			out = 0b00000000; //переключатель 4 = ON
 			break;
 		}
 
 		if (clock) out = out | 0b10000000;		//идет показ изображения
 		else out = out & 0b01111111;			//можно читать свитчи + экран погашен
-
+		if (log_to_console) cout << "Read Vsync = " << (int)out << " ";
 		return out;
 	}
 
 	if ((port == 0x3ba && !IOAddrSel) || (port == 0x3da && IOAddrSel)) //Input Status Register One
 	{
-		uint8 out = 0;
+		ac_flipflop = 0; //сброс переключателя
 		
-		//рассчитываем позицию луча
+		uint8 out = 0;
+		static uint16 lines = 0;
+		static uint16 iterator = 0;
+		//определяем кол-во строк на экране
+		switch (current_mode)
+		{
+		case video_modes::EGA_01_200:
+		case video_modes::EGA_23_200:
+		case video_modes::EGA_45_320:
+		case video_modes::EGA_D_320:
+		case video_modes::EGA_E_200:
+		case video_modes::EGA_6_640:
+			if (lines != 200) iterator = 1;
+			lines = 200;
+			break;
+		case video_modes::EGA_01_350:
+		case video_modes::EGA_10_350:
+		case video_modes::EGA_23_350:
+		case video_modes::EGA_7_720:
+		case video_modes::EGA_F_350:
+			if (lines != 350) iterator = 1;
+			lines = 350;
+			break;
+		}
+
+		//опредедяляем сигнал
+		if (lines == 200)
+		{
+			if (iterator < 401) out = ~iterator & 1;
+			else out = 9;
+		}
+
+		if (lines == 350)
+		{
+			if (iterator < 701) out = ~iterator & 1;
+			else out = 9;
+		}
+
+		iterator++;
+		if ((lines == 200) & (iterator >= 406)) iterator = 0;
+		if ((lines == 350) & (iterator >= 706)) iterator = 0;
+
+		/*
 		uint16 frame_pos = pc_timer.get_time(3) % (256*256);
 		if (frame_pos < 712) out = 8; //период гашения
 		else
@@ -2786,6 +3013,7 @@ uint8 EGA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 			if (line_pos < 17) out = 0; //гашение линии
 			else out = 1;				//отображение пикселя
 		}
+		*/
 
 		return out;
 	}
@@ -2844,7 +3072,7 @@ void EGA_videocard::render()					//синхронизация
 	/*
 		Режимы работы
 		video_modes {EGA_01_200, EGA_01_350, EGA_23_200, EGA_23_350, EGA_7_720, EGA_45_320, EGA_6_640, EGA_D_320, EGA_E_200, EGA_F_350, EGA_10_350};
-		
+
 		Текстовые
 		0   - 40 x 25 символов (8х8),  16 цветов,    320х200 пикселей, адрес B8000, 8 страниц
 		0*  - 40 x 25 символов (8х14), 16/64 цветов, 320х350 пикселей, адрес B8000, 8 страниц
@@ -2888,11 +3116,15 @@ void EGA_videocard::render()					//синхронизация
 	bool attr_blink = false;       //атрибут мигания
 	bool attr_highlight = false;   //атрибут подсветки
 
-	sf::Color border = sf::Color((((ac_registers[17] >> 2) & 1) + ((ac_registers[17] >> 5) & 1) * 2) * 85, (((ac_registers[17] >> 1) & 1) + ((ac_registers[17] >> 4) & 1) * 2) * 85, (((ac_registers[17] >> 0) & 1) + ((ac_registers[17] >> 3) & 1) * 2) * 85); // ac_registers[17]
-	
+	uint8 border_RGBI = (ac_registers[17] & 7) | ((ac_registers[17] >> 1) & 0b1000);
+	uint8 border_rgbRGB = ac_registers[17] & 0b111111;
+
 	//начальный адрес экрана в памяти
 	uint16 start_address = (crt_registers[0xC]) * 256 + crt_registers[0xD];
-
+	
+	//количество отрисовываемых линий
+	uint16 line_compare_reg = ((crt_registers[7] >> 4) & 1) * 256 + crt_registers[0x18];
+	
 	//адрес курсора
 	uint16 cursor_pos = crt_registers[0xE] * 256 + crt_registers[0xF];
 
@@ -2901,6 +3133,7 @@ void EGA_videocard::render()					//синхронизация
 	{
 	case 0:
 	case 1:
+		//if (video_mem_base != 0xA0000) step_mode = 1;
 		video_mem_base = 0xA0000; //Режимы EGA
 		break;
 	case 2:
@@ -2911,10 +3144,11 @@ void EGA_videocard::render()					//синхронизация
 		break;
 	}
 
-	main_window.clear();// очистка экрана
-
-	//проверка бита включения экрана
-	//if ((CGA_Mode_Select_Register & 8) == 0) return; //карта отключена
+	if (!video_on)
+	{
+		main_window.clear();// очистка экрана	
+		return;
+	}
 
 	//мигание курсора
 	if (cursor_clock.getElapsedTime().asMicroseconds() > 300000) //мигание курсора
@@ -2937,10 +3171,11 @@ void EGA_videocard::render()					//синхронизация
 	{
 		//debug_mess_1 = "graf branch";
 		//графические режимы 4,5,6, D, E, F, 10
+
 		if ((seq_registers[1] >> 3) & 1)  //пиксельная частота
 		{
 			//ширина 320 режимы 4, 5, D
-			if (!gc_registers[5]) current_mode = video_modes::EGA_D_320;
+			if (!(gc_registers[5] & 0b10000)) current_mode = video_modes::EGA_D_320;
 			else current_mode = video_modes::EGA_45_320;
 		}
 		else
@@ -3002,7 +3237,7 @@ void EGA_videocard::render()					//синхронизация
 		rectangle.setScale(sf::Vector2f(1, 1));
 		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
 		rectangle.setPosition(sf::Vector2f(0, 0));
-		rectangle.setFillColor(border);
+		rectangle.setFillColor(EGA_colors[border_RGBI]);
 
 		main_window.draw(rectangle);
 		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
@@ -3027,19 +3262,19 @@ void EGA_videocard::render()					//синхронизация
 		{
 			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
 			{
-				addr = start_address * 2 + (y * width * 2) + x * 2;
-
+				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
+				else addr = start_address + (y * width) + x + !PageBitOddEven * 0x20000;   //режим odd/even
 				font_t_y = videomemory[addr] >> 5;
 				font_t_x = videomemory[addr] - (font_t_y << 5);
-				attrib = videomemory[addr + 1];
+				attrib = videomemory[addr + 0x10000];
 
 				if (color_enable)
 				{
 					//цветной режим
 					fg_color = EGA_colors[attrib & 15];
-					if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = EGA_colors[attrib & 31];  //повышенная интенсивность
+					//if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = EGA_colors[attrib & 31];  //повышенная интенсивность
 					bg_color = EGA_colors[(attrib >> 4) & 15];
-					if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = EGA_colors[(attrib >> 4) & 31];//повышенная интенсивность
+					//if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = EGA_colors[(attrib >> 4) & 31];//повышенная интенсивность
 				}
 				else
 				{
@@ -3142,7 +3377,159 @@ void EGA_videocard::render()					//синхронизация
 			}
 		}
 	}
-	
+	//текст 40х25 c увеличенными символами
+	if (current_mode == video_modes::EGA_01_350)
+	{
+		//текстовые режимы 0 и 1 - 40x25
+		//8 страниц по 2КБ каждая
+
+		//заливаем цветом рамку
+		sf::RectangleShape rectangle;
+		rectangle.setScale(sf::Vector2f(1, 1));
+		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+		rectangle.setPosition(sf::Vector2f(0, 0));
+		rectangle.setFillColor(EGA_colors[border_RGBI]);
+
+		main_window.draw(rectangle);
+		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
+		rectangle.setPosition(sf::Vector2f(20, 20));
+		rectangle.setFillColor(sf::Color(0, 0, 0));
+		main_window.draw(rectangle);
+
+		//символов в строке
+		uint8 width = 40;
+
+		//настройка масштаба символов для разных режимов
+		if (width == 40) rectangle.setSize(sf::Vector2f(5 * 8, 1.2 * 5 * 8));
+		else rectangle.setSize(sf::Vector2f(5 * 0.5 * 8, 1.2 * 5 * 8));
+
+		uint8 attrib = 0; //атрибуты символов
+
+		sf::Color fg_color;
+		sf::Color bg_color;
+
+		//заполняем экран
+		for (int y = 0; y < 25; y++)  //25 строк
+		{
+			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
+			{
+				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
+				else addr = start_address + (y * width) + x + PageBitOddEven * 0x20000;   //режим odd/even
+
+
+				font_t_y = videomemory[addr] >> 5;
+				font_t_x = videomemory[addr] - (font_t_y << 5);
+				attrib = videomemory[addr + 0x10000];
+
+				if (color_enable)
+				{
+					//цветной режим
+					fg_color = EGA_colors[attrib & 15];
+					//if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = EGA_colors[attrib & 31];  //повышенная интенсивность
+					bg_color = EGA_colors[(attrib >> 4) & 15];
+					//if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = EGA_colors[(attrib >> 4) & 31];//повышенная интенсивность
+				}
+				else
+				{
+					//монохромный режим
+					fg_color = EGA_colors[8];
+					bg_color = EGA_colors[0];
+
+					if (!use_2_char_gen && ((attrib >> 3) & 1))
+					{
+						//повышенная интенсивность
+						fg_color = EGA_colors[15];
+					}
+
+					if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1))
+					{
+						//повышенная интенсивность
+						//fg_color = EGA_colors[15];
+					}
+
+					if (((attrib >> 4) & 7) == 7)
+					{
+						//инверсия
+						sf::Color t = fg_color;
+						fg_color = bg_color;
+						bg_color = t;
+					}
+				}
+				bool blink = ((attrib >> 7) & 1) & intensity_blink;
+
+				//рисуем фон символа
+				rectangle.setFillColor(bg_color);
+				if (width == 40) rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
+				else rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
+				main_window.draw(rectangle);
+
+				//рисуем сам символ
+				if (!blink || cursor_flipflop)
+				{
+					if (width == 40)
+					{
+						font_sprite_40.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5, font_t_y * 8 * 5), sf::Vector2i(8 * 5, 8 * 5)));
+						font_sprite_40.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
+						font_sprite_40.setColor(fg_color);
+						main_window.draw(font_sprite_40);
+					}
+					else
+					{
+						font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
+						font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
+						font_sprite_80.setColor(fg_color);
+						main_window.draw(font_sprite_80);
+					}
+				}
+
+				//подчеркивание в монохромном режиме
+				/*
+				if (!color_enable && ((attrib & 7) == 1))
+				{
+					sf::RectangleShape ul; //прямоугольник курсора
+					if (width == 40)
+					{
+						ul.setSize(sf::Vector2f(40, 2));
+						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5, font_t_y * 8 * 5));
+					}
+					else
+					{
+						ul.setSize(sf::Vector2f(20, 2));
+						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5));
+					}
+					ul.setFillColor(fg_color);
+					main_window.draw(ul);
+				}*/
+
+				bool draw_cursor = false;
+				if ((width == 40) && !(y * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+				if ((width == 80) && !(y * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+
+				//рисуем курсор
+				if (draw_cursor && cursor_flipflop && ((crt_registers[0xb] & 31) >= (crt_registers[0xa] & 31)))
+				{
+					if (width == 40)
+					{
+						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
+						cursor_rectangle.setScale(sf::Vector2f(1, 1));
+						cursor_rectangle.setSize(sf::Vector2f(40, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
+						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
+						cursor_rectangle.setFillColor(fg_color);
+						main_window.draw(cursor_rectangle);
+					}
+					else
+					{
+						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
+						cursor_rectangle.setScale(sf::Vector2f(1, 1));
+						cursor_rectangle.setSize(sf::Vector2f(20, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
+						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
+						cursor_rectangle.setFillColor(fg_color);
+						main_window.draw(cursor_rectangle);
+					}
+				}
+			}
+		}
+	}
 	//текст 80х25
 	if (current_mode == video_modes::EGA_23_200)
 	{
@@ -3155,7 +3542,7 @@ void EGA_videocard::render()					//синхронизация
 		rectangle.setScale(sf::Vector2f(1, 1));
 		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
 		rectangle.setPosition(sf::Vector2f(0, 0));
-		rectangle.setFillColor(border);
+		rectangle.setFillColor(EGA_colors[border_RGBI]);
 
 		main_window.draw(rectangle);
 		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
@@ -3180,19 +3567,142 @@ void EGA_videocard::render()					//синхронизация
 		{
 			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
 			{
-				addr = start_address * 2 + (y * width * 2) + x * 2;
+				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
+				else addr = start_address + (y * width) + x + !PageBitOddEven * 0x20000;   //режим odd/even
+
 
 				font_t_y = videomemory[addr] >> 5;
 				font_t_x = videomemory[addr] - (font_t_y << 5);
-				attrib = videomemory[addr+1];
+				attrib = videomemory[addr + 0x10000];
 
 				if (color_enable)
 				{
 					//цветной режим
 					fg_color = TXT_colors[attrib & 15];
-					if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = TXT_colors[attrib & 31];  //повышенная интенсивность
+					//if ((attrib >> 3) & 1)  fg_color = TXT_colors[attrib & 31];  //повышенная интенсивность
 					bg_color = TXT_colors[(attrib >> 4) & 15];
-					if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = TXT_colors[(attrib >> 4) & 31];//повышенная интенсивность
+					//if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = TXT_colors[(attrib >> 4) & 31];//повышенная интенсивность
+				}
+				else
+				{
+					//монохромный режим
+					fg_color = TXT_BW_colors[8];
+					bg_color = TXT_BW_colors[0];
+
+					if (!use_2_char_gen && ((attrib >> 3) & 1))
+					{
+						//повышенная интенсивность
+						fg_color = TXT_BW_colors[15];
+					}
+
+					if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1))
+					{
+						//повышенная интенсивность
+						fg_color = TXT_BW_colors[15];
+					}
+
+					if (((attrib >> 4) & 7) == 7)
+					{
+						//инверсия
+						sf::Color t = fg_color;
+						fg_color = bg_color;
+						bg_color = t;
+					}
+				}
+				bool blink = ((attrib >> 7) & 1) & intensity_blink;
+
+				//рисуем фон символа
+				rectangle.setFillColor(bg_color);
+				if (width == 40) rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
+				else rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
+				main_window.draw(rectangle);
+
+				//рисуем сам символ
+				if (!blink || cursor_flipflop)
+				{
+					if (width == 40)
+					{
+						font_sprite_40.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5, font_t_y * 8 * 5), sf::Vector2i(8 * 5, 8 * 5)));
+						font_sprite_40.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
+						font_sprite_40.setColor(fg_color);
+						main_window.draw(font_sprite_40);
+					}
+					else
+					{
+						font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
+						font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
+						font_sprite_80.setColor(fg_color);
+						main_window.draw(font_sprite_80);
+					}
+				}
+
+				bool draw_cursor = false;
+				if (addr == (cursor_pos + start_address * 2)) draw_cursor = true;
+				//if ((width == 80) && !(start_address * 2 + y * 80 * 2 + x * 2 - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+
+				//рисуем курсор
+				if (draw_cursor && cursor_flipflop && ((crt_registers[0xB] & 31) >= (crt_registers[0xA] & 31)))
+				{
+					sf::RectangleShape cursor_rectangle; //прямоугольник курсора
+					cursor_rectangle.setScale(sf::Vector2f(1, 1));
+					cursor_rectangle.setSize(sf::Vector2f(20 + ((crt_registers[0xb] >> 5) & 3), (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
+					cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + crt_registers[0xa]) * 6 + 20));
+					cursor_rectangle.setFillColor(fg_color);
+					main_window.draw(cursor_rectangle);
+				}
+			}
+		}
+	}
+	//текст 80х25 c увеличенными символами
+	if (current_mode == video_modes::EGA_23_350)
+	{
+		//текстовые режимы 2 и 3 - 80x25
+		//4 страницы по 4КБ каждая 
+		//если памяти > 64К, то 8 страниц
+
+		//заливаем цветом рамку
+		sf::RectangleShape rectangle;
+		rectangle.setScale(sf::Vector2f(1, 1));
+		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+		rectangle.setPosition(sf::Vector2f(0, 0));
+		rectangle.setFillColor(EGA_colors[border_RGBI]);
+
+		main_window.draw(rectangle);
+		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
+		rectangle.setPosition(sf::Vector2f(20, 20));
+		rectangle.setFillColor(sf::Color(0, 0, 0));
+		main_window.draw(rectangle);
+
+		//символов в строке
+		uint8 width = 80;
+
+		//настройка масштаба символов для разных режимов
+		if (width == 40) rectangle.setSize(sf::Vector2f(5 * 8, 1.2 * 5 * 8));
+		else rectangle.setSize(sf::Vector2f(5 * 0.5 * 8, 1.2 * 5 * 8));
+
+		uint8 attrib = 0; //атрибуты символов
+
+		sf::Color fg_color;
+		sf::Color bg_color;
+
+		//заполняем экран
+		for (int y = 0; y < 25; y++)  //25 строк
+		{
+			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
+			{
+				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
+				else addr = start_address + (y * width) + x + PageBitOddEven * 0x20000;   //режим odd/even
+				font_t_y = videomemory[addr] >> 5;
+				font_t_x = videomemory[addr] - (font_t_y << 5);
+				attrib = videomemory[addr + 0x10000];
+
+				if (color_enable)
+				{
+					//цветной режим
+					fg_color = TXT_colors[attrib & 15];
+					//if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = TXT_colors[attrib & 31];  //повышенная интенсивность
+					bg_color = TXT_colors[(attrib >> 4) & 15];
+					//if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = TXT_colors[(attrib >> 4) & 31];//повышенная интенсивность
 				}
 				else
 				{
@@ -3295,7 +3805,6 @@ void EGA_videocard::render()					//синхронизация
 			}
 		}
 	}
-
 	//графика 320х200
 	if (current_mode == video_modes::EGA_45_320)
 	{
@@ -3310,45 +3819,59 @@ void EGA_videocard::render()					//синхронизация
 		rectangle.setFillColor(sf::Color::Black); //заливаем фон
 		main_window.draw(rectangle);
 
+		uint32 dot_addr = 0;
+		uint32 dot_addr_2 = 0;
+		//четные адреса
 		for (int y = 0; y < 100; ++y)
 		{
-			for (int x = 0; x < 80; ++x)
+			for (int x = 0; x < 40; ++x)
 			{
-				uint32 dot_addr = (start_address * 2 + 80 * y + x) % 0x2000;
-				
-				for (int sub_x = 0; sub_x < 4; sub_x++)
+				//режим odd/even
+				dot_addr = (start_address + 40 * y + x) % 0x1000 + !PageBitOddEven * 0x20000;
+				dot_addr_2 = dot_addr + 0x10000;
+				uint16 big_word = videomemory[dot_addr] * 256 + videomemory[dot_addr_2] * 1;
+
+				for (int sub_x = 0; sub_x < 8; sub_x++)
 				{
 					rectangle.setSize(sf::Vector2f(5, 6));
-					rectangle.setPosition(sf::Vector2f(x * 4 * 5 + 20 + sub_x * 5, (y * 6) * 2 + 20));
-					if ((videomemory[dot_addr] >> ((6 - sub_x * 2)) & 3) == 0) rectangle.setFillColor(sf::Color::Black);
-					if ((videomemory[dot_addr] >> ((6 - sub_x * 2)) & 3) == 1) rectangle.setFillColor(sf::Color::Cyan);
-					if ((videomemory[dot_addr] >> ((6- sub_x * 2)) & 3) == 2) rectangle.setFillColor(sf::Color::Magenta);
-					if ((videomemory[dot_addr] >> ((6 - sub_x * 2)) & 3) == 3) rectangle.setFillColor(sf::Color::White);
+					rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20 + sub_x * 5, (y * 6) * 2 + 20));
+					uint8 color = ((big_word >> (14 - sub_x * 2)) & 3);
+
+					rectangle.setFillColor(EGA_colors[(ac_registers[color] & 7) | ((ac_registers[color] & 16) >> 1)]);
+					//if (color == 1) rectangle.setFillColor(sf::Color::Cyan);
+					//if (color == 2) rectangle.setFillColor(sf::Color::Magenta);
+					//if (color == 3) rectangle.setFillColor(sf::Color::White);
 					main_window.draw(rectangle);
 				}
 			}
 		}
 
+		//нечетные адреса
 		for (int y = 0; y < 100; ++y)
 		{
-			for (int x = 0; x < 80; ++x)
+			for (int x = 0; x < 40; ++x)
 			{
-				uint32 dot_addr = (start_address * 2  + 80 * y + x) % 0x2000 + 0x2000;
+				//режим odd/even
+				dot_addr = (start_address + 40 * y + x) % 0x1000 + 0x1000 + !PageBitOddEven * 0x20000;
+				dot_addr_2 = dot_addr + 0x10000;
+				uint16 big_word = videomemory[dot_addr] * 256 + videomemory[dot_addr_2] * 1;
 
-				for (int sub_x = 0; sub_x < 4; sub_x++)
+				for (int sub_x = 0; sub_x < 8; sub_x++)
 				{
 					rectangle.setSize(sf::Vector2f(5, 6));
-					rectangle.setPosition(sf::Vector2f(x * 4 * 5 + 20 + sub_x * 5, (y * 6) * 2 + 6 + 20));
-					if ((videomemory[dot_addr] >> ((6 - sub_x * 2)) & 3) == 0) rectangle.setFillColor(sf::Color::Black);
-					if ((videomemory[dot_addr] >> ((6 - sub_x * 2)) & 3) == 1) rectangle.setFillColor(sf::Color::Cyan);
-					if ((videomemory[dot_addr] >> ((6 - sub_x * 2)) & 3) == 2) rectangle.setFillColor(sf::Color::Magenta);
-					if ((videomemory[dot_addr] >> ((6 - sub_x * 2)) & 3) == 3) rectangle.setFillColor(sf::Color::White);
+					rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20 + sub_x * 5, (y * 6) * 2 + 6 + 20));
+					uint8 color = ((big_word >> (14 - sub_x * 2)) & 3);
+
+					rectangle.setFillColor(EGA_colors[(ac_registers[color] & 7) | ((ac_registers[color] & 16) >> 1)]);
+					//if (color == 0) rectangle.setFillColor(sf::Color::Black);
+					//if (color == 1) rectangle.setFillColor(sf::Color::Cyan);
+					//if (color == 2) rectangle.setFillColor(sf::Color::Magenta);
+					//if (color == 3) rectangle.setFillColor(sf::Color::White);
 					main_window.draw(rectangle);
 				}
 			}
 		}
 	}
-
 	//графика 640х200
 	if (current_mode == video_modes::EGA_6_640)
 	{
@@ -3361,27 +3884,28 @@ void EGA_videocard::render()					//синхронизация
 		//масштаб точек
 		float display_x_scale = 2.5; // (float)(GAME_WINDOW_X_RES - 40) / width;  //1600    5 или 2,5
 		float display_y_scale = 6; // (float)(GAME_WINDOW_Y_RES - 40) / height; //1200    6
-		dot.setScale(sf::Vector2f(display_x_scale, display_y_scale));
+		dot.setScale(sf::Vector2f(1, 1));
 
 		//start_address  - начало буфера
 		//добавить переход в начало памяти
-		
-		dot.setSize(sf::Vector2f(2.5, 6));
+
+		dot.setSize(sf::Vector2f(display_x_scale, display_y_scale));
 		for (int y = 0; y < 100; y++)
 		{
-			for (int x = 0; x < 80; ++x)
+			for (int x = 0; x < 80; x++)
 			{
 				for (int sub_x = 0; sub_x < 8; sub_x++)
 				{
 					//четные
 					uint32 dot_addr = (80 * y + x);
-					dot.setPosition(sf::Vector2f(x * 4 * 5 + 20 + sub_x * 2.5, (y * 6) * 2 + 20));
+					dot_addr = dot_addr % 0x10000;
+					dot.setPosition(sf::Vector2f(x * 8 * display_x_scale + 20 + sub_x * display_x_scale, (y * display_y_scale) * 2 + 20));
 					if (((videomemory[dot_addr] >> (7 - sub_x)) & 1) == 0) dot.setFillColor(sf::Color::Black);
 					else dot.setFillColor(sf::Color::White);
 					main_window.draw(dot);
 					//нечетные
 					dot_addr = (0x2000 + 80 * y + x);
-					dot.setPosition(sf::Vector2f(x * 4 * 5 + 20 + sub_x * 2.5, (y * 6) * 2 + 6 + 20));
+					dot.setPosition(sf::Vector2f(x * 8 * display_x_scale + 20 + sub_x * display_x_scale, (y * display_y_scale) * 2 + display_y_scale + 20));
 					if (((videomemory[dot_addr] >> (7 - sub_x)) & 1) == 0) dot.setFillColor(sf::Color::Black);
 					else dot.setFillColor(sf::Color::White);
 					main_window.draw(dot);
@@ -3389,26 +3913,16 @@ void EGA_videocard::render()					//синхронизация
 			}
 		}
 	}
-
 	//текстовый монохромный режим 25х80 (MDA)
 	if (current_mode == video_modes::EGA_7_720)
 	{
 		//4 страницы по 4кб (если > 64К, то 8 страниц)
-
-		main_window.setActive(1);
-		main_window.clear();// очистка экрана
 
 		uint16 font_t_x, font_t_y;
 		uint32 addr;
 		bool attr_under = false;       //атрибут подчеркивания
 		bool attr_blink = false;       //атрибут мигания
 		bool attr_highlight = false;   //атрибут подсветки
-
-		//начальный адрес экрана в памяти
-		//uint16 start_address = (registers[0xC] & 0b00111111) * 256 + registers[0xD];
-
-		//адрес курсора
-		//uint16 cursor_pos = registers[0xE] * 256 + registers[0xF];
 
 		sf::RectangleShape rectangle;  //объект для рисования
 
@@ -3417,7 +3931,7 @@ void EGA_videocard::render()					//синхронизация
 		sf::Text text(font);		//обычный шрифт
 
 		//проверка бита включения экрана
-		//if ((MDA_Mode_Select_Register & 8) == 0) goto exit; //карта отключена
+		//if ((MDA_Mode_Select_Register & 8) == 0) goto exit_EGA_7; //карта отключена
 
 		//цикл отрисовки экрана
 		if (cursor_clock.getElapsedTime().asMicroseconds() > 300000) //мигание курсора
@@ -3451,7 +3965,10 @@ void EGA_videocard::render()					//синхронизация
 				sf::Color bg_color = sf::Color::Black;
 				sf::Color bg_color_inverse = sf::Color::Green;
 
-				addr = (y * 80 * 2) + x * 2;
+				addr = start_address * 2 + (y * 80 * 2) + x * 2;
+
+				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * 80 * 2) + x * 2;  //обычный режим
+				else addr = start_address + (y * 80) + x + !PageBitOddEven * 0x20000;
 
 				font_t_y = videomemory[addr] >> 5;
 				font_t_x = videomemory[addr] - (font_t_y << 5);
@@ -3463,11 +3980,9 @@ void EGA_videocard::render()					//синхронизация
 				bool inversed = ((attrib >> 4) & 1);
 
 				//исключения
-
 				if (attrib == 0x0 || attrib == 0x08 || attrib == 0x80 || attrib == 0x88) fg_color = sf::Color::Black;
 				if (attrib == 0x70 || attrib == 0xF0) { fg_color = sf::Color::Black; sf::Color bg_color = sf::Color(0, 192, 0); }
 				if (attrib == 0x78 || attrib == 0xF8) { fg_color = sf::Color(0, 64, 0); sf::Color bg_color = sf::Color(0, 192, 0); }
-
 
 				//рисуем фон символа
 				if (!inversed) rectangle.setFillColor(bg_color);
@@ -3499,13 +4014,12 @@ void EGA_videocard::render()					//синхронизация
 				}
 
 				bool draw_cursor = false;
-				//if ((width == 80) && !(y * 80 + x - registers[0xe] * 256 - registers[0xf])) draw_cursor = true;
+				if (addr == cursor_pos * 2) draw_cursor = true;
 
 				//рисуем курсор
 
-				//if (draw_cursor && cursor_flipflop && ((registers[0xb] & 31) >= (registers[0xa] & 31)))
+				if (draw_cursor && cursor_flipflop)
 				{
-
 					//font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(31 * 8 * 5 * 0.5, 2 * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
 					//font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
 					//font_sprite_80.setColor(sf::Color::White);
@@ -3517,94 +4031,61 @@ void EGA_videocard::render()					//синхронизация
 					cursor_rectangle.setFillColor(fg_color);
 					main_window.draw(cursor_rectangle);
 				}
-
 			}
 		}
-
-		// вывод технической информации
-		attr_blink = false;
-		attr_highlight = false;
-		attr_under = false;
-
-		//тестовая информация джойстика
-		joy_sence_show_timer -= elapsed_ms;
-		if (joy_sence_show_timer < 0) joy_sence_show_timer = 0;
-		if (joy_sence_show_timer)
-		{
-
-			//отладочная инфа джойстика
-			//фон
-			text.setString("Joystick, center point: ####################");
-			text.setPosition(sf::Vector2f(100, 1000));
-			text.setFillColor(sf::Color(0, 0, 0));
-			text.setOutlineThickness(12.1);
-			if (joy_sence_show_timer) main_window.draw(text);
-
-
-			string t = "Joystick, center point: " + to_string(joy_sence_value) + " ";
-			for (int r = 0; r < (joy_sence_value >> 3); r++)
-			{
-				t = t + "#";
-			}
-			text.setString(t);
-			text.setPosition(sf::Vector2f(100, 1000));
-			text.setFillColor(sf::Color(255, 0, 0));
-			text.setOutlineThickness(12.1);
-			if (joy_sence_show_timer) main_window.draw(text);
-		}
-
-
-		
-		text.setString(debug_mess_1);
-		text.setCharacterSize(20);
-		text.setPosition(sf::Vector2f(0, 0));
-		text.setFillColor(sf::Color(255, 0, 0));
-		text.setOutlineThickness(3.1);
-		if (debug_mess_1 != "") main_window.draw(text);
-
-	exit:
-		main_window.display();
-		do_render = 0;
-		main_window.setActive(0);
 	}
-
 	//графика 320х200 (только EGA)
 	if (current_mode == video_modes::EGA_D_320)
 	{
 		//16 цветов вместо 4
-		//2 страницы (до 8 при 256К)
+		//2 страницы (до 8 при 256К) 1 страница - 32 кб
 		//адреса страниц отличаются на 4К (уточнить, должно быть 8К разница)
-
+		//odd_even = 0
+		
+		//заливаем цветом рамку
 		sf::RectangleShape rectangle;
 		rectangle.setScale(sf::Vector2f(1, 1));
+		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+		rectangle.setPosition(sf::Vector2f(0, 0));
+		rectangle.setFillColor(EGA_colors[border_RGBI]);
+
 		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
 		rectangle.setPosition(sf::Vector2f(20, 20));
 		rectangle.setFillColor(sf::Color::Black); //заливаем фон
 		main_window.draw(rectangle);
+		
+		 //line_offset = 40; //длина строки в байтах
+		 uint16 line_offset = crt_registers[0x13] * 2; //registr задает длину строки
 
 		rectangle.setSize(sf::Vector2f(5, 6));
 		for (int y = 0; y < 200; ++y)
 		{
 			for (int x = 0; x < 320; ++x)
 			{
-				uint32 dot_addr = (start_address * 2 + 40 * y + (x >> 3));
-				uint8 col = ((videomemory[dot_addr]          >> (7 - (x % 8))) & 1) * 8 + 
-					        ((videomemory[dot_addr + 0x4000] >> (7 - (x % 8))) & 1) * 4 + 
-					        ((videomemory[dot_addr + 0x8000] >> (7 - (x % 8))) & 1) * 2 + 
-					        ((videomemory[dot_addr + 0xC000] >> (7 - (x % 8))) & 1) * 1;
-				
+				uint32 dot_addr = (start_address + line_offset * y + (x >> 3));
+				if (y >= line_compare_reg) dot_addr = line_offset * (y - line_compare_reg) + (x >> 3);
+				dot_addr = dot_addr % 0x10000;
+				uint8 col = ((videomemory[dot_addr]   >> (7 - (x % 8))) & 1) * 1 +
+					((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
+					((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +
+					((videomemory[dot_addr + 0x30000] >> (7 - (x % 8))) & 1) * 8;
+
 				rectangle.setPosition(sf::Vector2f(x * 5 + 20, (y * 6) + 20));
-				rectangle.setFillColor(EGA_colors[col]);
+				if (intensity_blink)
+					{
+						//мигание
+						if (cursor_flipflop || !((ac_registers[col] >> 4) & 1)) rectangle.setFillColor(EGA_colors[ac_registers[col] & 0b111]);
+						else rectangle.setFillColor(EGA_colors[ac_registers[0]]);
+					}
+					else rectangle.setFillColor(EGA_colors[(ac_registers[col] & 0b111) | ((ac_registers[col] >> 1) & 8)]); //усиленная яркость
 				main_window.draw(rectangle);
-				
 			}
 		}
 	}
-
 	//графика 640х200 (только EGA)
 	if (current_mode == video_modes::EGA_E_200)
 	{
-		//16 цветов 
+		//16 цветов  640 x 200
 		//1 страница размером 64К (до 4 при 256К)
 		//адреса страниц отличаются на 16К
 
@@ -3620,22 +4101,24 @@ void EGA_videocard::render()					//синхронизация
 		{
 			for (int x = 0; x < 640; ++x)
 			{
-				uint32 dot_addr = (start_address * 2 + 80 * y + (x >> 3));
-				uint8 col = ((videomemory[dot_addr] >> (7 - (x % 8))) & 1) * 8 + ((videomemory[dot_addr + 0x4000] >> (7 - (x % 8))) & 1) * 4 + ((videomemory[dot_addr + 0x8000] >> (7 - (x % 8))) & 1) * 2 + ((videomemory[dot_addr + 0xC000] >> (7 - (x % 8))) & 1) * 1;
+				uint32 dot_addr = (start_address + 80 * y + (x >> 3));
+				dot_addr = dot_addr % 0x10000;
+				uint8 col = ((videomemory[dot_addr]           >> (7 - (x % 8))) & 1) * 1 +
+					        ((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
+					        ((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +
+					        ((videomemory[dot_addr + 0x30000] >> (7 - (x % 8))) & 1) * 8;
 
 				rectangle.setPosition(sf::Vector2f(x * 2.5 + 20, (y * 6) + 20));
-				rectangle.setFillColor(EGA_colors[col]);
+				rectangle.setFillColor(EGA_colors[(ac_registers[col] & 0b111) + ((ac_registers[col] >> 1) & 8)]);
 				main_window.draw(rectangle);
 
 			}
 		}
 	}
-	
-
 	//монохромная графика 640х350 (только EGA)
 	if (current_mode == video_modes::EGA_F_350)
 	{
-		//2 цвета 
+		//2 цвета 640x350
 		//1 страница размером 64К (до 2 при большей памяти)
 		//адреса страниц отличаются на 32К
 
@@ -3644,28 +4127,23 @@ void EGA_videocard::render()					//синхронизация
 
 		//масштаб точек
 		float display_x_scale = 2.5; // (float)(GAME_WINDOW_X_RES - 40) / width;  //1600    5 или 2,5
-		float display_y_scale = 6; // (float)(GAME_WINDOW_Y_RES - 40) / height; //1200    6
-		dot.setScale(sf::Vector2f(display_x_scale, display_y_scale));
+		float display_y_scale = 3.428; // (float)(GAME_WINDOW_Y_RES - 40) / height; //1200    6
+		dot.setScale(sf::Vector2f(1, 1));
 
 		//start_address  - начало буфера
 		//добавить переход в начало памяти
 
-		dot.setSize(sf::Vector2f(2.5, 6));
-		for (int y = 0; y < 100; y++)
+		dot.setSize(sf::Vector2f(display_x_scale, display_y_scale));
+		uint32 dot_addr = 0;
+		for (int y = 0; y < 350; y++)
 		{
 			for (int x = 0; x < 80; ++x)
 			{
+				dot_addr = start_address + (80 * y + x);
+				dot_addr = dot_addr % 0x10000;
 				for (int sub_x = 0; sub_x < 8; sub_x++)
 				{
-					//четные
-					uint32 dot_addr = (80 * y + x);
-					dot.setPosition(sf::Vector2f(x * 4 * 5 + 20 + sub_x * 2.5, (y * 6) * 2 + 20));
-					if (((videomemory[dot_addr] >> (7 - sub_x)) & 1) == 0) dot.setFillColor(sf::Color::Black);
-					else dot.setFillColor(sf::Color::White);
-					main_window.draw(dot);
-					//нечетные
-					dot_addr = (0x2000 + 80 * y + x);
-					dot.setPosition(sf::Vector2f(x * 4 * 5 + 20 + sub_x * 2.5, (y * 6) * 2 + 6 + 20));
+					dot.setPosition(sf::Vector2f(x * 8 * display_x_scale + 20 + sub_x * display_x_scale, (y * display_y_scale) + 20));
 					if (((videomemory[dot_addr] >> (7 - sub_x)) & 1) == 0) dot.setFillColor(sf::Color::Black);
 					else dot.setFillColor(sf::Color::White);
 					main_window.draw(dot);
@@ -3673,13 +4151,12 @@ void EGA_videocard::render()					//синхронизация
 			}
 		}
 	}
-
 	//графика 640х350 (только EGA)
 	if (current_mode == video_modes::EGA_10_350)
 	{
 		//4 цвета при 64К (до 16 при большей памяти)
-		//1 страница
-		
+		//1 страница 640 x 350
+
 		sf::RectangleShape rectangle;
 		rectangle.setScale(sf::Vector2f(1, 1));
 		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
@@ -3687,28 +4164,27 @@ void EGA_videocard::render()					//синхронизация
 		rectangle.setFillColor(sf::Color::Black); //заливаем фон
 		main_window.draw(rectangle);
 
-		rectangle.setSize(sf::Vector2f(2.5, 6 / 350 * 200));
+		float display_x_scale = 2.5; // (float)(GAME_WINDOW_X_RES - 40) / width;  //1600    5 или 2,5
+		float display_y_scale = 3.428; // (float)(GAME_WINDOW_Y_RES - 40) / height; //1200    6
+
+		rectangle.setSize(sf::Vector2f(display_x_scale, display_y_scale));
 		for (int y = 0; y < 350; ++y)
 		{
 			for (int x = 0; x < 640; ++x)
 			{
-				uint32 dot_addr = (start_address * 2 + 80 * y + (x >> 3));
-				uint8 col = ((videomemory[dot_addr] >> (7 - (x % 8))) & 1) * 8 + ((videomemory[dot_addr + 0x4000] >> (7 - (x % 8))) & 1) * 4 + ((videomemory[dot_addr + 0x8000] >> (7 - (x % 8))) & 1) * 2 + ((videomemory[dot_addr + 0xC000] >> (7 - (x % 8))) & 1) * 1;
+				uint32 dot_addr = (start_address + 80 * y + (x >> 3));
+				dot_addr = dot_addr % 0x10000;
+				uint8 col = ((videomemory[dot_addr]   >> (7 - (x % 8))) & 1) * 1 +
+					((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
+					((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +
+					((videomemory[dot_addr + 0x30000] >> (7 - (x % 8))) & 1) * 8;
 
-				rectangle.setPosition(sf::Vector2f(x * 2.5 + 20, (y * 6) + 20));
-				rectangle.setFillColor(EGA_colors[col]);
+				rectangle.setPosition(sf::Vector2f(x * display_x_scale + 20, (y * display_y_scale) + 20));
+				rectangle.setFillColor(EGA_colors_64[(ac_registers[col] & 0b111111)]);
 				main_window.draw(rectangle);
-
 			}
 		}
-	
 	}
-
-
-	// вывод технической информации
-	attr_blink = false;
-	attr_highlight = false;
-	attr_under = false;
 
 	//тестовая информация джойстика
 	joy_sence_show_timer -= elapsed_ms;
@@ -3723,7 +4199,6 @@ void EGA_videocard::render()					//синхронизация
 		text.setFillColor(sf::Color(0, 0, 0));
 		text.setOutlineThickness(12.1);
 		if (joy_sence_show_timer) main_window.draw(text);
-
 
 		string t = "Joystick, center point: " + to_string(joy_sence_value) + " ";
 		for (int r = 0; r < (joy_sence_value >> 3); r++)
@@ -3765,92 +4240,226 @@ void EGA_videocard::scale_down()
 }
 void EGA_videocard::mem_write(uint32 address, uint8 data)
 {
-	uint8 bitmask = gc_registers[8]; //маска пикселей
-	uint8 mapmask = seq_registers[2] & 15; //маска слоев
+	uint8 bitmask = gc_registers[8]; //маска пикселей, изменения вносятся только в биты, отмеченные как 1, остальные биты грузятся из защелок
+	uint8 mapmask = seq_registers[2] & 15; //маска слоев, вносятся изменения только в выбранные слои (бит помечен как 1)
 	uint8 memory_mode = gc_registers[5] & 3; //режим записи
-	uint8 rotate_cnt = gc_registers[3] & 7 ; //циклы ротации
-	uint8 bit_function = (gc_registers[3] >> 3)  & 3; //побитовая функция
+	bool odd_even_mode = ~(seq_registers[4] >> 2) & 1; //режим записи, при котором нетные/нечетные адреса пишутся в разные плоскости
+	//PageBitOddEven - выбор страницы уже установлен в регистре
+	//режим 0
+	//режим 1 - причтении биты записываются в регистр-защелку, при записи данные берутся из регистров
+	//режим 2
 
-	//операции над плоскостями
-	for (int plane = 0; plane < 4; plane++)
+	uint8 rotate_cnt = gc_registers[3] & 7;           //циклы ротации
+	uint8 bit_function = (gc_registers[3] >> 3) & 3;  //побитовая функция
+	uint8 set_reset_bits = gc_registers[0];			  //биты для записи/сброса (значимы только младшие 4 бита), используются в режиме записи 0
+	uint8 set_reset_enable = (gc_registers[1] & 15);		  //разрешение для записи битов set/reset режиме записи 0
+
+	uint8 data_for_planes[4] = { data, data, data, data };	//входной бит для кажой плоскости
+	uint8 plane = 0; //номер плоскости
+
+	write_steps = "";
+
+	//режим четных_нечетных адресов или режим совместимости
+	if (odd_even_mode)
 	{
+		if (address & 1) plane = 1;
+		if (!PageBitOddEven) plane += 2;
+		//if ((gc_registers[6] >> 1) & 1)  plane = PageBitOddEven;
+
+		if ((mapmask >> plane) & 1)
+		{
+			videomemory[(address >> 1) + plane * 0x10000] = data_for_planes[plane];
+			if (log_to_console) cout << "WR to VIDmem [" << (int)((address >> 1) + plane * 0x10000) << "] = (mode o/e) " << (int)videomemory[(address >> 1) + plane * 0x10000] << endl;
+		}
+		else
+		{
+			videomemory[(address >> 1) + plane * 0x10000] = latch_reg[plane];
+			if (log_to_console) cout << "WR to VIDmem [" << (int)((address >> 1) + plane * 0x10000) << "] = (mode o/e latch) " << (int)videomemory[(address >> 1) + plane * 0x10000] << endl;
+		}
+		write_steps += " o/e";
+	}
+	else
+	{
+		//сплошной режим адресов или улучшенный 
 		if (memory_mode == 0)
 		{
-			if ((mapmask >> plane) & 1)
+			//режим 0 - разные операции над битами
+			write_steps += " M0";
+			//операции set/reset или вращение вправо (только Mode 0)
+			if (log_to_console) cout << endl;
+			for (int plane = 0; plane < 4; plane++)
 			{
-				//побитовые операции
-				switch(bit_function)
+				if ((set_reset_enable >> plane) & 1)
 				{
-				case 0: //без изменений
-					videomemory[address + plane * 0x4000] = data & bitmask;
-					break;
-				case 1: //AND latch
-					videomemory[address + plane * 0x4000] = (data & bitmask) & latch_reg[plane];
-					break;
-				case 2: //OR latch
-					videomemory[address + plane * 0x4000] = (data & bitmask) | latch_reg[plane];
-					break;
-				case 3: //XOR latch
-					videomemory[address + plane * 0x4000] = (data & bitmask) ^ latch_reg[plane];
-					break;
+					//устанавливаем биты в значение set_reset_bits
+					if ((set_reset_bits >> plane) & 1) data_for_planes[plane] = 0xFF;
+					else data_for_planes[plane] = 0; // latch_reg[plane];
+					if (log_to_console) cout << "SET/RESET mode 0 = " << (int)data_for_planes[plane] << endl;
+					write_steps += " SR";
+				}
+				else
+				{
+					//вращаем байт 
+					if (rotate_cnt)
+					{
+						if (log_to_console) cout << "mode 0 RotateR[" << (int)rotate_cnt << "] " << (int)data_for_planes[plane];
+						data_for_planes[plane] = (data_for_planes[plane] >> rotate_cnt) | (data_for_planes[plane] << (8 - rotate_cnt));
+						if (log_to_console) cout << " = > " << (int)data_for_planes[plane] << endl;
+					}
+					write_steps += " RT";
 				}
 			}
-			else
+
+			//логические операции для каждой плоскости
+			if (bit_function)
 			{
-				videomemory[address + plane * 0x4000] = latch_reg[plane];
+				if (log_to_console) cout << "mode 0 Logic func[" << (int)bit_function << "] " << (int)data << " => ";
+				for (int plane = 0; plane < 4; plane++)
+				{
+					if (bit_function == 1) data_for_planes[plane] = latch_reg[plane] & data_for_planes[plane];
+					if (bit_function == 2) data_for_planes[plane] = latch_reg[plane] | data_for_planes[plane];
+					if (bit_function == 3) data_for_planes[plane] = latch_reg[plane] ^ data_for_planes[plane];
+					if (log_to_console) cout << " - " << (int)data_for_planes[plane];
+				}
+				if (log_to_console) cout << endl;
+				write_steps += " LG";
 			}
-		}
+
+			//запись плоскостей с учетом маски
+			for (int plane = 0; plane < 4; plane++)
+			{
+				//запись байтов в память с учетом маски
+				if ((mapmask >> plane) & 1)
+				{
+					videomemory[address + plane * 0x10000] = (data_for_planes[plane] & bitmask) | (latch_reg[plane] & (~bitmask));
+					if (log_to_console) cout << "mode 0 WR to VIDmem [" << (int)(address + plane * 0x10000) << "] = (mode 0) " << (int)videomemory[address + plane * 0x10000] << endl;
+					write_steps += " BM";
+				}
+			}
+		} //конец режима 0
 
 		if (memory_mode == 1)
 		{
-			if (mapmask & plane) videomemory[address + plane * 0x4000] = latch_reg[plane];
+			//пишем данные из защелок (логические операции и вращение не применяются)
+			//применяется только mapmask
+			write_steps += " M1";
+
+			for (int plane = 0; plane < 4; plane++)
+			{
+				if ((mapmask >> plane) & 1) videomemory[address + plane * 0x10000] = latch_reg[plane];
+				if (log_to_console) cout << "mode 1 WR to VIDmem [" << (int)(address + plane * 0x10000) << "] = (latch) " << (int)videomemory[address + plane * 0x10000] << endl;
+			}
 		}
 
 		if (memory_mode == 2)
 		{
-			//пишем бит напрямую + маска
-			videomemory[address + plane * 0x4000] = data & bitmask;
+			write_steps += " M2";
+
+			data_for_planes[0] = ((data >> 0) & 1) * 0xFF;
+			data_for_planes[1] = ((data >> 1) & 1) * 0xFF;
+			data_for_planes[2] = ((data >> 2) & 1) * 0xFF;
+			data_for_planes[3] = ((data >> 3) & 1) * 0xFF;
+			
+			//логические операции для каждой плоскости
+			if (bit_function)
+			{
+				if (log_to_console) cout << "mode 2 Logic func[" << (int)bit_function << "] " << (int)data << " => ";
+				for (int plane = 0; plane < 4; plane++)
+				{
+					if (bit_function == 1) data_for_planes[plane] = latch_reg[plane] & data_for_planes[plane];
+					if (bit_function == 2) data_for_planes[plane] = latch_reg[plane] | data_for_planes[plane];
+					if (bit_function == 3) data_for_planes[plane] = latch_reg[plane] ^ data_for_planes[plane];
+					if (log_to_console) cout << " - " << (int)data_for_planes[plane];
+				}
+				write_steps += " LG";
+				if (log_to_console) cout << endl;
+			}
+
+			//запись плоскостей с учетом маски
+			for (int plane = 0; plane < 4; plane++)
+			{
+				//запись байтов в память с учетом маски
+				if ((mapmask >> plane) & 1)
+				{
+					videomemory[address + plane * 0x10000] = (data_for_planes[plane] & bitmask) | (latch_reg[plane] & (~bitmask));
+					if (log_to_console) cout << "mode 2 WR to VIDmem [" << (int)(address + plane * 0x10000) << "] = (mode 0) " << (int)videomemory[address + plane * 0x10000] << endl;
+				}
+			}
+
+			if (log_to_console) cout << "mode 2 WR to VIDmem [" << (int)(address) << "] = (direct) " << (int)videomemory[address] << endl;
 		}
 	}
-
-	//videomemory[address] = data;
 }
 uint8 EGA_videocard::mem_read(uint32 address)
 {
-	uint8 memory_mode = (gc_registers[5] >> 3)  & 1; //режим записи
+	uint8 memory_mode = (gc_registers[5] >> 3) & 1; //режим чтения
 	uint8 color_compare = gc_registers[2];		  	 //регистр сравнения
+	bool odd_even_mode = (gc_registers[5] >> 4) & 1; //режим записи, при котором нетные/нечетные адреса пишутся в разные плоскости
+	uint8 color_nocare = gc_registers[7];			//пропуск сравнения
 
 	uint8 data_out = 0;
 
 	//запоминаем данные в регистрах
 	latch_reg[0] = videomemory[address];
-	latch_reg[1] = videomemory[address + 0x4000];
-	latch_reg[2] = videomemory[address + 0x8000];
-	latch_reg[3] = videomemory[address + 0xC000];
-	
-	uint8 map_select = gc_registers[4] & 3;
+	latch_reg[1] = videomemory[address + 0x10000];
+	latch_reg[2] = videomemory[address + 0x20000];
+	latch_reg[3] = videomemory[address + 0x30000];
 
-	//чтения
-	if (memory_mode == 0)
+	uint8 map_select = gc_registers[4] & 7; //выбор читаемого слоя для Mode 0
+	if ((map_select >> 2) & 1) return 0; //bit2 = 1 не дает читать плоскости
+
+	if (odd_even_mode)
 	{
-		//чтение через map_select
-		address = address + map_select * 0x4000;
-		return videomemory[address];
+		//режим с чередованием адресов или режим совместимости
+		//чтение через адрес
+		if (address & 1)
+		{
+			//нечетные адреса
+			address = address / 2 + 0x10000;
+			if (!PageBitOddEven) address = address + 0x20000;
+			if (log_to_console) cout << endl << "o/e mode RD drom VIDmem [" << (int)(address) << "] = " << (int)videomemory[address] << endl;
+			return videomemory[address];
+		}
+		else
+		{
+			//четные адреса
+			address = address / 2;
+			if (!PageBitOddEven) address = address + 0x20000;
+			if (log_to_console) cout << endl << "o/e mode RD drom VIDmem [" << (int)(address) << "] = " << (int)videomemory[address] << endl;
+			return videomemory[address];
+		}
 	}
 	else
 	{
-		//сравнение цветов
-		for (int bit = 0; bit < 7; bit++)
+		//обычный режим памяти
+		if (memory_mode == 0)
 		{
-			if ((((videomemory[address] >> bit) & 1) & ((color_compare >> 3) & 1)) & (((videomemory[address + 0x4000] >> bit) & 1) & ((color_compare >> 2) & 1)) & (((videomemory[address + 0x8000] >> bit) & 1) & ((color_compare >> 1) & 1)) & (((videomemory[address + 0xC000] >> bit) & 1) & ((color_compare >> 0) & 1)))
-			{
-				//цвет совпал
-				data_out += pow(2, bit);
-			}
+			if (map_select >> 3) return 0; //если установлен бит 3 - ничего не читаем
+			//чтение через map_select
+			address = address + map_select * 0x10000;
+			if (log_to_console) cout << endl << "mode 0 RD drom VIDmem [" << (int)(address) << "] = " << (int)videomemory[address] << endl;
+			return videomemory[address];
 		}
-		return data_out;
+		else
+		{
+			if (map_select >> 3) return 0; //если установлен бит 3 - ничего не читаем
+			//Режим чтения 1 - сравнение цветов
+			for (int bit = 0; bit < 8; bit++)
+			{
+				if (((((videomemory[address + 0x00000] >> bit) & 1) == ((color_compare >> 0) & 1)) || ((color_nocare >> 0) & 1) == 0) &
+					((((videomemory[address + 0x10000] >> bit) & 1) == ((color_compare >> 1) & 1)) || ((color_nocare >> 1) & 1) == 0) &
+					((((videomemory[address + 0x20000] >> bit) & 1) == ((color_compare >> 2) & 1)) || ((color_nocare >> 2) & 1) == 0) &
+					((((videomemory[address + 0x30000] >> bit) & 1) == ((color_compare >> 3) & 1)) || ((color_nocare >> 3) & 1) == 0))
+				{
+					//цвет совпал
+					data_out |= (1 << bit);
+				}
+			}
+			//data_out = 128;
+			if (log_to_console) cout << endl << "mode 1 RD drom VIDmem [" << (int)(address) << "] = (mask) " << (int)data_out << endl;
+			return data_out;
+		}
 	}
-	
 }
 void EGA_videocard::flash_rom(uint32 address, uint8 data)
 {
@@ -3865,11 +4474,11 @@ std::string EGA_videocard::get_debug_data(uint8 i)
 	if (i == 0)
 	{
 		std::string out;
-		out = "MOR: " + int_to_bin(MOR) + " BW/COL=" + to_string(IOAddrSel) + " En_RAM=" + to_string(EnRAM) + " PageBit=" + to_string(PageBit);
+		out = "MOR: " + int_to_bin(MOR) + " BW/COL=" + to_string(IOAddrSel) + " En_RAM=" + to_string(EnRAM);
 		if (On_board_switch_sel == 0) out += " clk=14MHz";
 		if (On_board_switch_sel == 1) out += " clk=16MHz";
 		if (On_board_switch_sel == 2) out += " clk=Ext";
-		out += " IntDRV=" + to_string((MOR >> 4) & 1) + " 64K_page=" + to_string(PageBit) + " bit_6_7=" + to_string((MOR >> 6) & 3);
+		out += " IntDRV=" + to_string((MOR >> 4) & 1) + " 64K_page=" + to_string(PageBitOddEven) + " bit_6_7=" + to_string((MOR >> 6) & 3);
 		return out;
 	}
 
@@ -3880,7 +4489,7 @@ std::string EGA_videocard::get_debug_data(uint8 i)
 	if (i == 3)	return "Map msk: " + int_to_hex(seq_registers[2], 2) + "   " + int_to_bin(seq_registers[2]);
 	if (i == 4) return "Char gen sel: " + int_to_hex(seq_registers[3], 2) + "   " + int_to_bin(seq_registers[3]);
 	if (i == 5)	return "Mem mode: " + int_to_hex(seq_registers[4], 2) + "   " + int_to_bin(seq_registers[4]);
-	
+
 	if (i == 7)	return "Horiz total: " + int_to_hex(crt_registers[0], 2) + "   " + int_to_bin(crt_registers[0]);
 	if (i == 8)	return "Hrz Disp End: " + int_to_hex(crt_registers[1], 2) + "   " + int_to_bin(crt_registers[1]);
 	if (i == 9)	return "Strt Hrz Blk: " + int_to_hex(crt_registers[2], 2) + "   " + int_to_bin(crt_registers[2]);
@@ -3906,8 +4515,8 @@ std::string EGA_videocard::get_debug_data(uint8 i)
 	if (i == 28)	return "Miscelaneous: " + int_to_hex(gc_registers[6], 2) + "   " + int_to_bin(gc_registers[6]);
 	if (i == 29)	return "Color no care: " + int_to_hex(gc_registers[7], 2) + "   " + int_to_bin(gc_registers[7]);
 	if (i == 30)	return "Bit mask: " + int_to_hex(gc_registers[8], 2) + "   " + int_to_bin(gc_registers[8]);
-	
-	if (i >= 31 && i < 47)	return "Palette " + int_to_hex(i-31,2) +  ": " + int_to_hex(ac_registers[i-31], 2) + "   " + int_to_bin(ac_registers[i-31]);
+
+	if (i >= 31 && i < 47)	return "Palette " + int_to_hex(i - 31, 2) + ": " + int_to_hex(ac_registers[i - 31], 2) + "   " + int_to_bin(ac_registers[i - 31]);
 
 	if (i == 47)	return "Mode control: " + int_to_hex(ac_registers[16], 2) + "   " + int_to_bin(ac_registers[16]);
 	if (i == 48)	return "Overscan: " + int_to_hex(ac_registers[17], 2) + "   " + int_to_bin(ac_registers[17]);
@@ -3918,9 +4527,73 @@ std::string EGA_videocard::get_debug_data(uint8 i)
 	if (i == 52)	return "Color comp: " + int_to_hex(gc_registers[2], 2) + "   " + int_to_bin(gc_registers[2]);
 	if (i == 53)	return "Data rotate: " + int_to_hex(gc_registers[3], 2) + "   " + int_to_bin(gc_registers[3]);
 	if (i == 54)	return "Read map sel: " + int_to_hex(gc_registers[4], 2) + "   " + int_to_bin(gc_registers[4]);
+	if (i == 55)
+	{
+		switch (current_mode)
+		{
+		case video_modes::EGA_01_200:
+			return "EGA_01_200";
+		case video_modes::EGA_23_200:
+			return "EGA_23_200";
+		case video_modes::EGA_45_320:
+			return "EGA_45_320";
+		case video_modes::EGA_D_320:
+			return "EGA_D_320";
+		case video_modes::EGA_E_200:
+			return "EGA_E_200";
+		case video_modes::EGA_6_640:
+			return "EGA_6_640";
+		case video_modes::EGA_01_350:
+			return "EGA_01_350";
+		case video_modes::EGA_10_350:
+			return "EGA_10_350";
+		case video_modes::EGA_23_350:
+			return "EGA_23_350";
+		case video_modes::EGA_7_720:
+			return "EGA_7_720";
+		case video_modes::EGA_F_350:
+			return "EGA_F_350";
+		}
+		return "error";
+	}
 
+	if (i == 56) return "Odd/Even Mode = " + to_string(~(seq_registers[4] >> 2) & 1) + " + " + to_string((gc_registers[5] >> 4) & 1) + " Page_bit = " + to_string(PageBitOddEven);
+	if (i == 57) return "Mem write Mode = " + to_string(gc_registers[5] & 3) + write_steps;
+	if (i == 58) return "Mem read Mode = " + to_string((gc_registers[5] >> 3) & 1);
+	if (i == 59)
+	{
+		switch ((gc_registers[6] >> 2) & 3)
+		{
+		case 0:
+			return "Mem window 128K(A0000)";
+			break;
+		case 1:
+			return "Mem window 64K(A0000)";
+			break;
+		case 2:
+			return "Mem window 32K(B0000)";
+			break;
+		case 3:
+			return "Mem window 32K(B8000)";
+			break;
+		}
+		return "error";
+	}
+	if (i == 60)
+	{
+		switch ((gc_registers[6] >> 1) & 1)
+		{
+		case 0:
+			return "Chain planes = 0";
+			break;
+		case 1:
+			return "Chain planes = 1";
+			break;
+		}
+		return "error";
+	}
 
-
+	if (i == 61) return "Start addr = 0x" + int_to_hex((crt_registers[0xC]) * 256 + crt_registers[0xD], 4);
 
 	/*
 	uint8 seq_registers[32] = { 0 }; // массив регистров
@@ -3944,6 +4617,11 @@ mouse_xy EGA_videocard::get_mouse_pos()
 	mouse_data.screen_scale = display_scale;
 
 	return mouse_data;
+}
+uint8 EGA_videocard::direct_read(uint32 address)
+{
+	if (address < 256 * 1024) return videomemory[address];
+	else return 0;
 }
 
 //====================== Monitor =================
@@ -4106,7 +4784,7 @@ void Monitor::mem_write(uint32 address, uint8 data)
 		}
 		return;
 	case videocard_type::EGA:
-		if (address >= 0xA0000 && address < 0xA4000)
+		if (address >= 0xA0000 && address < 0xB0000)
 		{
 			EGA_card.mem_write(address - 0xA0000, data);
 			return;
@@ -4135,7 +4813,7 @@ uint8 Monitor::mem_read(uint32 address)
 		if (address >= 0xB0000 && address < 0xB1000) return	MDA_card.mem_read(address - 0xB0000);
 		break;
 	case videocard_type::EGA:
-		if (address >= 0xA0000 && address < 0xA4000)
+		if (address >= 0xA0000 && address < 0xB0000)
 		{
 			return EGA_card.mem_read(address - 0xA0000);
 		}
@@ -4209,8 +4887,21 @@ mouse_xy Monitor::get_mouse_pos()
 		return EGA_card.get_mouse_pos();
 		break;
 	}
-	return mouse_xy ({ 0,0,0,0,0 });
+	return mouse_xy({ 0,0,0,0,0 });
 
+}
+uint8 Monitor::direct_read(uint32 address)
+{
+	//прямое чтение из видеопамяти
+	switch (card_type)
+	{
+	case videocard_type::CGA:
+		return CGA_card.direct_read(address);
+	case videocard_type::MDA:
+		return MDA_card.direct_read(address);
+	case videocard_type::EGA:
+		return EGA_card.direct_read(address);
+	}
 }
 Monitor::Monitor()
 {

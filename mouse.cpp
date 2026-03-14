@@ -97,6 +97,8 @@ uint8 Mouse::get_modem_state(bool loopback)
 	if (loopback) new_state = (COM1.get_OUT2() << 7) | (COM1.get_OUT1() << 6) | (COM1.get_DTR() << 5) | (COM1.get_RTS() << 4);
 	else new_state = (DCD << 7) | (IR << 6) | (DSR << 5) | (CTS << 4);
 	new_state = new_state | ((old_state ^ new_state) >> 4);
+	uint8 IR_mask = (((~new_state) & 0b01000000) >> 4) & new_state;
+	new_state = (new_state & 0b111110111) | IR_mask; //бит смены IR устанавливается только при сбросе IR с единицы до нуля
 	old_state = new_state & 0xF0;
 
 	if (log_to_console) cout << "COM read reg_modem_state <- " << (int)new_state << endl;

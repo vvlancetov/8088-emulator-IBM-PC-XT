@@ -25,7 +25,9 @@ extern uint8 service_counter;
 
 void Breakpointer::load_breakpoints()
 {
-
+	return;
+	
+	breakpoints.clear();
 	//breakpoints.push_back({ 0xfe231,"POST[455]: KEYBOARD RESET" });
 	//breakpoints.push_back({ 0xfe3d4,"POST[727]: KEYBOARD TEST" });
 	//breakpoints.push_back({ 0xfe400,"POST[750]: READ KEYBOARD" });
@@ -46,15 +48,53 @@ void Breakpointer::load_breakpoints()
 	//breakpoints.push_back({ 0xc06c8,"EGA ERROR BEEP" });
 	//breakpoints.push_back({ 0xc03A0,"EGA POD14_4:" });
 	//breakpoints.push_back({ 0xc03c8,"EGA test vert" });
-	breakpoints.push_back({ 0xc03cc,"EGA POD14_75:" });
-	breakpoints.push_back({ 0x14465,"loop end" });
-	breakpoints.push_back({ 0x14469,"loop jump out" });
-	
+	//breakpoints.push_back({ 0xc038A,"EGA POD14_2:" });
+	//breakpoints.push_back({ 0xc03cc,"EGA POD14_74:" });
+	//breakpoints.push_back({ 0xc03B0,"EGA POD14_4a:" });
+	//breakpoints.push_back({ 0xc03B5,"EGA POD14_4b:" });
+	breakpoints.push_back({ 0xc0480,"EGA MEM TEST:" });
+	breakpoints.push_back({ 0xc05cd,"EGA MEM ERROR:" });
+	breakpoints.push_back({ 0xc06bc,"EGA HB_END:" });
+	breakpoints.push_back({ 0xc05ef,"EGA MEM OK END" });
+	//breakpoints.push_back({ 0xc0244,"EGA[971]: EGA POST" });
+	//breakpoints.push_back({ 0xc04eb,"EGA[]: EGA AA1" });
+	breakpoints.push_back({ 0xc04f6,"EGA[]: EGA AA2" });
+	breakpoints.push_back({ 0xc0523,"EGA[]: EGA AA3" });
+	breakpoints.push_back({ 0xc052e,"EGA[]: EGA aa4" });
+	breakpoints.push_back({ 0xc0448,"EGA[1354]: EGA error subroutine" });
+	breakpoints.push_back({ 0xc055b,"EGA[]: EGA aa5" });
+	breakpoints.push_back({ 0xc0566,"EGA[]: EGA aa6" });
+	breakpoints.push_back({ 0xc05d9,"EGA[1535]: EGA MEM OK" });
+	breakpoints.push_back({ 0xc068F,"EGA HOW_BIG" });
 }
 
 void Breakpointer::load_comments()
 {
 	//заполн€ем таблицу комментариев
+	//EGA видеокарта
+
+	//comments.push_back({ 0xc03A0,"EGA POD14_4:" });
+	//comments.push_back({ 0xc03BA,"EGA POD14_5:" });
+	//comments.push_back({ 0xc03BE,"EGA POD14_6:" });
+	//comments.push_back({ 0xc03B0,"EGA POD14_4a:" });
+	//comments.push_back({ 0xc03B5,"EGA POD14_4b:" });
+	//comments.push_back({ 0xc03c5,"EGA POD14_7:" });
+	//comments.push_back({ 0xc0480,"EGA MEM TEST:" });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	return;
 	//normal BIOS
 	//POST
 	comments.push_back({ 0xFE0AC,"POST[198]: CPU test complete" });
@@ -222,6 +262,7 @@ void Breakpointer::check_points()
 				log_to_console = true;
 				service_counter = 1;
 				run_until_CX0 = false;
+				break;
 			}
 		}
 	}

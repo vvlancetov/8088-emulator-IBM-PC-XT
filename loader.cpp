@@ -396,6 +396,7 @@ void loader(int argc, char* argv[])
 				{
 					//устанавливаем громкость
 					if (value != "" && stoi(value, 0, 10)) speaker.set_volume(stoi(value, 0, 10));
+					else speaker.set_volume(0);
 				}
 
 				if (parameter == "VIDEO") //видеокарта

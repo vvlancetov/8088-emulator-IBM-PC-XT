@@ -73,6 +73,7 @@ public:
 	void mem_write(uint32 address, uint8 data); //запись в видеопамять
 	uint8 mem_read(uint32 address);				//чтение из видеопамяти
 	mouse_xy get_mouse_pos();
+	uint8 direct_read(uint32 address);
 };
 
 //CGA videocard
@@ -90,9 +91,9 @@ private:
 	sf::Clock cursor_clock;				//таймер мигания курсора
 	bool cursor_flipflop = false;		//переменная для мигания
 	int speed_history[33] = { 100000 };
-	unsigned __int8 command_reg = 0;	//регистр команд
-	unsigned __int8 count_param = 0;	//количество параметров для обработки
-	unsigned __int8 status = 0;         //регистр статуса
+	uint8 command_reg = 0;				//регистр команд
+	uint8 count_param = 0;				//количество параметров для обработки
+	uint8 status = 0;					//регистр статуса
 										// 0 - FO, FIFO Overrun - переполнение буфера FIFO
 										// 1 - DU, DMA Underrun - потеря данных во время процесса ПДП
 										// 2 - VE, Video Enable - видеооперации с экраном разрешены
@@ -143,14 +144,6 @@ private:
 
 public:
 	sf::Font font;
-	//void select_register(uint8 data);	//команда контроллеру
-	//void set_reg_data(uint8 data);		//параметры команды
-	//void write_vram(uint16 address, uint8 data); //запись в видеопамять
-	//uint8 read_vram(uint16 address);	//чтение из видеопамяти
-	//uint8 read_vrom(uint16 address);	//чтение из ПЗУ
-	//void load_v_rom(uint16 address, uint8 data);	 //видео БИОС
-	//void write_vram_MDA(uint16 address, uint8 data); //запись в видеопамять
-	//uint8 read_vram_MDA(uint16 address);			 //чтение из видеопамяти
 
 	uint8 line_height = 10;						//высота строки в пикселях
 	CGA_videocard();							//конструктор класса
@@ -175,6 +168,7 @@ public:
 	void mem_write(uint32 address, uint8 data); //запись в видеопамять
 	uint8 mem_read(uint32 address);				//чтение из видеопамяти
 	mouse_xy get_mouse_pos();
+	uint8 direct_read(uint32 address);
 };
 
 //EGA videocard
@@ -202,13 +196,14 @@ private:
 	uint8 MOR = 0;					//Miscelaneous Output Register
 	bool IOAddrSel = 0;
 	bool EnRAM = 0;
-	bool PageBit = 0;
+	bool PageBitOddEven = 0;		//выбор страницы в режиме odd/even
 	bool DisplayEN = 0;
 	bool Lines_350 = 0;				//кол-во горизонтальных линий
 	bool ac_flipflop = 0;			//Attribute	Controller flip_flop 0 - address, 1 - value
 	uint8 On_board_switch_sel = 0;	//выбор считываемого переключателя на плате
 	bool High_pix_clock = 0;		//повышенная частота (720 пикселей)
 	bool use_2_char_gen = 0;		//использовать две таблицы знакогенератора
+	bool video_on = 1;				//включение отображения
 
 	uint8 CRT_sel_reg = 0;			 //селектор для CRT Controller Registers
 	uint8 SEQ_sel_reg = 0;			 //выбранный регистр для записи
@@ -227,6 +222,7 @@ private:
 		
 	//палитра
 	sf::Color EGA_colors[16];		//массив цветов EGA 
+	sf::Color EGA_colors_64[64];		//массив цветов EGA вся палитра 
 	sf::Color TXT_colors[16];		//массив цветов для текста
 	sf::Color TXT_BW_colors[16];	//массив ЧБ цветов для текста
 	int elapsed_ms = 0;				//период времени
@@ -238,13 +234,16 @@ private:
 	bool do_resize = 0;
 	
 	//память
-	uint8 videomemory[64 * 1024];	//видеопамять
+	uint8 videomemory[256 * 1024];	//видеопамять
 	uint8 rom[16 * 1024];			//ROM
 	uint8 latch_reg[4] = { 0 };		//регистры защелки
 
 	//контроль видеорежимов
 	enum class video_modes {EGA_01_200, EGA_01_350, EGA_23_200, EGA_23_350, EGA_7_720, EGA_45_320, EGA_6_640, EGA_D_320, EGA_E_200, EGA_F_350, EGA_10_350};
 	video_modes current_mode = video_modes::EGA_01_200; //текущий видеорежим
+
+	//отладка
+	std::string write_steps = "";
 
 public:
 
@@ -270,6 +269,7 @@ public:
 	uint8 read_rom(uint32 address);
 	std::string get_debug_data(uint8 i);
 	mouse_xy get_mouse_pos();
+	uint8 direct_read(uint32 address);
 };
 
 //=================== СТАВИТЬ после определения видеокарт
@@ -309,6 +309,7 @@ public:
 	uint8 read_rom(uint32 address);
 	std::string get_debug_data(uint8 i);
 	mouse_xy get_mouse_pos();
+	uint8 direct_read(uint32 address);
 };
 
 //==================== Вспомогательные мониторы==========
@@ -385,9 +386,10 @@ public:
 class Mem_mon_device : public Dev_mon_device
 {
 private:
-	uint16 segment = 0xb8000;;
+	uint16 segment = 0x00000;;
 	uint16 offset = 0x0000;
 	uint8 cursor = 0;
+	uint8 ega_page = 0;
 
 public:
 	using Dev_mon_device::Dev_mon_device;

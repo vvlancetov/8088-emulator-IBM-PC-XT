@@ -2779,7 +2779,8 @@ void In_8_from_DX()		//Input 8 from variable PORT
 }
 void In_16_from_DX()	//Input 16 from variable PORT
 {
-	AX = IO_device.input_from_port_16(DX); //пишем в AX байт из порта DX
+	*ptr_AL = IO_device.input_from_port_8(DX); //пишем в AX байт из порта DX
+	*ptr_AH = IO_device.input_from_port_8(DX + 1); //пишем в AX байт из порта DX
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "read (" << (int)AX << ") from port " << (int)DX;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
@@ -2795,7 +2796,8 @@ void Out_8_to_DX()		//Output 8 to variable PORT
 }
 void Out_16_to_DX()		//Output 16 to variable PORT
 {
-	IO_device.output_to_port_16(DX, AX);//выводим в порт DX байт AL
+	IO_device.output_to_port_8(DX, *ptr_AL);//выводим в порт DX байт AL
+	IO_device.output_to_port_8(DX + 1, *ptr_AH);//выводим в порт DX байт AL
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 10);
 	if (log_to_console) cout << "write AX(" << (int)(AX) << ") to port " << (int)DX;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
