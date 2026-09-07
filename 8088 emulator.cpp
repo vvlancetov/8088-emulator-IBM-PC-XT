@@ -32,6 +32,7 @@ typedef unsigned __int32 uint32;
 #include "rtc.h"
 #include "mouse.h"
 #include "serial_port.h"
+#include "EMS_board.h"
 
 using namespace std;
 using namespace std::chrono;
@@ -138,6 +139,9 @@ game_controller joystick;
 
 //часы
 Rtc real_clock;
+
+//EMS плата Intel Above Board
+EMS_board Intel_Above_Board;
 
 //переключатели на плате
 //uint8 MB_switches = 0b01101101; //CGA + 2FDD
@@ -629,6 +633,12 @@ void Mem_Ctrl::write(uint32 address, uint8 data) //запись значений
 		return;
 	}
 
+	//запись в память EMS платы
+	if (address >= 0xE0000 && address < 0xF0000)
+	{
+		Intel_Above_Board.write_mem(address - 0xE0000, data);
+		return;
+	}
 }
 uint8 Mem_Ctrl::read(uint32 address) //чтение данных из памяти
 {
@@ -682,7 +692,12 @@ uint8 Mem_Ctrl::read(uint32 address) //чтение данных из памят
 	{
 		return real_clock.read_rom(address - 0xD4000);
 	}
-
+	
+	//чтение из памяти EMS платы
+	if (address >= 0xE0000 && address < 0xF0000)
+	{
+		return Intel_Above_Board.read_mem(address - 0xE0000);
+	}
 
 }
 void Mem_Ctrl::flash_rom(uint32 address, uint8 data)
@@ -804,6 +819,17 @@ void IO_Ctrl::output_to_port_8(uint16 address, uint8 data)	//вывод в по�
 	{
 		COM1.write_port(address, data);
 	}
+
+	//EMS board
+
+	if (address == 0x208) Intel_Above_Board.page_0_select(data);
+	if (address == 0x209) Intel_Above_Board.page_1_select(data);
+	if (address == 0x20A) Intel_Above_Board.page_2_select(data);
+	if (address == 0x20B) Intel_Above_Board.page_3_select(data);
+	if (address == 0x20C) Intel_Above_Board.write_ctrl_reg(data);
+	if (address == 0x20E) Intel_Above_Board.write_config_1(data);
+	if (address == 0x20F) Intel_Above_Board.write_config_2(data);
+
 }
 void IO_Ctrl::output_to_port_16(uint16 address, uint16 data)
 {
@@ -880,6 +906,11 @@ uint8 IO_Ctrl::input_from_port_8(uint16 address)				//ввод из порта, 
 	{
 		return COM1.read_port(address);
 	}
+
+	//EMS board
+	if (address == 0x20C) return Intel_Above_Board.read_status();
+	if (address == 0x20E) return Intel_Above_Board.read_config_1();
+	if (address == 0x20F) return Intel_Above_Board.read_config_2();
 
 	return 0;
 }
