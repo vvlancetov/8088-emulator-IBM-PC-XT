@@ -3,6 +3,7 @@
 #include <iostream>
 #include <chrono>
 #include "audio.h"
+#include "adlib.h"
 
 #define DEBUG
 
@@ -14,6 +15,7 @@ extern Audio_mon_device Audio_monitor;
 extern bool step_mode;
 extern bool log_to_console;
 extern SoundMaker speaker;
+extern adlib_card soundcard;
 
 template< typename T >
 extern std::string int_to_bin(T i);
@@ -225,6 +227,12 @@ void Audio_mon_device::get_sample(int16_t sample)
 
 	sample_array[array_pointer_next_el] = sample;
 }
+void Audio_mon_device::get_adlib_sample(int16_t sample)
+{
+	adlib_sample_array[adlib_array_pointer] = sample;
+	adlib_array_pointer++;
+	if (adlib_array_pointer == 4800) adlib_array_pointer = 0;
+}
 void Audio_mon_device::set_pinout(uint8 data)
 {
 	pinout_11 = int_to_bin(data);
@@ -233,7 +241,7 @@ void SoundMaker::set_volume(uint8 vol)
 {
 	volume = vol;
 	if (volume > 100) volume = 100;
-	cout << "AUDIO: volume set to " << (int)volume << endl;
+	cout << "SPEAKER: volume set to " << (int)volume << endl;
 }
 
 void Audio_mon_device::main_loop()
@@ -296,8 +304,8 @@ void Audio_mon_device::render()
 	rectangle.setSize(sf::Vector2f(2, 2));
 	
 	//выводим данные
+	/*
 	array_pointer_to_draw = array_pointer_next_el;
-	
 	for (int x = 1000; x >= 0; --x)
 	{
 		if (!array_pointer_to_draw) array_pointer_to_draw = 999;
@@ -309,9 +317,9 @@ void Audio_mon_device::render()
 		rectangle.setPosition(sf::Vector2f(x, 100));
 		main_window.draw(rectangle);
 	}
+	*/
 	//if (sample_array[0]) step_mode = 1;  //останов для отладки
 	
-
 	//выводим надписи
 
 	sf::Text text(font);
@@ -330,6 +338,45 @@ void Audio_mon_device::render()
 	text.setString("diff = " + to_string(diff));
 	text.setPosition(sf::Vector2f(600, 5));
 	main_window.draw(text);
+
+	//отладочная информация для adlib
+
+	//рисуем график сэмплов
+	/*
+	for (int i = 0; i < 960; i++)
+	{
+		int sum = 0;
+		for (int t = 0; t < 5; t++)
+		{
+			sum += adlib_sample_array[i * 5 + t];
+		}
+		
+		rectangle.setFillColor(sf::Color(0, 255, 0)); //зеленый
+		rectangle.setPosition(sf::Vector2f(i, 200 + sum / 5.0 / 30000.0 * 100.0));
+		main_window.draw(rectangle);
+	}*/
+	
+
+	//выводим таблицу
+	text.setString("ADLIB data   MSG: " + adlib_msg);
+	text.setPosition(sf::Vector2f(5, 200));
+	main_window.draw(text);
+
+	text.setString(soundcard.get_channel_debug_info(9));
+	text.setPosition(sf::Vector2f(5, 235));
+	main_window.draw(text);
+
+	
+	for (int i = 0; i < 9; i++)
+	{
+		std::string msg = soundcard.get_channel_debug_info(i);
+		text.setString(msg);
+		if (msg.find("ON") == 3) text.setFillColor(sf::Color(0, 250, 0));
+		else text.setFillColor(sf::Color(250, 250, 250));
+		text.setPosition(sf::Vector2f(5, 320 + 35 * i));
+		main_window.draw(text);
+	}
+	
 	main_window.display();
 	main_window.setActive(0);
 }
@@ -347,4 +394,9 @@ void SoundMaker::volume_down()
 {
 	if (volume) volume--;
 	cout << "Audio: volume " << (int)volume << endl;
+}
+
+void Audio_mon_device::set_adlib_msg(std::string msg)
+{
+	adlib_msg = msg;
 }

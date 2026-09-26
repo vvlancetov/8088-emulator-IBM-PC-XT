@@ -3898,13 +3898,14 @@ void EGA_videocard::render()					//синхронизация
 				{
 					//четные
 					uint32 dot_addr = (80 * y + x);
-					dot_addr = dot_addr % 0x10000;
+					dot_addr = dot_addr & 0xFFFF;
 					dot.setPosition(sf::Vector2f(x * 8 * display_x_scale + 20 + sub_x * display_x_scale, (y * display_y_scale) * 2 + 20));
 					if (((videomemory[dot_addr] >> (7 - sub_x)) & 1) == 0) dot.setFillColor(sf::Color::Black);
 					else dot.setFillColor(sf::Color::White);
 					main_window.draw(dot);
 					//нечетные
 					dot_addr = (0x2000 + 80 * y + x);
+					dot_addr = dot_addr & 0xFFFF;
 					dot.setPosition(sf::Vector2f(x * 8 * display_x_scale + 20 + sub_x * display_x_scale, (y * display_y_scale) * 2 + display_y_scale + 20));
 					if (((videomemory[dot_addr] >> (7 - sub_x)) & 1) == 0) dot.setFillColor(sf::Color::Black);
 					else dot.setFillColor(sf::Color::White);
@@ -4064,7 +4065,7 @@ void EGA_videocard::render()					//синхронизация
 			{
 				uint32 dot_addr = (start_address + line_offset * y + (x >> 3));
 				if (y >= line_compare_reg) dot_addr = line_offset * (y - line_compare_reg) + (x >> 3);
-				dot_addr = dot_addr % 0x10000;
+				dot_addr = dot_addr & 0xFFFF;
 				uint8 col = ((videomemory[dot_addr]   >> (7 - (x % 8))) & 1) * 1 +
 					((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
 					((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +
@@ -4102,7 +4103,7 @@ void EGA_videocard::render()					//синхронизация
 			for (int x = 0; x < 640; ++x)
 			{
 				uint32 dot_addr = (start_address + 80 * y + (x >> 3));
-				dot_addr = dot_addr % 0x10000;
+				dot_addr = dot_addr & 0xFFFF;
 				uint8 col = ((videomemory[dot_addr]           >> (7 - (x % 8))) & 1) * 1 +
 					        ((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
 					        ((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +
@@ -4140,7 +4141,7 @@ void EGA_videocard::render()					//синхронизация
 			for (int x = 0; x < 80; ++x)
 			{
 				dot_addr = start_address + (80 * y + x);
-				dot_addr = dot_addr % 0x10000;
+				dot_addr = dot_addr & 0xFFFF;
 				for (int sub_x = 0; sub_x < 8; sub_x++)
 				{
 					dot.setPosition(sf::Vector2f(x * 8 * display_x_scale + 20 + sub_x * display_x_scale, (y * display_y_scale) + 20));
@@ -4173,7 +4174,7 @@ void EGA_videocard::render()					//синхронизация
 			for (int x = 0; x < 640; ++x)
 			{
 				uint32 dot_addr = (start_address + 80 * y + (x >> 3));
-				dot_addr = dot_addr % 0x10000;
+				dot_addr = dot_addr & 0xFFFF;
 				uint8 col = ((videomemory[dot_addr]   >> (7 - (x % 8))) & 1) * 1 +
 					((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
 					((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +

@@ -231,8 +231,8 @@ void loader(int argc, char* argv[])
 	if (!HDD_monitor.font.openFromFile(path + "arialnarrow.ttf")) cout << "HDD_MON: error loading font" << endl;
 	else cout << "HDD_MON: font " << path + "arialnarrow.ttf" << " loaded" << endl;
 
-	if (!Audio_monitor.font.openFromFile(path + "arialnarrow.ttf")) cout << "Audio_MON: error loading font" << endl;
-	else cout << "Audio_MON: font " << path + "arialnarrow.ttf" << " loaded" << endl;
+	if (!Audio_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "Audio_MON: error loading font" << endl;
+	else cout << "Audio_MON: font " << path + "CousineR.ttf" << " loaded" << endl;
 
 	if (!Mem_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "MEM_MON: error loading font" << endl;
 	else cout << "MEM_MON: font " << path + "CousineR.ttf" << " loaded" << endl;

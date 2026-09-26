@@ -33,6 +33,7 @@ typedef unsigned __int32 uint32;
 #include "mouse.h"
 #include "serial_port.h"
 #include "EMS_board.h"
+#include "adlib.h"
 
 using namespace std;
 using namespace std::chrono;
@@ -93,7 +94,7 @@ FDD_mon_device FDD_monitor(1000, 1600, "FDD Window", 0, 0);
 HDD_mon_device HDD_monitor(1000, 1600, "HDD Window", 500, 200);
 
 //отладочное окно для звука
-Audio_mon_device Audio_monitor(1000, 200, "Audio Window", 0, 1650);
+Audio_mon_device Audio_monitor(1600, 640, "Audio Window", 0, 1650);
 
 //отладочное окно для памяти
 Mem_mon_device Mem_monitor(910, 1670, "Memory Window", 800, 300);
@@ -118,6 +119,9 @@ Mouse ms_mouse;
 
 // создаем динамик
 SoundMaker speaker;
+
+//создаем звуковую карту adlib
+adlib_card soundcard;
 
 // создаем общий контроллер ввода/вывода (HUB)
 IO_Ctrl IO_device;
@@ -260,8 +264,8 @@ void (*op_code_table_8087[64])() = { 0 };
 
 bool debug_key_1 = false;
 
-//делитель скорости
-uint8 speed_div = 3;
+//делитель скорости 1 = скорость x3
+uint8 speed_div = 1;
 
 //отдельный таймер для синхронизации реального времени
 std::chrono::high_resolution_clock Hi_Res_Clk;
@@ -398,6 +402,7 @@ int main(int argc, char* argv[]) {
 		HDD.sync();
 		dma_ctrl.sync();	//синхронизация DMA
 		keyboard.sync(); 	//синхронизация клавиатуры
+		soundcard.sync();   //синхронизация adlib_card, нужна здесь иначе сбой в таймерах
 
 		//замедление работы в пошаговом режиме
 		if (step_mode) std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -821,7 +826,6 @@ void IO_Ctrl::output_to_port_8(uint16 address, uint8 data)	//вывод в по�
 	}
 
 	//EMS board
-
 	if (address == 0x208) Intel_Above_Board.page_0_select(data);
 	if (address == 0x209) Intel_Above_Board.page_1_select(data);
 	if (address == 0x20A) Intel_Above_Board.page_2_select(data);
@@ -829,6 +833,10 @@ void IO_Ctrl::output_to_port_8(uint16 address, uint8 data)	//вывод в по�
 	if (address == 0x20C) Intel_Above_Board.write_ctrl_reg(data);
 	if (address == 0x20E) Intel_Above_Board.write_config_1(data);
 	if (address == 0x20F) Intel_Above_Board.write_config_2(data);
+
+	//adlib card
+	if (address == 0x388) soundcard.set_index(data);
+	if (address == 0x389) soundcard.set_value(data);
 
 }
 void IO_Ctrl::output_to_port_16(uint16 address, uint16 data)
@@ -912,7 +920,10 @@ uint8 IO_Ctrl::input_from_port_8(uint16 address)				//ввод из порта, 
 	if (address == 0x20E) return Intel_Above_Board.read_config_1();
 	if (address == 0x20F) return Intel_Above_Board.read_config_2();
 
-	return 0;
+	//adlib card
+	if (address == 0x388) return soundcard.read_status();
+
+	return 255;
 }
 uint16 IO_Ctrl::input_from_port_16(uint16 address)
 {
@@ -1097,11 +1108,10 @@ void IC8253::sync()
 	} 
 	else speaker.put_sample(0);
 
-
-
 	//таймер синхронизации эмулятора
 	static int delay = 800; //838 в идеале
 	static int duration = 0;
+	//static int duration_remainder = 0; //накапливаемая погрешность
 
 	counters[3].count--;
 	if (counters[3].count == 0)
@@ -1113,6 +1123,8 @@ void IC8253::sync()
 		//cycle_duration = delay;
 		if (duration > 54933) delay--;
 		if (duration < 54933) delay++;
+		//duration_remainder = (duration - 54933) & 1023;
+
 		
 		//для тестирования
 		/*
@@ -2527,11 +2539,13 @@ void process_debug_keys()
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad8) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		speaker.volume_up();
+		soundcard.volume_up();
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Numpad2) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
 		speaker.volume_down();
+		soundcard.volume_down();
 		keys_up = false;
 	}
 

@@ -23,7 +23,7 @@ public:
 
 	std::chrono::steady_clock::time_point timer_start; //для отслеживания времени выполнения
 	std::chrono::steady_clock::time_point timer_end;
-	uint32 duration; //продолжительность проигрывания сэмпла
+	uint32 duration = 0; //продолжительность проигрывания сэмпла
 	MyAudioStream()
 	{
 		initialize(2, 48000, {sf::SoundChannel::FrontLeft, sf::SoundChannel::FrontRight});
@@ -48,10 +48,9 @@ private:
 	int16_t sound_sample_A[4800];		//массив для сэмплов (числа со знаком по модулю 32000)
 	int16_t sound_sample_B[4800];		//второй массив
 	
-	int16_t avg_arr[32];					//усредняющий массив
+	int16_t avg_arr[32];				//усредняющий массив
 	uint8 avg_arr_ptr = 0;				//указатель следующего элемента в массиве
 	int next_byte_to_gen = 0;			//позиция следующего байта для генерации
-	//int sample_to_gen = 0;				//текущий сэмпл 0 - A, 1 - B.
 	int sample_overhead = 100;			//дополнительные сэмплы для генерации на опережение
 	int max_amplitude = 30000;			//максимальная амплитуда сигнала (потолок примерно 32000)
 	int overhead_counter = 0;			//счетчик "лишних" сгенерированных наперед сэмплов
@@ -59,8 +58,7 @@ private:
 	std::chrono::steady_clock::time_point timer_start; //для отслеживания времени выполнения
 	std::chrono::steady_clock::time_point timer_end;
 	uint8 spacer = 10;
-	uint8 volume = 30; //громкость звука
-	
+	uint8 volume = 30;					//громкость звука
 
 public:
 	int16_t empty_sound_sample[4800];	//массив-заглушка
@@ -69,18 +67,18 @@ public:
 	bool beeping = false;		//издает ли звук пищалка
 	//bool freq_changed = true;  // частота таймера изменилась
 	uint16 timer_freq = 0;		//частота звука, запрограммированная на таймере
-	void sync();				//синхронизация - генерация сэмплов
-	void beep_on();     //сигнал ВКЛ
-	void beep_off();    //сигнал ВЫКЛ
+	//void sync();				//синхронизация - генерация сэмплов
+	void beep_on();				//сигнал ВКЛ
+	void beep_off();			//сигнал ВЫКЛ
 	void put_sample(int16_t sample); //подаем сигнал от таймера
-	uint32 duration; //средняя продолжительность создания сэмпла
+	uint32 duration;			//средняя продолжительность создания сэмпла
 	uint32 raw_duration[8] = { 0 };
 	uint8 raw_duration_ptr = 0;
 	void set_volume(uint8 vol);
 	void volume_up();
 	void volume_down();
-	void change_to_A();	//подготовить сэмпл А
-	void change_to_B(); //подготовить сэмпл В
+	void change_to_A();			//подготовить сэмпл А
+	void change_to_B();			//подготовить сэмпл В
 	bool wait_for_dispatch = 0;
 
 };
@@ -92,10 +90,15 @@ class Audio_mon_device : public Dev_mon_device
 	uint16 array_pointer_next_el = 0;
 	int array_pointer_to_draw = 0;
 	std::string pinout_11;
+	int16_t adlib_sample_array[4800] = { 0 };
+	uint16 adlib_array_pointer = 0;
+	std::string adlib_msg;
 
 public:
 	using Dev_mon_device::Dev_mon_device;
 	void get_sample(int16_t sample);
+	void get_adlib_sample(int16_t sample);
+	void set_adlib_msg(std::string msg);
 	int generation_overhead = 999;
 	std::string curr_buffer = "--";
 	std::string beepping = "--";
