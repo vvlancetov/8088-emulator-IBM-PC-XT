@@ -24,9 +24,13 @@ extern std::string int_to_bin(T i);
 void SoundMaker::beep_on()     //сигнал ВКЛ
 {
 	beeping = true;
+	//cout << "beep" << endl;
+	//step_mode = 1;
+	//log_to_console = 1;
 }
 void SoundMaker::beep_off()    //сигнал ВЫКЛ
 {
+	//cout << "beep OFF" << endl;
 	beeping = false;
 }
 void SoundMaker::put_sample(int16_t sample)
@@ -56,14 +60,20 @@ void SoundMaker::put_sample(int16_t sample)
 		//пишем в следующий сэмпл
 		if (audio_stream.next_buffer_to_play == 0) //пишем сэмпл A
 		{
-			if (beeping && can_hear) sound_sample_A[next_byte_to_gen] = agv_sample;
-			else sound_sample_A[next_byte_to_gen] = 0; //если звука нет, то = 0
+			if (next_byte_to_gen < sample_size)
+			{
+				if (beeping && can_hear) sound_sample_A[next_byte_to_gen] = agv_sample;
+				else sound_sample_A[next_byte_to_gen] = 0; //если звука нет, то = 0
+			}
 			//Audio_monitor.get_sample(sound_sample_A[next_byte_to_gen]);
 		}
 		else  //пишем сэмпл B
 		{
-			if (beeping && can_hear) sound_sample_B[next_byte_to_gen] = agv_sample;
-			else sound_sample_B[next_byte_to_gen] = 0; //если звука нет, то = 0
+			if (next_byte_to_gen < sample_size)
+			{
+				if (beeping && can_hear) sound_sample_B[next_byte_to_gen] = agv_sample;
+				else sound_sample_B[next_byte_to_gen] = 0; //если звука нет, то = 0
+			}
 			//Audio_monitor.get_sample(sound_sample_B[next_byte_to_gen]);
 		}
 	}
@@ -84,6 +94,7 @@ void SoundMaker::put_sample(int16_t sample)
 		}
 
 	}
+
 
 	if (!wait_for_dispatch || next_byte_to_gen < 800) next_byte_to_gen++; //если wait_for_dispatch, то генерация не далее 600
 

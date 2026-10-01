@@ -305,7 +305,7 @@ int main(int argc, char* argv[]) {
 	
 	//прогоняем процессорные тесты
 	//test_mode = 1;
-	//tester3(); cout << "Done " << endl;	while (1);
+	//tester(); cout << "Done. While 1. " << endl; while (1) monitor.update(1);
 
 	cout << "Running..." << hex << endl;
 	//основной цикл программы
@@ -338,7 +338,7 @@ int main(int argc, char* argv[]) {
 			timer_kb += duration;		//микросекунды
 
 			//отрисовка экрана монитора
-			if (timer_video > 15000) //16667
+			if (timer_video > 16600) //16667
 			{
 				monitor.update(timer_video);//синхроимпульс для монитора
 				debug_monitor.update(timer_video, op_counter);  //синхроимпульс для монитора отладки
@@ -760,6 +760,7 @@ void IO_Ctrl::output_to_port_8(uint16 address, uint8 data)	//вывод в по�
 	if (address >= 0x60 && address <= 0x63)
 	{
 		//обращение PPI
+		//cout << "PPI out 0x" << hex << (int)address << " = " << (int)data << endl;
 		return ppi_ctrl.write_port(address, data);
 	}
 

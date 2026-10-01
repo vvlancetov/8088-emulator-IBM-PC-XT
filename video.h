@@ -37,13 +37,6 @@ private:
 	int window_size_y;				//размер окна
 	std::thread t;					//указатель на поток
 
-	//константы
-	sf::Color fg_color = sf::Color::Green;
-	sf::Color fg_color_bright = sf::Color::Yellow;
-	sf::Color fg_color_inverse = sf::Color::Black;
-	sf::Color bg_color = sf::Color::Black;
-	sf::Color bg_color_inverse = sf::Color::Green;
-	
 	bool do_render = 0;
 	int elapsed_ms = 0;				//период времени
 	//масштаб
@@ -51,6 +44,14 @@ private:
 	bool do_resize = 0;
 
 	uint8 videomemory[4 * 1024];	//видеопамять
+	
+    //текстура для нового способа отрисовки
+	sf::Texture screen_texture_720_350;
+	std::vector<uint8_t> rgba_pixels; // Наш flat-буфер для текстуры
+
+	//ROM со стандартным шрифтом
+	uint8 mda_font_rom[4096]; //ROM
+	uint16 font_rom_ptr = 0;
 
 public:
 	
@@ -74,6 +75,7 @@ public:
 	uint8 mem_read(uint32 address);				//чтение из видеопамяти
 	mouse_xy get_mouse_pos();
 	uint8 direct_read(uint32 address);
+	void flash_font_rom(uint8 data);			//запись в знакогенератор
 };
 
 //CGA videocard
@@ -106,13 +108,13 @@ private:
 	bool int_enable = false;			//разрешение прерываний
 	bool int_request = false;			//устанавливается каждый раз после отображения экрана
 	bool improper_command = false;		//ошибка в параметрах
-	uint8 cursor_x = 0;		//позиция курсора
+	uint8 cursor_x = 0;					//позиция курсора
 	uint8 cursor_y = 0;
-	uint8 display_lines = 30;  //кол-во строк на экране
-	uint8 display_columns = 78;//кол-во столбцов на экране
-	uint8 under_line_pos = 10;	 //позиция линии подчеркивания (по высоте)
-	uint8 cursor_format = 1;	 //формат курсора: 0 - мигающий блок, 1 - мигающий штрих, 2 - инверсный блок, 3 - немигающий штрих
-	bool transp_attr = true;			 //невидимый атрибут поля (при установке специальных атрибутов) 0 - невидимый, 1 - обычный (с разрывами)
+	uint8 display_lines = 30;			//кол-во строк на экране
+	uint8 display_columns = 78;			//кол-во столбцов на экране
+	uint8 under_line_pos = 10;			//позиция линии подчеркивания (по высоте)
+	uint8 cursor_format = 1;			//формат курсора: 0 - мигающий блок, 1 - мигающий штрих, 2 - инверсный блок, 3 - немигающий штрих
+	bool transp_attr = true;			//невидимый атрибут поля (при установке специальных атрибутов) 0 - невидимый, 1 - обычный (с разрывами)
 	
 	// ============= новые команды
 
@@ -122,6 +124,7 @@ private:
 	uint8 CGA_Color_Select_Register = 0; //режим выбора цвета
 	uint8 CGA_Mode_Select_Register = 9;  //регистр режимов CGA
 	sf::Color CGA_colors[16]; //массив цветов CGA для текста
+	sf::Color palettes[7][4]; //палитры
 	sf::Color CGA_BW_colors[16]; //массив цветов CGA для текста в режиме BW
 	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
 	uint8 joy_sence_value = 0; //центральная точка джойстика
@@ -141,6 +144,18 @@ private:
 	bool do_resize = 0;
 
 	uint8 videomemory[16 * 1024];	//видеопамять
+	//============================ еще немного доработок ====================================================================================
+	//текстура для нового способа отрисовки
+	sf::Texture screen_texture_320_200;
+	sf::Texture screen_texture_640_200;
+	std::vector<uint8_t> rgba_pixels; // Наш flat-буфер для текстуры
+
+	//ROM со стандартным шрифтом
+	uint8 cga_font_rom[4096]; //ROM
+	uint16 font_rom_ptr = 0;
+
+	//средство для расчета битов статуса
+	std::chrono::steady_clock::time_point frame_start_time;
 
 public:
 	sf::Font font;
@@ -169,6 +184,7 @@ public:
 	uint8 mem_read(uint32 address);				//чтение из видеопамяти
 	mouse_xy get_mouse_pos();
 	uint8 direct_read(uint32 address);
+	void flash_font_rom(uint8 data);			//запись в знакогенератор
 };
 
 //EGA videocard
@@ -245,6 +261,18 @@ private:
 	//отладка
 	std::string write_steps = "";
 
+	//================================================================================================================
+	//текстура для нового способа отрисовки
+	sf::Texture screen_texture_320_200;
+	sf::Texture screen_texture_320_350;
+	sf::Texture screen_texture_640_200;
+	sf::Texture screen_texture_640_350;
+	sf::Texture screen_texture_720_350;
+	std::vector<uint8_t> rgba_pixels; // Наш flat-буфер для текстуры
+
+	//средство для расчета битов статуса
+	std::chrono::steady_clock::time_point frame_start_time;
+
 public:
 
 	EGA_videocard();
@@ -310,6 +338,7 @@ public:
 	std::string get_debug_data(uint8 i);
 	mouse_xy get_mouse_pos();
 	uint8 direct_read(uint32 address);
+	void flash_font_rom(uint8 data);
 };
 
 //==================== Вспомогательные мониторы==========

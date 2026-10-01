@@ -28,10 +28,6 @@ extern sf::Sprite font_sprite_80;
 extern sf::Texture font_texture_80_MDA;
 extern sf::Sprite font_sprite_80_MDA;
 
-//текстуры графической палитры
-extern sf::Texture CGA_320_texture;
-extern sf::Sprite CGA_320_palette_sprite;
-
 extern Mem_Ctrl memory; //контроллер памяти
 extern Monitor monitor;	//монитор
 
@@ -187,7 +183,6 @@ void load_hdd(std::string filename_HDD)
 
 void loader(int argc, char* argv[])
 {
-	
 	//путь к текущему каталогу
 	path = argv[0];
 	int l_symb = (int)path.find_last_of('\\');
@@ -204,11 +199,6 @@ void loader(int argc, char* argv[])
 	font_sprite_80.setTexture(font_texture_80);
 	font_texture_80.setSmooth(0);
 	font_sprite_80.setScale(sf::Vector2f(1, 1.2));
-
-	//загружаем палитры CGA
-	if (CGA_320_texture.loadFromFile(path + "CGA_320_palette.png")) cout << "CGA 320 palette loaded" << endl;
-	CGA_320_palette_sprite.setTexture(CGA_320_texture);
-	CGA_320_texture.setSmooth(0);
 
 	//загружаем MDA шрифт в виде текстуры
 	if (font_texture_80_MDA.loadFromFile(path + "videorom_MDA.png")) cout << "MDA Font ROM(80) loaded" << endl;
@@ -473,8 +463,49 @@ void loader(int argc, char* argv[])
 		cout << "Loaded " << (int)(a) << " BIOS from ROM file (checksum = " << (int)sum << ")" << endl;
 	}
 
+	//загружаем шрифты CGA в виде ROM-файла
+	if (monitor.get_card_type() == videocard_type::CGA)
+	{
+		fstream file_cga_rom(path + "ibm_mda_cga_font.bin", ios::binary | ios::in);
+		if (!file_cga_rom.is_open()) cout << "File ibm_mda_cga_font.bin not found!" << endl;
+		else
+		{
+			int a = 0;
+			char b;    //buffer
+			uint8 sum = 0;
+			while (file_cga_rom.read(&b, 1)) {
+				// записываем виртуальный ROM
+				if (a >= 4096) monitor.flash_font_rom(b);
+				a++;
+			};
+			file_cga_rom.close();
+			cout << "Загружено " << dec << (int)(a-4096) << " байт данных в ПЗУ знакогенератора CGA" << endl;
+		}
+	}
+
+	//загружаем шрифт MDA в виде ROM-файла
+	if (monitor.get_card_type() == videocard_type::MDA)
+	{
+		fstream file_cga_rom(path + "ibm_mda_cga_font.bin", ios::binary | ios::in);
+		if (!file_cga_rom.is_open()) cout << "File ibm_mda_cga_font.bin not found!" << endl;
+		else
+		{
+			int a = 0;
+			char b;    //buffer
+			uint8 sum = 0;
+			while (file_cga_rom.read(&b, 1)) {
+				// записываем виртуальный ROM
+				if (a < 4096) monitor.flash_font_rom(b);
+				a++;
+			};
+			file_cga_rom.close();
+			cout << "Загружено " << dec << (int)(4096) << " байт данных в ПЗУ знакогенератора MDA" << endl;
+		}
+	}
+
+
 	//загружаем видео ПЗУ
-	if (filename_v_rom != "" && monitor.get_card_type()==videocard_type::EGA)
+	if (filename_v_rom != "" && monitor.get_card_type() == videocard_type::EGA)
 	{
 		fstream file_v_rom(path + filename_v_rom, ios::binary | ios::in);
 		if (!file_v_rom.is_open()) cout << "File " << filename_v_rom << " not found!" << endl;

@@ -374,7 +374,7 @@ void opcode_table_init()
 	//============Arithmetic===================================
 
 	//ADD (также в XOR_OR_IMM_RM_8 и XOR_OR_IMM_RM_16, &ADD_IMM_RM_16s)
-	op_code_table[0b00000000] = &ADD_R_to_RM_8;		// ADD R/M -> R/M 8bit
+	op_code_table[0b00000000] = &ADD_R_to_RM_8;			// ADD R/M -> R/M 8bit
 	op_code_table[0b00000001] = &ADD_R_to_RM_16;		// ADD R/M -> R/M 16bit
 	op_code_table[0b00000010] = &ADD_RM_to_R_8;			// ADD R/M -> R 8bit
 	op_code_table[0b00000011] = &ADD_RM_to_R_16;		// ADD R/M -> R 16bit
@@ -1771,8 +1771,13 @@ void mod_RM_3(uint8 byte2)		//расчет адреса операнда по биту 2
 		return;
 	}
 }
-__int8 DispCalc8(uint8 data)
+inline __int8 DispCalc8(uint8 data)
 {
+	return static_cast<__int8>(data);
+	
+	//заменил код по рекомендации ИИ
+	//старый код тоже работает
+	
 	__int8 disp;
 	//превращаем беззнаковое смещение в число со знаком
 	if (data >> 7) disp = -127 + ((data - 1) & 127);
@@ -1781,8 +1786,13 @@ __int8 DispCalc8(uint8 data)
 	//if (log_to_console) cout << " disp = " << (int)data << "	";
 	return disp;
 }
-__int16 DispCalc16(uint16 data)
+inline __int16 DispCalc16(uint16 data)
 {
+	return static_cast<__int16>(data);
+
+	//заменил код по рекомендации ИИ
+	//старый код тоже работает
+
 	__int16 disp;
 	//превращаем беззнаковое смещение в число со знаком
 	if (data >> 15) disp = -0x7FFF + ((data - 1) & 0x7FFF);
@@ -2574,6 +2584,8 @@ void Push_R()		//PUSH Register
 {
 	uint8 reg = memory.read(Instruction_Pointer + *CS * 16) & 7;
 	uint16 reg_data = *ptr_r16[reg];
+	//поведение для процессоров 286 и выше, в 8088 значение SP не уменьшается перед пушем
+	//так как это ничему не мешает, оставим так
 	if (reg == 4) reg_data -= 2;
 
 	if (log_to_console) cout << "PUSH " << reg16_name[reg] << "(" << (int)reg_data << ")";
@@ -2997,15 +3009,24 @@ void ADD_R_to_RM_8()		// ADD R -> R/M 8bit
 		// mod 11 источник - регистр
 		if (log_to_console) cout << "+ " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
 		
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		bool sign2 = (*ptr_r8[byte2 & 7] >> 7) & 1;
+
 		//складываем два регистра
 		Result = *ptr_r8[(byte2 >> 3) & 7] + *ptr_r8[byte2 & 7];
+		bool sign_res = (Result >> 7) & 1;  //знак результата для расчета Flag_OF
+
 		if (log_to_console) cout << (int)(Result & 255);
 		Flag_AF = (((*ptr_r8[(byte2 >> 3) & 7] & 15) + (*ptr_r8[byte2 & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + (*ptr_r8[byte2 & 7] & 0x7F)) >> 7;
+		//Flag_AF = ((*ptr_r8[(byte2 >> 3) & 7] ^ *ptr_r8[byte2 & 7] ^ Result) & 0x10) != 0;  -альтернатива от ИИ
+		//OF_Carry = ((*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + (*ptr_r8[byte2 & 7] & 0x7F)) >> 7;
 		*ptr_r8[byte2 & 7] = Result;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
+				
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3016,12 +3037,18 @@ void ADD_R_to_RM_8()		// ADD R -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		//знаки для расчета Flag_OF
+		bool sign1 = (memory.read(New_Addr_32) >> 7) & 1;
+		bool sign2 = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
 		Result = memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 7) & 1;  //знак результата для расчета Flag_OF
 		Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
+		//Flag_AF = ((memory.read(New_Addr_32) ^ *ptr_r8[(byte2 >> 3) & 7] ^ Result) & 0x10) != 0;  - альтернатива от ИИ
 		Flag_CF = Result >> 8;
-		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3042,14 +3069,20 @@ void ADD_R_to_RM_16()		// ADD R -> R/M 16bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+		bool sign2 = (*ptr_r16[byte2 & 7] >> 15) & 1;
+
 		Result = *ptr_r16[(byte2 >> 3) & 7] + *ptr_r16[byte2 & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "+ " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_AF = (((*ptr_r16[(byte2 >> 3) & 7] & 15) + (*ptr_r16[byte2 & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF)) >> 15;
+		//OF_Carry = ((*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF)) >> 15;
 		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3062,15 +3095,21 @@ void ADD_R_to_RM_16()		// ADD R -> R/M 16bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_Src >> 15) & 1;
+		bool sign2 = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+
 		Result =  *ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
 		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
 		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3088,12 +3127,18 @@ void ADD_RM_to_R_8()		// INC R/M -> R 8bit
 	if((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_r8[byte2 & 7] >> 7) & 1;
+		bool sign2 = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+
 		Result = *ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "ADD " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3106,12 +3151,18 @@ void ADD_RM_to_R_8()		// INC R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		//знаки для расчета Flag_OF
+		bool sign1 = (memory.read(New_Addr_32) >> 7) & 1;
+		bool sign2 = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+
 		Result = memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3131,12 +3182,18 @@ void ADD_RM_to_R_16()		// INC R/M -> R 16bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_r16[byte2 & 7] >> 15) & 1;
+		bool sign2 = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+
 		Result = *ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "ADD " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3151,12 +3208,18 @@ void ADD_RM_to_R_16()		// INC R/M -> R 16bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_Src >> 15) & 1;
+		bool sign2 = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+
 		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3185,14 +3248,20 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			//непосредственный операнд
 			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			//знаки для расчета Flag_OF
+			bool sign1 = (imm >> 15) & 1;
+			bool sign2 = (*ptr_r16[byte2 & 7] >> 15) & 1;
+
 			if (log_to_console) cout << "ADD IMMs(" << (int)imm << ") + " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") = ";
 			//switch (byte2 & 7)
 			Result_32 = imm + *ptr_r16[byte2 & 7];
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			Flag_AF = (((imm & 15) + (*ptr_r16[byte2 & 7] & 15)) >> 4) & 1;
-			OF_Carry = ((imm & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF)) >> 15;
+			//OF_Carry = ((imm & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF)) >> 15;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -3211,12 +3280,18 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
 			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+			//знаки для расчета Flag_OF
+			bool sign1 = (imm >> 15) & 1;
+			bool sign2 = (*ptr_Src >> 15) & 1;
+
 			Result_32 = *ptr_Src + imm;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			Flag_AF = (((*ptr_Src & 15) + (imm & 15)) >> 4) & 1;
-			OF_Carry = ((*ptr_Src & 0x7FFF) + (imm & 0x7FFF)) >> 15;
+			//OF_Carry = ((*ptr_Src & 0x7FFF) + (imm & 0x7FFF)) >> 15;
 			Flag_CF = (Result_32 >> 16) & 1;
 			Flag_SF = (Result_32 >> 15) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -3287,15 +3362,20 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			// mod 11 источник - регистр
 			//непосредственный операнд
 			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
-			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (imm & 0x80) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "ADC IMMs(" << (int)imm << ") + " << reg16_name[byte2 & 7] << "(" << *ptr_r16[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = ";
-			//switch (byte2 & 7)
+			//знаки для расчета Flag_OF
+			bool sign1 = (imm >> 15) & 1;
+			bool sign2 = (*ptr_r16[byte2 & 7] >> 15) & 1;
+
 			Result_32 = imm + *ptr_r16[byte2 & 7] + Flag_CF;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			Flag_AF = (((imm & 15) + (*ptr_r16[byte2 & 7] & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((imm & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF) + Flag_CF) >> 15;
+			//OF_Carry = ((imm & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF) + Flag_CF) >> 15;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -3309,17 +3389,23 @@ void ADD_IMM_RM_16s()		// ADD/ADC IMM -> R/M 16 bit sign ext.
 			mod_RM_3(byte2);
 			//непосредственный операнд
 			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
-			if ((imm >> 7) & 1) imm = imm | 0xFF00; //продолжаем знак на старший байт
+			if (imm & 0x80) imm = imm | 0xFF00; //продолжаем знак на старший байт
 			if (log_to_console) cout << "ADC IMMs(" << (int)imm << ") +  CF(" << (int)Flag_CF << ") + ";
 			*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			operand_RM_offset++;
 			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+			//знаки для расчета Flag_OF
+			bool sign1 = (*ptr_Src >> 15) & 1;
+			bool sign2 = (imm >> 15) & 1;
+
 			Result_32 = *ptr_Src + imm + Flag_CF;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			Flag_AF = (((*ptr_Src & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((*ptr_Src & 0x7FFF) + (imm & 0x7FFF) + Flag_CF) >> 15;
+			//OF_Carry = ((*ptr_Src & 0x7FFF) + (imm & 0x7FFF) + Flag_CF) >> 15;
 			Flag_CF = (Result_32 >> 16) & 1;
 			Flag_SF = (Result_32 >> 15) & 1;
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -3590,13 +3676,19 @@ void ADD_IMM_to_ACC_8()	// ADD IMM -> ACC 8bit
 	uint16 Result = 0;
 	
 	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
+	//знаки для расчета Flag_OF
+	bool sign1 = (imm >> 7) & 1;
+	bool sign2 = (*ptr_AL >> 7) & 1;
+
 	if (log_to_console) cout << "ADD IMM (" << (int)imm << ") to AL(" << (int)(AX & 255) << ") = ";
-	OF_Carry = ((imm & 0x7F) + (AX & 0x7F)) >> 7;
+	//OF_Carry = ((imm & 0x7F) + (AX & 0x7F)) >> 7;
 	Result = imm + *ptr_AL;
+	bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 	Flag_AF = (((AX & 15) + (imm & 15)) >> 4) & 1;
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
-	Flag_OF = Flag_CF ^ OF_Carry;
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -3613,12 +3705,17 @@ void ADD_IMM_to_ACC_16()	// ADD IMM -> ACC 16bit
 	operand_RM_offset++;
 	imm += memory.read(operand_RM_offset + *CS * 16) * 256;
 	if (log_to_console) cout << "ADD IMM (" << (int)imm << ") to AX(" << (int)(AX) << ") = ";
-	
+	//знаки для расчета Flag_OF
+	bool sign1 = (imm >> 15) & 1;
+	bool sign2 = (AX >> 15) & 1;
+
 	Result = imm + AX;
+	bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 	Flag_CF = (Result >> 16) & 1;
 	Flag_SF = (Result >> 15) & 1;
-	OF_Carry = ((imm & 0x7FFF) + (AX & 0x7FFF)) >> 15;
-	Flag_OF = Flag_CF ^ OF_Carry;
+	//OF_Carry = ((imm & 0x7FFF) + (AX & 0x7FFF)) >> 15;
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 	if (Result & 0xFFFF) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -3643,14 +3740,21 @@ void ADC_R_to_RM_8()		// ADC R -> R/M 8bit
 	{
 		// mod 11 источник - регистр
 		//складываем два регистра
+		
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		bool sign2 = (*ptr_r8[byte2 & 7] >> 7) & 1;
+
 		Result = *ptr_r8[(byte2 >> 3) & 7] + *ptr_r8[byte2 & 7] + Flag_CF;
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << " + " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
 		Flag_AF = (((*ptr_r8[(byte2 >> 3) & 7] & 15) + (*ptr_r8[byte2 & 7] & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = ((*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + (*ptr_r8[byte2 & 7] & 0x7F) + Flag_CF) >> 7;
+		//OF_Carry = ((*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + (*ptr_r8[byte2 & 7] & 0x7F) + Flag_CF) >> 7;
 		*ptr_r8[byte2 & 7] = Result;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3661,14 +3765,20 @@ void ADC_R_to_RM_8()		// ADC R -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		//знаки для расчета Flag_OF
+		bool sign1 = (memory.read(New_Addr_32) >> 7) & 1;
+		bool sign2 = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+
 		Result = memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << " + M" << OPCODE_comment << " + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
 		Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
+		//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
 		Flag_CF = Result >> 8;
 		if (log_to_console) cout << "  " << (int)OF_Carry;
 		Flag_SF = (Result >> 7) & 1;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3688,14 +3798,20 @@ void ADC_R_to_RM_16()		// ADC R -> R/M 16bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+		bool sign2 = (*ptr_r16[byte2 & 7] >> 15) & 1;
+
 		Result = *ptr_r16[(byte2 >> 3) & 7] + *ptr_r16[byte2 & 7] + Flag_CF;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "+ " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 0xFFFF);
 		Flag_AF = (((*ptr_r16[(byte2 >> 3) & 7] & 15) + (*ptr_r16[byte2 & 7] & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = ((*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF) + Flag_CF) >> 15;
+		//OF_Carry = ((*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + (*ptr_r16[byte2 & 7] & 0x7FFF) + Flag_CF) >> 15;
 		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3708,15 +3824,21 @@ void ADC_R_to_RM_16()		// ADC R -> R/M 16bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_Src >> 15) & 1;
+		bool sign2 = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+
 		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7] + Flag_CF;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
-		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
+		//OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
 		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
 		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3734,13 +3856,21 @@ void ADC_RM_to_R_8()		// ADC R/M -> R 8bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_r8[byte2 & 7] >> 7) & 1;
+		bool sign2 = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+
 		Result = *ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
+
 		if (log_to_console) cout << "ADС " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
-		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
+		//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
 		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3752,13 +3882,19 @@ void ADC_RM_to_R_8()		// ADC R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		//знаки для расчета Flag_OF
+		bool sign1 = (memory.read(New_Addr_32) >> 7) & 1;
+		bool sign2 = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+
 		Result = memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7] + Flag_CF;
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 255);
-		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
+		//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) + Flag_CF) >> 7;
 		Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3776,13 +3912,19 @@ void ADC_RM_to_R_16()		// ADC R/M -> R 16bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_r16[byte2 & 7] >> 15) & 1;
+		bool sign2 = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+
 		Result = *ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7] + Flag_CF;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "ADC " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
+		//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
 		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3796,13 +3938,19 @@ void ADC_RM_to_R_16()		// ADC R/M -> R 16bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		//знаки для расчета Flag_OF
+		bool sign1 = (*ptr_Src >> 15) & 1;
+		bool sign2 = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+
 		Result = *ptr_Src + *ptr_r16[(byte2 >> 3) & 7] + Flag_CF;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "ADD M" << OPCODE_comment << " to " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") + CF(" << (int)Flag_CF << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
+		//OF_Carry = ((*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) + Flag_CF) >> 15;
 		Flag_AF = (((*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) + Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -3818,12 +3966,18 @@ void ADC_IMM_to_ACC_8()		// ADC IMM->ACC 8bit
 	
 	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
 	if (log_to_console) cout << "ADC IMM (" << (int)imm << ") to AL(" << (int)(AX & 255) << ") + CF("<<(int)Flag_CF<<") = ";
-	OF_Carry = ((imm & 0x7F) + (AX & 0x7F) + Flag_CF) >> 7;
+	//знаки для расчета Flag_OF
+	bool sign1 = (imm >> 7) & 1;
+	bool sign2 = (AX >> 7) & 1;
+		
+	//OF_Carry = ((imm & 0x7F) + (AX & 0x7F) + Flag_CF) >> 7;
 	Flag_AF = (((AX & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
 	Result = imm + *ptr_AL + Flag_CF;
+	bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
-	Flag_OF = Flag_CF ^ OF_Carry;
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -3838,12 +3992,18 @@ void ADC_IMM_to_ACC_16()	// ADC IMM->ACC 16bit
 	
 	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
 	if (log_to_console) cout << "ADC IMM (" << (int)imm << ") to AX(" << (int)(AX) << ") + CF(" << (int)Flag_CF << ") = ";
-	OF_Carry = ((imm & 0x7FFF) + (AX & 0x7FFF) + Flag_CF) >> 15;
+	//знаки для расчета Flag_OF
+	bool sign1 = (imm >> 15) & 1;
+	bool sign2 = (AX >> 15) & 1;
+
+	//OF_Carry = ((imm & 0x7FFF) + (AX & 0x7FFF) + Flag_CF) >> 15;
 	Flag_AF = (((AX & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
 	Result = imm + AX + Flag_CF;
+	bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 	Flag_CF = (Result >> 16) & 1;
 	Flag_SF = (Result >> 15) & 1;
-	Flag_OF = Flag_CF ^ OF_Carry;
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 	if (Result & 0xFFFF) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -3872,7 +4032,7 @@ void INC_RM_8()		// INC R/M 8bit
 			//увеличиваем регистр
 			
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 0x0F) + 1) >> 4) & 1;
-			Flag_OF = ((*ptr_r8[byte2 & 7] & 0x7F) + 1) >> 7;
+			Flag_OF = (*ptr_r8[byte2 & 7] == 0x7F);
 			++(*ptr_r8[byte2 & 7]);
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = 0;
 			else {
@@ -3890,7 +4050,7 @@ void INC_RM_8()		// INC R/M 8bit
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			Flag_AF = (((memory.read(New_Addr_32) & 0x0F) + 1) >> 4) & 1;
-			Flag_OF = ((memory.read(New_Addr_32) & 0x7F) + 1) >> 7;
+			Flag_OF = (memory.read(New_Addr_32) == 0x7F);
 			memory.write(New_Addr_32, memory.read(New_Addr_32) + 1);
 			if (memory.read(New_Addr_32)) Flag_ZF = 0;
 			else 
@@ -3914,7 +4074,7 @@ void INC_RM_8()		// INC R/M 8bit
 			//увеличиваем регистр
 
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 0x0F) - 1) >> 4) & 1;
-			Flag_OF = ((*ptr_r8[byte2 & 7] & 0x7F) - 1) >> 7;
+			Flag_OF = (*ptr_r8[byte2 & 7] == 0x80);
 			if (!*ptr_r8[byte2 & 7]) Flag_OF = 0; //при вычитании из ноля
 			--(*ptr_r8[byte2 & 7]);
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = 0;
@@ -3930,7 +4090,7 @@ void INC_RM_8()		// INC R/M 8bit
 			mod_RM_3(byte2);
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			Flag_AF = (((memory.read(New_Addr_32) & 0x0F) - 1) >> 4) & 1;
-			Flag_OF = ((memory.read(New_Addr_32) & 0x7F) - 1) >> 7;
+			Flag_OF = (memory.read(New_Addr_32) == 0x80);
 			if (!memory.read(New_Addr_32)) Flag_OF = 0;//при вычитании из ноля
 			memory.write(New_Addr_32, memory.read(New_Addr_32) - 1);
 			if (memory.read(New_Addr_32)) Flag_ZF = 0;
@@ -4095,7 +4255,7 @@ void INC_Reg()			//  INC reg 16 bit
 {
 	uint8 reg = memory.read(Instruction_Pointer + *CS * 16) & 7;//регистр
 	Flag_AF = (((*ptr_r16[reg] & 0x0F) + 1) >> 4) & 1;
-	Flag_OF = (((*ptr_r16[reg] & 0x7FFF) + 1) >> 15);
+	Flag_OF = (*ptr_r16[reg] == 0x7FFF);
 	(*ptr_r16[reg])++;
 	if (*ptr_r16[reg]) Flag_ZF = 0;
 	else
@@ -4182,32 +4342,40 @@ void SUB_RM_from_RM_8()			// SUB R from R/M 8bit
 	{
 		// mod 11 источник - регистр
 		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
-
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[byte2 & 7] >> 7) & 1;
+		bool sign_src = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
 		//складываем два регистра
 		Result = *ptr_r8[byte2 & 7] - *ptr_r8[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << (int)(Result & 255);
 		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		*ptr_r8[byte2 & 7] = Result;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-
 		Instruction_Pointer += 2;
 	}
 	else
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		//знаки для расчета Flag_OF
+		bool sign_dst = (memory.read(New_Addr_32) >> 7) & 1;
+		bool sign_src = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
 		Result = memory.read(New_Addr_32) - *ptr_r8[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		Flag_CF = Result >> 8;
-		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4228,14 +4396,19 @@ void SUB_RM_from_RM_16()		// SUB R from R/M 16bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[byte2 & 7] >> 15) & 1;
+		bool sign_src = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
 		Result = *ptr_r16[byte2 & 7] - *ptr_r16[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
 		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4248,15 +4421,20 @@ void SUB_RM_from_RM_16()		// SUB R from R/M 16bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_Src >> 15) & 1;
+		bool sign_src = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
 		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
 		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result >> 8);
 		operand_RM_offset--;
 		memory.write(operand_RM_seg * 16 + operand_RM_offset, Result);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4274,12 +4452,17 @@ void SUB_RM_from_R_8()			// SUB R/M -> R 8bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
-		Result = - *ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7];
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		bool sign_src = (*ptr_r8[byte2 & 7] >> 7) & 1;
+		Result = *ptr_r8[(byte2 >> 3) & 7] - *ptr_r8[byte2 & 7];
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "SUB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4292,12 +4475,17 @@ void SUB_RM_from_R_8()			// SUB R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = -memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7];
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		bool sign_src = (memory.read(New_Addr_32) >> 7) & 1;
+		Result = *ptr_r8[(byte2 >> 3) & 7] - memory.read(New_Addr_32);
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "SUB M" << OPCODE_comment << " from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4316,12 +4504,17 @@ void SUB_RM_from_R_16()			// SUB R/M -> R 16bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
-		Result = -*ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7];
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+		bool sign_src = (*ptr_r16[byte2 & 7] >> 15) & 1;
+		Result = *ptr_r16[(byte2 >> 3) & 7] - *ptr_r16[byte2 & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "SUB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4336,12 +4529,17 @@ void SUB_RM_from_R_16()			// SUB R/M -> R 16bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
-		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+		bool sign_src = (*ptr_Src >> 15) & 1;
+		Result = *ptr_r16[(byte2 >> 3) & 7] - *ptr_Src;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "SUB M" << OPCODE_comment << " from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4356,14 +4554,19 @@ void SUB_IMM_from_ACC_8()		// SUB ACC  8bit - IMM -> ACC
 {
 	uint16 Result = 0;
 	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
-	bool OF_Carry = 0;
+	//bool OF_Carry = 0;
+	//знаки для расчета Flag_OF
+	bool sign_dst = (*ptr_AL >> 7) & 1;
+	bool sign_src = (imm >> 7) & 1;
 
 	if (log_to_console) cout << "SUB IMM (" << (int)imm << ") from AL(" << setw(2) << (int)*ptr_AL << ") = ";
-	OF_Carry = ((*ptr_AL & 0x7F) - (imm & 0x7F)) >> 7;
+	//OF_Carry = ((*ptr_AL & 0x7F) - (imm & 0x7F)) >> 7;
 	Result = *ptr_AL - imm;
+	bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
-	Flag_OF = Flag_CF ^ OF_Carry;
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -4376,19 +4579,24 @@ void SUB_IMM_from_ACC_8()		// SUB ACC  8bit - IMM -> ACC
 void SUB_IMM_from_ACC_16()		// SUB ACC 16bit - IMM -> ACC
 {
 	uint32 Result = 0;
-	bool OF_Carry = 0;
+	//bool OF_Carry = 0;
 	operand_RM_offset = Instruction_Pointer;
 	operand_RM_offset++;
 	uint16 imm = memory.read(operand_RM_offset + *CS * 16);
 	operand_RM_offset++;
 	imm += memory.read(operand_RM_offset + *CS * 16) * 256;
+	//знаки для расчета Flag_OF
+	bool sign_dst = (AX >> 15) & 1;
+	bool sign_src = (imm >> 15) & 1;
 	if (log_to_console) cout << "SUB IMM (" << (int)imm << ") from AX(" << (int)AX << ") = ";
 	Result = AX - imm;
-	OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF)) >> 15;
+	bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
+	//OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF)) >> 15;
 	Flag_AF = (((AX & 15) - (imm & 15)) >> 4) & 1;
 	Flag_CF = (Result >> 16) & 1;
 	Flag_SF = (Result >> 15) & 1;
-	Flag_OF = Flag_CF ^ OF_Carry;
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 	if (Result & 0xFFFF) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -4411,16 +4619,20 @@ void SBB_RM_from_RM_8()			// SBB R/M -> R/M 8bit
 	{
 		// mod 11 источник - регистр
 		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
-
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[byte2 & 7] >> 7) & 1;
+		bool sign_src = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
 		//складываем два регистра
 		Result = *ptr_r8[byte2 & 7] - *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << (int)(Result & 255);
 		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
-		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (!*ptr_r8[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+		//if (!*ptr_r8[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4431,12 +4643,16 @@ void SBB_RM_from_RM_8()			// SBB R/M -> R/M 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		bool sign_dst = (memory.read(New_Addr_32) >> 7) & 1;
+		bool sign_src = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
 		Result = memory.read(New_Addr_32) - *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
-		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
 		Flag_CF = Result >> 8;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if(!memory.read(New_Addr_32)) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+		//if(!memory.read(New_Addr_32)) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		Flag_SF = ((Result >> 7) & 1);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
@@ -4457,14 +4673,19 @@ void SBB_RM_from_RM_16()		// SBB R/M -> R/M 16bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[byte2 & 7] >> 15) & 1;
+		bool sign_src = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
 		Result = *ptr_r16[byte2 & 7] - *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
-		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
+		//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = (Result >> 15) & 1;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (!*ptr_r16[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+		//if (!*ptr_r16[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		*ptr_r16[byte2 & 7] = Result & 0xFFFF;
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
@@ -4477,13 +4698,18 @@ void SBB_RM_from_RM_16()		// SBB R/M -> R/M 16bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_Src >> 15) & 1;
+		bool sign_src = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
 		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
-		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
+		//OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = (Result >> 15) & 1;
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (!*ptr_Src) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+		//if (!*ptr_Src) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4503,14 +4729,19 @@ void SBB_RM_from_R_8()			// SBB R/M -> R 8bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
-		Result = -*ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		bool sign_src = (*ptr_r8[byte2 & 7] >> 7) & 1;
+		Result =  *ptr_r8[(byte2 >> 3) & 7] - *ptr_r8[byte2 & 7] - Flag_CF;
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "SBB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") (CF=" << (int)Flag_CF << ") from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
-		OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		//OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
 		Flag_AF = ((-(*ptr_r8[byte2 & 7] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (!*ptr_r8[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+		//if (!*ptr_r8[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4522,14 +4753,19 @@ void SBB_RM_from_R_8()			// SBB R/M -> R 8bit
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = -memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7] - Flag_CF;
-		OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		bool sign_src = (memory.read(New_Addr_32) >> 7) & 1;
+		Result = *ptr_r8[(byte2 >> 3) & 7] - memory.read(New_Addr_32) - Flag_CF;
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
+		//OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F) - Flag_CF) >> 7;
 		Flag_AF = ((-(memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
 		if (log_to_console) cout << "SBB M" << OPCODE_comment << " (CF=" << (int)Flag_CF << ") from " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (!*ptr_r8[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+		//if (!*ptr_r8[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4548,14 +4784,19 @@ void SBB_RM_from_R_16()			// SBB R/M -> R 16bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
-		Result = -*ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+		bool sign_src = (*ptr_r16[byte2 & 7] >> 15) & 1;
+		Result =  *ptr_r16[(byte2 >> 3) & 7] - *ptr_r16[byte2 & 7] - Flag_CF;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "SBB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") (CF=" << (int)Flag_CF << ") from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
+		//OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
 		Flag_AF = ((-(*ptr_r16[byte2 & 7] & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (!*ptr_r16[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+		//if (!*ptr_r16[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4568,14 +4809,19 @@ void SBB_RM_from_R_16()			// SBB R/M -> R 16bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
-		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7] - Flag_CF;
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+		bool sign_src = (*ptr_Src >> 15) & 1;
+		Result =  *ptr_r16[(byte2 >> 3) & 7] - *ptr_Src - Flag_CF;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "SBB M" << OPCODE_comment << " (CF=" << (int)Flag_CF << ") from " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
-		OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
+		//OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF) - Flag_CF) >> 15;
 		Flag_AF = ((-(*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15) - Flag_CF) >> 4) & 1;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
-		if (!*ptr_r16[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+		//if (!*ptr_r16[(byte2 >> 3) & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4588,15 +4834,20 @@ void SBB_IMM_from_ACC_8()		// SBB ACC  8bit - IMM -> ACC
 {
 	uint16 Result = 0;
 	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
-	bool OF_Carry = 0;
+	//знаки для расчета Flag_OF
+	bool sign_dst = (AX >> 7) & 1;
+	bool sign_src = (imm >> 7) & 1;
+	//bool OF_Carry = 0;
 	if (log_to_console) cout << "SBB IMM (" << (int)imm << ") from AL(" << setw(2) << (int)*ptr_AL << ") = ";
-	OF_Carry = ((AX & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
+	//OF_Carry = ((AX & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
 	Flag_AF = (((AX & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
 	Result = (AX & 255) - imm - Flag_CF;
+	bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
-	Flag_OF = Flag_CF ^ OF_Carry;
-	if (!*ptr_AL) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+	//if (!*ptr_AL) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -4607,16 +4858,21 @@ void SBB_IMM_from_ACC_8()		// SBB ACC  8bit - IMM -> ACC
 void SBB_IMM_from_ACC_16()		// SBB ACC 16bit - IMM -> ACC
 {
 	uint32 Result = 0;
-	bool OF_Carry = 0;
+	//bool OF_Carry = 0;
 	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
+	//знаки для расчета Flag_OF
+	bool sign_dst = (AX >> 15) & 1;
+	bool sign_src = (imm >> 15) & 1;
 	if (log_to_console) cout << "SBB IMM (" << (int)imm << ") from AX(" << (int)AX << ") = ";
-	OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF) - Flag_CF) >> 15;
+	//OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF) - Flag_CF) >> 15;
 	Flag_AF = (((AX & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
 	Result = AX - imm - Flag_CF;
+	bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 	Flag_CF = (Result >> 16) & 1;
 	Flag_SF = (Result >> 15) & 1;
-	Flag_OF = Flag_CF ^ OF_Carry;
-	if (!AX) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
+	//if (!AX) Flag_OF = 0; //если вычитаем из ноля, OF = 0
 	if (Result & 0xFFFF) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -4630,7 +4886,7 @@ void DEC_Reg()			//  DEC reg 16 bit
 {
 	uint8 reg = memory.read(Instruction_Pointer + *CS * 16) & 7;//регистр
 	Flag_AF = (((*ptr_r16[reg] & 0x0F) - 1) >> 4) & 1;
-	Flag_OF = (((*ptr_r16[reg] & 0x7FFF) - 1) >> 15);
+	Flag_OF = (*ptr_r16[reg] == 0x8000);
 	if (!*ptr_r16[reg]) Flag_OF = 0;
 	(*ptr_r16[reg])--;
 	if (*ptr_r16[reg]) Flag_ZF = 0;
@@ -4650,37 +4906,45 @@ void CMP_Reg_RM_8()		//  CMP Reg with R/M 8 bit
 
 	if (log_to_console) cout << "CMP " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") with ";
 
-	//определяем объект назначения и результат операции ADD
+	//определяем объект назначения и результат операции
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
 		if (log_to_console) cout << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
-
-		//складываем два регистра
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[byte2 & 7] >> 7) & 1;
+		bool sign_src = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		//вычитаем
 		Result = *ptr_r8[byte2 & 7] - *ptr_r8[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << (int)(Result & 255);
 		Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		//*ptr_r8[byte2 & 7] = Result;
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
-
 		Instruction_Pointer += 2;
 	}
 	else
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
+		//знаки для расчета Flag_OF
+		bool sign_dst = (memory.read(New_Addr_32) >> 7) & 1;
+		bool sign_src = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
 		Result = memory.read(New_Addr_32) - *ptr_r8[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		Flag_CF = Result >> 8;
-		OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
 		Flag_SF = ((Result >> 7) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4701,13 +4965,18 @@ void CMP_Reg_RM_16()	//  CMP Reg with R/M 16 bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[byte2 & 7] >> 15) & 1;
+		bool sign_src = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
 		Result = *ptr_r16[byte2 & 7] - *ptr_r16[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4720,12 +4989,17 @@ void CMP_Reg_RM_16()	//  CMP Reg with R/M 16 bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_Src >> 15) & 1;
+		bool sign_src = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
 		Result = *ptr_Src - *ptr_r16[(byte2 >> 3) & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		Flag_AF = (((*ptr_Src & 15) - (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-		OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//OF_Carry = ((*ptr_Src & 0x7FFF) - (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
@@ -4734,7 +5008,6 @@ void CMP_Reg_RM_16()	//  CMP Reg with R/M 16 bit
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }
-//доработать
 void CMP_RM_Reg_8()		//  CMP R/M with Reg 8 bit
 {
 	byte2 = memory.read(Instruction_Pointer + 1 + *CS * 16); //mod / reg / rm
@@ -4744,36 +5017,44 @@ void CMP_RM_Reg_8()		//  CMP R/M with Reg 8 bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
-		Result = -*ptr_r8[byte2 & 7] + *ptr_r8[(byte2 >> 3) & 7];
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		bool sign_src = (*ptr_r8[byte2 & 7] >> 7) & 1;
+		Result = *ptr_r8[(byte2 >> 3) & 7] - *ptr_r8[byte2 & 7];
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "CMP " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") with " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = (-(*ptr_r8[byte2 & 7] & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
 		Flag_AF = ((-(*ptr_r8[byte2 & 7] & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		//*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
-
 		Instruction_Pointer += 2;
 	}
 	else
 	{
 		mod_RM_3(byte2);
 		New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
-		Result = -memory.read(New_Addr_32) + *ptr_r8[(byte2 >> 3) & 7];
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r8[(byte2 >> 3) & 7] >> 7) & 1;
+		bool sign_src = (memory.read(New_Addr_32) >> 7) & 1;
+		Result = *ptr_r8[(byte2 >> 3) & 7] - memory.read(New_Addr_32);
+		bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "CMP M" << OPCODE_comment << " with " << reg8_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r8[(byte2 >> 3) & 7] << ") = " << (int)(Result & 255);
 		Flag_CF = (Result >> 8) & 1;
 		Flag_SF = ((Result >> 7) & 1);
-		OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = (-(memory.read(New_Addr_32) & 0x7F) + (*ptr_r8[(byte2 >> 3) & 7] & 0x7F)) >> 7;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 255) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
 		Flag_AF = ((-(memory.read(New_Addr_32) & 15) + (*ptr_r8[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
 		//*ptr_r8[(byte2 >> 3) & 7] = Result & 255;
-
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }
@@ -4786,17 +5067,21 @@ void CMP_RM_Reg_16()	//  CMP R/M with Reg 16 bit
 	if ((byte2 >> 6) == 3)
 	{
 		// mod 11 источник - регистр
-		Result = -*ptr_r16[byte2 & 7] + *ptr_r16[(byte2 >> 3) & 7];
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+		bool sign_src = (*ptr_r16[byte2 & 7] >> 15) & 1;
+		Result = *ptr_r16[(byte2 >> 3) & 7] - *ptr_r16[byte2 & 7];
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "CMP " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") with " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = (-(*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
 		Flag_AF = ((-(*ptr_r16[byte2 & 7] & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-
 		Instruction_Pointer += 2;
 	}
 	else
@@ -4805,17 +5090,21 @@ void CMP_RM_Reg_16()	//  CMP R/M with Reg 16 bit
 		*ptr_Src_L = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 		operand_RM_offset++;
 		*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
-		Result = -*ptr_Src + *ptr_r16[(byte2 >> 3) & 7];
+		//знаки для расчета Flag_OF
+		bool sign_dst = (*ptr_r16[(byte2 >> 3) & 7] >> 15) & 1;
+		bool sign_src = (*ptr_Src >> 15) & 1;
+		Result = *ptr_r16[(byte2 >> 3) & 7] - *ptr_Src;
+		bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 		if (log_to_console) cout << "CMP M" << OPCODE_comment << "(" << (int)*ptr_Src << ") with " << reg16_name[(byte2 >> 3) & 7] << "(" << (int)*ptr_r16[(byte2 >> 3) & 7] << ") = " << (int)(Result & 0xFFFF);
 		Flag_CF = (Result >> 16) & 1;
 		Flag_SF = ((Result >> 15) & 1);
-		OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
-		Flag_OF = Flag_CF ^ OF_Carry;
+		//OF_Carry = (-(*ptr_Src & 0x7FFF) + (*ptr_r16[(byte2 >> 3) & 7] & 0x7FFF)) >> 15;
+		//Flag_OF = Flag_CF ^ OF_Carry;
+		Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 		if (Result & 0xFFFF) Flag_ZF = false;
 		else Flag_ZF = true;
 		Flag_PF = parity_check[Result & 255];
 		Flag_AF = ((-(*ptr_Src & 15) + (*ptr_r16[(byte2 >> 3) & 7] & 15)) >> 4) & 1;
-
 		Instruction_Pointer += 2 + additional_IPs;
 	}
 }
@@ -4823,21 +5112,22 @@ void CMP_IMM_with_ACC_8()		// CMP IMM  8bit - ACC
 {
 	uint16 Result = 0;
 	uint8 imm = memory.read(Instruction_Pointer + 1 + *CS * 16);
-
 	if (log_to_console) cout << "CMP IMM (" << (int)(imm) << ") with AL(" << (int)*ptr_AL << ") = ";
-
+	//знаки для расчета Flag_OF
+	bool sign_dst = (*ptr_AL >> 7) & 1;
+	bool sign_src = (imm >> 7) & 1;
 	Result = *ptr_AL - imm;
+	bool sign_res = (Result >> 7) & 1; //знак результата для расчета Flag_OF
 	Flag_CF = (Result >> 8) & 1;
 	Flag_SF = (Result >> 7) & 1;
-	OF_Carry = ((AX & 0x7F) - (imm & 0x7F)) >> 7;
-	Flag_OF = Flag_CF ^ OF_Carry;
+	//OF_Carry = ((AX & 0x7F) - (imm & 0x7F)) >> 7;
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 	if (Result & 255) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
 	Flag_AF = (((AX & 15) - (imm & 15)) >> 4) & 1;
-
 	if (log_to_console) cout << (int)(Result & 255);
-
 	Instruction_Pointer += 2;
 }
 void CMP_IMM_with_ACC_16()		// CMP IMM 16bit - ACC
@@ -4845,14 +5135,17 @@ void CMP_IMM_with_ACC_16()		// CMP IMM 16bit - ACC
 	uint32 Result = 0;
 	
 	uint16 imm = memory.read(Instruction_Pointer + 1 + *CS * 16) + memory.read(Instruction_Pointer + 2 + *CS * 16) * 256;
-	
+	//знаки для расчета Flag_OF
+	bool sign_dst = (AX >> 15) & 1;
+	bool sign_src = (imm >> 15) & 1;
 	if (log_to_console) cout << "CMP IMM (" << (int)(imm) << ") with AX(" << (int)AX << ") = ";
-
 	Result = AX - imm;
+	bool sign_res = (Result >> 15) & 1; //знак результата для расчета Flag_OF
 	Flag_CF = (Result >> 16) & 1;
 	Flag_SF = (Result >> 15) & 1;
-	OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF)) >> 15;
-	Flag_OF = Flag_CF ^ OF_Carry;
+	//OF_Carry = ((AX & 0x7FFF) - (imm & 0x7FFF)) >> 15;
+	//Flag_OF = Flag_CF ^ OF_Carry;
+	Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 	if (Result & 0xFFFF) Flag_ZF = false;
 	else Flag_ZF = true;
 	Flag_PF = parity_check[Result & 255];
@@ -5077,8 +5370,7 @@ void Invert_RM_8()
 
 			if (*ptr_r8[byte2 & 7]) Flag_CF = 1;
 			else Flag_CF = 0;
-			if (*ptr_r8[byte2 & 7] == 0x80) Flag_OF = 1;
-			else Flag_OF = 0;
+			Flag_OF = (*ptr_r8[byte2 & 7] == 0x80);
 			*ptr_r8[byte2 & 7] = ~*ptr_r8[byte2 & 7] + 1;
 			Flag_SF = (*ptr_r8[byte2 & 7] >> 7) & 1;
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
@@ -5095,8 +5387,7 @@ void Invert_RM_8()
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			if (memory.read(New_Addr_32)) Flag_CF = 1;
 			else Flag_CF = 0;
-			if (memory.read(New_Addr_32) == 0x80) Flag_OF = 1;
-			else Flag_OF = 0;
+			Flag_OF = (memory.read(New_Addr_32) == 0x80);
 			memory.write(New_Addr_32, ~memory.read(New_Addr_32) + 1);
 			Flag_SF = (memory.read(New_Addr_32) >> 7) & 1;
 			if (memory.read(New_Addr_32)) Flag_ZF = false;
@@ -5369,8 +5660,7 @@ void Invert_RM_16()
 
 			if (*ptr_r16[byte2 & 7]) Flag_CF = 1;
 			else Flag_CF = 0;
-			if (*ptr_r16[byte2 & 7] == 0x80) Flag_OF = 1;
-			else Flag_OF = 0;
+			Flag_OF = (*ptr_r16[byte2 & 7] == 0x80);
 			*ptr_r16[byte2 & 7] = ~*ptr_r16[byte2 & 7] + 1;
 			Flag_SF = (*ptr_r16[byte2 & 7] >> 15) & 1;
 			if (*ptr_r16[byte2 & 7]) Flag_ZF = false;
@@ -5390,8 +5680,7 @@ void Invert_RM_16()
 			*ptr_Src_H = memory.read(operand_RM_seg * 16 + operand_RM_offset);
 			if (*ptr_Src) Flag_CF = 1;
 			else Flag_CF = 0;
-			if (*ptr_Src == 0x8000) Flag_OF = 1;
-			else Flag_OF = 0;
+			Flag_OF = (*ptr_Src == 0x8000);
 			*ptr_Src = ~(*ptr_Src) + 1;
 			memory.write(operand_RM_seg * 16 + operand_RM_offset, *ptr_Src_H);
 			operand_RM_offset--;
@@ -7385,13 +7674,18 @@ void XOR_OR_IMM_RM_8()
 		{
 			// mod 11 источник - регистр
 			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign1 = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			bool sign2 = (imm >> 7) & 1;
 			if (log_to_console) cout << "ADD IMM[" << (int)imm << "] + " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (imm & 15)) >> 4) & 1;
-			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (imm & 0x7F)) >> 7;
+			//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (imm & 0x7F)) >> 7;
 			Result_16 = *ptr_r8[byte2 & 7] + imm;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			*ptr_r8[byte2 & 7] = Result_16 & 255;
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
@@ -7405,14 +7699,19 @@ void XOR_OR_IMM_RM_8()
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
 			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign1 = (memory.read(New_Addr_32) >> 7) & 1;
+			bool sign2 = (imm >> 7) & 1;
 			if (log_to_console) cout << "ADD IMM[" << (int)imm << "] + " << "M" << OPCODE_comment << " = ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) + (imm & 15)) >> 4) & 1;
-			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (imm & 0x7F)) >> 7;
+			//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (imm & 0x7F)) >> 7;
 			Result_16 = memory.read(New_Addr_32) + imm;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			memory.write(New_Addr_32, Result_16 & 255);
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
@@ -7467,11 +7766,16 @@ void XOR_OR_IMM_RM_8()
 			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			if (log_to_console) cout << "ADC IMM[" << (int)imm << "] + " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") + CF (" << (int)Flag_CF << ") = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
+			//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
+			//знаки для расчета Flag_OF
+			bool sign1 = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			bool sign2 = (imm >> 7) & 1;
 			Result_16 = *ptr_r8[byte2 & 7] + imm + Flag_CF;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			*ptr_r8[byte2 & 7] = Result_16 & 255;
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
@@ -7485,14 +7789,19 @@ void XOR_OR_IMM_RM_8()
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
 			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign1 = (memory.read(New_Addr_32) >> 7) & 1;
+			bool sign2 = (imm >> 7) & 1;
 			if (log_to_console) cout << "ADC IMM[" << (int)imm << "] + " << "M" << OPCODE_comment << "+ CF (" << (int)Flag_CF << ") = ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) + (imm & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
+			//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) + (imm & 0x7F) + Flag_CF) >> 7;
 			Result_16 = memory.read(New_Addr_32) + imm + Flag_CF;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			memory.write(New_Addr_32, Result_16 & 255);
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
@@ -7507,14 +7816,19 @@ void XOR_OR_IMM_RM_8()
 		{
 			// mod 11 источник - регистр
 			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			bool sign_src = (imm >> 7) & 1;
 			if (log_to_console) cout << "SBB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] - CF(" << (int)Flag_CF << ") = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
+			//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
 			Result_16 = *ptr_r8[byte2 & 7] - imm - Flag_CF;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!(*ptr_r8[byte2 & 7])) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			//if (!(*ptr_r8[byte2 & 7])) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			*ptr_r8[byte2 & 7] = Result_16 & 255;
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
@@ -7528,14 +7842,19 @@ void XOR_OR_IMM_RM_8()
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
 			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (memory.read(New_Addr_32) >> 7) & 1;
+			bool sign_src = (imm >> 7) & 1;
 			if (log_to_console) cout << "SBB M" << OPCODE_comment << " IMM[" << (int)imm << "] - CF (" << (int)Flag_CF << ") = ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) - (imm & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
+			//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F) - Flag_CF) >> 7;
 			Result_16 = memory.read(New_Addr_32) - imm - Flag_CF;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!memory.read(New_Addr_32)) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			//if (!memory.read(New_Addr_32)) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
@@ -7589,14 +7908,19 @@ void XOR_OR_IMM_RM_8()
 		{
 			// mod 11 источник - регистр
 			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			bool sign_src = (imm >> 7) & 1;
 			if (log_to_console) cout << "SUB " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15)) >> 4) & 1;
-			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F)) >> 7;
+			//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F)) >> 7;
 			Result_16 = *ptr_r8[byte2 & 7] - imm;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!(*ptr_r8[byte2 & 7])) Flag_OF = 0; //вычитание из 0
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			//if (!(*ptr_r8[byte2 & 7])) Flag_OF = 0; //вычитание из 0
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			*ptr_r8[byte2 & 7] = Result_16 & 255;
 			if (*ptr_r8[byte2 & 7]) Flag_ZF = false;
 			else Flag_ZF = true;
@@ -7610,14 +7934,19 @@ void XOR_OR_IMM_RM_8()
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
 			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (memory.read(New_Addr_32) >> 7) & 1;
+			bool sign_src = (imm >> 7) & 1;
 			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - IMM[" << (int)imm << "] = ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) - (imm & 15)) >> 4) & 1;
-			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F)) >> 7;
+			//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F)) >> 7;
 			Result_16 = memory.read(New_Addr_32) - imm;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!memory.read(New_Addr_32)) Flag_OF = 0;//вычитание из 0
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			//if (!memory.read(New_Addr_32)) Flag_OF = 0;//вычитание из 0
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
@@ -7671,13 +8000,18 @@ void XOR_OR_IMM_RM_8()
 		{
 			// mod 11 источник - регистр
 			imm = memory.read(Instruction_Pointer + 2 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (*ptr_r8[byte2 & 7] >> 7) & 1;
+			bool sign_src = (imm >> 7) & 1;
 			if (log_to_console) cout << "CMP " << reg8_name[byte2 & 7] << "(" << (int)*ptr_r8[byte2 & 7] << ") - IMM[" << (int)imm << "] = ";
 			Flag_AF = (((*ptr_r8[byte2 & 7] & 15) - (imm & 15)) >> 4) & 1;
-			OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F)) >> 7;
+			//OF_Carry = ((*ptr_r8[byte2 & 7] & 0x7F) - (imm & 0x7F)) >> 7;
 			Result_16 = *ptr_r8[byte2 & 7] - imm;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
@@ -7690,13 +8024,18 @@ void XOR_OR_IMM_RM_8()
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			//непосредственный операнд
 			imm = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (memory.read(New_Addr_32) >> 7) & 1;
+			bool sign_src = (imm >> 7) & 1;
 			if (log_to_console) cout << "CMP M" << OPCODE_comment << "("<< (int)memory.read(New_Addr_32) << ") IMM[" << (int)imm << "] = ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) - (imm & 15)) >> 4) & 1;
-			OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F)) >> 7;
+			//OF_Carry = ((memory.read(New_Addr_32) & 0x7F) - (imm & 0x7F)) >> 7;
 			Result_16 = memory.read(New_Addr_32) - imm;
+			bool sign_res = (Result_16 >> 7) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = (Result_16 >> 8) & 1;
 			Flag_SF = ((Result_16 >> 7) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_16 & 255) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_16 & 255];
@@ -7724,14 +8063,19 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			// mod 11 источник - регистр
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign1 = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			bool sign2 = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "ADD IMM(" << (int)*ptr_Src << ") + " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
+			//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
 			Result_32 = *ptr_r16[byte2 & 7] + *ptr_Src;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -7743,15 +8087,20 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign1 = ((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) >> 15) & 1;
+			bool sign2 = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "ADD IMM(" << (int)*ptr_Src << ") + ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
+			//OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF)) >> 15;
 			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 + *ptr_Src;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			memory.write(New_Addr_32, Result_32 & 255);
 			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -7805,14 +8154,19 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			// mod 11 источник - регистр
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign1 = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			bool sign2 = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "ADC IMM(" << (int)*ptr_Src << ") + " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") + CF(" << (int)Flag_CF << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) + (*ptr_Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
+			//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
 			Result_32 = *ptr_r16[byte2 & 7] + *ptr_Src + Flag_CF;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -7825,15 +8179,20 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign1 = ((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) >> 15) & 1;
+			bool sign2 = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "ADC IMM(" << (int)*ptr_Src << ") + ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) + (*ptr_Src & 15) + Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
+			//OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) + (*ptr_Src & 0x7FFF) + Flag_CF) >> 15;
 			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 + *ptr_Src + Flag_CF;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			memory.write(New_Addr_32, Result_32 & 255);
 			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign1 == sign2) && (sign1 != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -7848,14 +8207,19 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			// mod 11 источник - регистр
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			bool sign_src = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "SBB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") - CF(" << (int)Flag_CF << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
+			//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
 			Result_32 = *ptr_r16[byte2 & 7] - *ptr_Src - Flag_CF;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!*ptr_r16[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			//if (!*ptr_r16[byte2 & 7]) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -7868,16 +8232,21 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = ((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) >> 15) & 1;
+			bool sign_src = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "SBB M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") - CF(" << (int)Flag_CF << ") = ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_Src & 15) - Flag_CF) >> 4) & 1;
-			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
+			//OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF) - Flag_CF) >> 15;
 			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 - *ptr_Src - Flag_CF;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			memory.write(New_Addr_32, Result_32 & 255);
 			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
-			if (!*ptr_Src) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			//if (!*ptr_Src) Flag_OF = 0; //если вычитаем из ноля, OF = 0
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -7931,14 +8300,19 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			// mod 11 источник - регистр
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			bool sign_src = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "SUB " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
 			Result_32 = *ptr_r16[byte2 & 7] - *ptr_Src;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			*ptr_r16[byte2 & 7] = Result_32 & 0xFFFF;
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -7950,15 +8324,20 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = ((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) >> 15) & 1;
+			bool sign_src = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "SUB M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") = ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			//OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
 			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 - *ptr_Src;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			memory.write(New_Addr_32, Result_32 & 255);
 			memory.write(New_Addr_32 + 1, Result_32 >> 8);
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -8017,13 +8396,18 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			// mod 11 источник - регистр
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = (*ptr_r16[byte2 & 7] >> 15) & 1;
+			bool sign_src = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "CMP " << reg16_name[byte2 & 7] << "(" << (int)*ptr_r16[byte2 & 7] << ") - IMM(" << (int)*ptr_Src << ") = ";
 			Flag_AF = (((*ptr_r16[byte2 & 7] & 15) - (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			//OF_Carry = ((*ptr_r16[byte2 & 7] & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
 			Result_32 = *ptr_r16[byte2 & 7] - *ptr_Src;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -8035,13 +8419,18 @@ void XOR_OR_IMM_RM_16()   //XOR/OR/ADD/ADC IMM to Register/Memory 16bit
 			New_Addr_32 = (operand_RM_seg * 16 + operand_RM_offset) & 0xFFFFF;
 			*ptr_Src_L = memory.read(Instruction_Pointer + 2 + additional_IPs + *CS * 16);
 			*ptr_Src_H = memory.read(Instruction_Pointer + 3 + additional_IPs + *CS * 16);
+			//знаки для расчета Flag_OF
+			bool sign_dst = ((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) >> 15) & 1;
+			bool sign_src = (*ptr_Src >> 15) & 1;
 			if (log_to_console) cout << "CMP M" << OPCODE_comment << " - IMM(" << (int)*ptr_Src << ") = ";
 			Flag_AF = (((memory.read(New_Addr_32) & 15) - (*ptr_Src & 15)) >> 4) & 1;
-			OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
+			//OF_Carry = (((memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256) & 0x7FFF) - (*ptr_Src & 0x7FFF)) >> 15;
 			Result_32 = memory.read(New_Addr_32) + memory.read(New_Addr_32 + 1) * 256 - *ptr_Src;
+			bool sign_res = (Result_32 >> 15) & 1; //знак результата для расчета Flag_OF
 			Flag_CF = ((Result_32 >> 16) & 1);
 			Flag_SF = ((Result_32 >> 15) & 1);
-			Flag_OF = Flag_CF ^ OF_Carry;
+			//Flag_OF = Flag_CF ^ OF_Carry;
+			Flag_OF = (sign_dst != sign_src) && (sign_dst != sign_res);
 			if (Result_32 & 0xFFFF) Flag_ZF = false;
 			else Flag_ZF = true;
 			Flag_PF = parity_check[Result_32 & 255];
@@ -10176,8 +10565,7 @@ void RET_Inter_Segment_IMM_SP()		//Return Intersegment Adding Immediate to SP
 	*CS += memory.read(Stack_Pointer + SS_data * 16) * 256;
 	Stack_Pointer += 1 + pop_bytes;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 13);
-	if (log_to_console || last_INT == 0x21) cout << "Far RET to " << (int)*CS << ":" << (int)Instruction_Pointer << " + " << pop_bytes << " bytes popped " << " AX(" << (int)AX << ") CF=" << (int)Flag_CF;
-	if (!log_to_console && last_INT == 0x21) cout << endl;
+	if (log_to_console) cout << "Far RET to " << (int)*CS << ":" << (int)Instruction_Pointer << " + " << pop_bytes << " bytes popped " << " AX(" << (int)AX << ") CF=" << (int)Flag_CF;
 	if (log_to_console) SetConsoleTextAttribute(hConsole, 7);
 }
 
@@ -10194,7 +10582,7 @@ void INT_N()			//INT = Interrupt
 
 	last_INT = int_type;
 
-	//if (int_type == 0x21 && AX == 0x3533) step_mode = 1;
+	//if (int_type == 0x10 && AX == 0x0E) {step_mode = 1; log_to_console = 1;}
 
 	//определяем новый IP и CS
 	uint16 new_IP = memory.read(int_type * 4) + memory.read(int_type * 4 + 1) * 256;
