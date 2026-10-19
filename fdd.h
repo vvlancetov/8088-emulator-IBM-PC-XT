@@ -70,6 +70,7 @@ private:
 	uint32 real_address(uint8 selected_drive, bool head, uint8 cylinder, uint8 sector, uint16 sector_size);
 	bool write_to_disk(uint32 address, uint8 data);
 	void flush_buffer();
+	int FDD_active[4] = { 0 };  //отслеживаем активность дисководов
 
 public:
 
@@ -106,5 +107,17 @@ public:
 	void set_active_drives(uint8 d);
 	uint8 get_active_drives();
 	void set_MFM(uint8 drive, bool MFM);
+	int get_FDD_active(int drv);
+	//работа с образами дискет
+	bool insert_diskette(uint8 drive, const std::string& file);   // только из потока эмулятора
+	void eject_diskette(uint8 drive);
+	bool is_drive_busy(uint8 drive) const;
+	std::string image_path(uint8 drive) const;                    // полный путь к образу
+	bool drive_empty(uint8 d) const { return d >= active_drives || file_size[d] == 0; }  // нет дисковода или дискеты
+	void finish_no_disk();
 };
 
+//очередь запросов по работе с образами
+struct FddRequest { int drive; bool insert; std::string file; };
+void fdd_post_request(const FddRequest& r);   // из любого потока
+void fdd_process_requests();                  // только из потока эмулятора

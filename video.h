@@ -2,8 +2,12 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
 #include <SFML/System.hpp>
+#define byte win_byte // Временно переименовываем макрос Windows
+#include <Windows.h>
+#undef byte           // Сбрасываем переименование
 #include <string>
 #include <thread>
+#include <mutex>
 #include "custom_classes.h"
 
 typedef unsigned __int8 uint8;
@@ -12,6 +16,17 @@ typedef unsigned __int32 uint32;
 
 //видеокарты
 enum class videocard_type { MDA, CGA, EGA, VGA };
+
+//====================== Панель приборов ==================
+class SidePanel
+{
+private:
+
+public:
+	void draw(sf::RenderWindow& main_window, float this_scale, float mouse_scale);
+	static int hit_drive(float vx, float vy);   // 0 - дисковод 1, 1 - дисковод 2, -1 - мимо
+
+};
 
 //MDA videocard
 class MDA_videocard
@@ -23,10 +38,10 @@ private:
 	uint16 my_display_W;
 	uint16 GAME_WINDOW_X_RES;
 	uint16 GAME_WINDOW_Y_RES;
-	int joy_sence_show_timer = 0; //таймер отображения настроек джойстика
-	uint8 joy_sence_value = 0; //центральная точка джойстика
-	sf::Clock cursor_clock;				//таймер мигания курсора
-	bool cursor_flipflop = false;		//переменная для мигания
+	int joy_sence_show_timer = 0;	//таймер отображения настроек джойстика
+	uint8 joy_sence_value = 0;		//центральная точка джойстика
+	sf::Clock cursor_clock;			//таймер мигания курсора
+	bool cursor_flipflop = false;	//переменная для мигания
 	uint8 sel_reg = 0; //выбранный регистр для записи
 	uint8 registers[18] = { 0 }; // массив регистров
 	uint8 MDA_Mode_Select_Register = 0;
@@ -40,7 +55,8 @@ private:
 	bool do_render = 0;
 	int elapsed_ms = 0;				//период времени
 	//масштаб
-	float display_scale = 5;
+	float display_scale = 1;
+	float mouse_scale = 1;
 	bool do_resize = 0;
 
 	uint8 videomemory[4 * 1024];	//видеопамять
@@ -50,8 +66,15 @@ private:
 	std::vector<uint8_t> rgba_pixels; // Наш flat-буфер для текстуры
 
 	//ROM со стандартным шрифтом
-	uint8 mda_font_rom[4096]; //ROM
+	uint8 mda_font_rom[8192]; //ROM
 	uint16 font_rom_ptr = 0;
+
+	//идентификатор окна
+	HWND window_id;
+
+	std::mutex string_mutex; // Мьютекс для защиты строки
+
+	SidePanel panel;  //боковая панель
 
 public:
 	
@@ -76,6 +99,8 @@ public:
 	mouse_xy get_mouse_pos();
 	uint8 direct_read(uint32 address);
 	void flash_font_rom(uint8 data);			//запись в знакогенератор
+	void set_window_handle(HWND new_window_id);		//передаем идентификатор окна
+	void resize(uint16 new_width, uint16 new_height);	//новые размеры родительского окна
 };
 
 //CGA videocard
@@ -86,8 +111,8 @@ private:
 	bool visible = 0;		//наличие окна
 	uint16 my_display_H;
 	uint16 my_display_W;
-	uint16 GAME_WINDOW_X_RES;
-	uint16 GAME_WINDOW_Y_RES;
+	//uint16 GAME_WINDOW_X_RES;
+	//uint16 GAME_WINDOW_Y_RES;
 
 	int counter = 0;  //?
 	sf::Clock cursor_clock;				//таймер мигания курсора
@@ -120,7 +145,6 @@ private:
 
 	uint8 sel_reg = 0; //выбранный регистр для записи
 	uint8 registers[18] = { 0 }; // массив регистров
-	uint8 display_mode = 0;      //режим работы дисплея
 	uint8 CGA_Color_Select_Register = 0; //режим выбора цвета
 	uint8 CGA_Mode_Select_Register = 9;  //регистр режимов CGA
 	sf::Color CGA_colors[16]; //массив цветов CGA для текста
@@ -140,7 +164,8 @@ private:
 	bool do_render = true;			//запрос отрисовки
 
 	//масштаб
-	float display_scale = 5;
+	float display_scale = 1;
+	float mouse_scale = 1;
 	bool do_resize = 0;
 
 	uint8 videomemory[16 * 1024];	//видеопамять
@@ -151,11 +176,15 @@ private:
 	std::vector<uint8_t> rgba_pixels; // Наш flat-буфер для текстуры
 
 	//ROM со стандартным шрифтом
-	uint8 cga_font_rom[4096]; //ROM
+	uint8 cga_font_rom[8192]; //ROM
 	uint16 font_rom_ptr = 0;
 
 	//средство для расчета битов статуса
 	std::chrono::steady_clock::time_point frame_start_time;
+	std::chrono::steady_clock::time_point Hi_Res_t_end;
+	//идентификатор окна
+	HWND window_id;
+	SidePanel panel;  //боковая панель
 
 public:
 	sf::Font font;
@@ -185,6 +214,8 @@ public:
 	mouse_xy get_mouse_pos();
 	uint8 direct_read(uint32 address);
 	void flash_font_rom(uint8 data);			//запись в знакогенератор
+	void set_window_handle(HWND new_window_id);		//передаем идентификатор окна
+	void resize(uint16 new_width, uint16 new_height);	//новые размеры родительского окна
 };
 
 //EGA videocard
@@ -246,20 +277,24 @@ private:
 	bool do_render = 0;
 
 	//масштаб
-	float display_scale = 5;
+	float display_scale = 1;
+	float mouse_scale = 1;
 	bool do_resize = 0;
 	
 	//память
 	uint8 videomemory[256 * 1024];	//видеопамять
 	uint8 rom[16 * 1024];			//ROM
 	uint8 latch_reg[4] = { 0 };		//регистры защелки
-
+	
 	//контроль видеорежимов
 	enum class video_modes {EGA_01_200, EGA_01_350, EGA_23_200, EGA_23_350, EGA_7_720, EGA_45_320, EGA_6_640, EGA_D_320, EGA_E_200, EGA_F_350, EGA_10_350};
 	video_modes current_mode = video_modes::EGA_01_200; //текущий видеорежим
 
 	//отладка
 	std::string write_steps = "";
+
+	//идентификатор окна
+	HWND window_id;
 
 	//================================================================================================================
 	//текстура для нового способа отрисовки
@@ -273,9 +308,12 @@ private:
 	//средство для расчета битов статуса
 	std::chrono::steady_clock::time_point frame_start_time;
 
+	SidePanel panel;  //боковая панель
+
 public:
 
 	EGA_videocard();
+	uint8 checksum = 0;							//BIOS checksum
 	sf::Font font;
 	std::string debug_mess_1;
 	void write_port(uint16 port, uint8 data);	//запись в порт адаптера
@@ -298,6 +336,56 @@ public:
 	std::string get_debug_data(uint8 i);
 	mouse_xy get_mouse_pos();
 	uint8 direct_read(uint32 address);
+	void set_window_handle(HWND new_window_id);			//передаем идентификатор окна
+	void resize(uint16 new_width, uint16 new_height);	//новые размеры родительского окна
+};
+
+//service videocard
+class SRV_videocard
+{
+private:
+	sf::RenderWindow main_window;
+	bool visible = 0;		//наличие окна
+	uint16 my_display_H;
+	uint16 my_display_W;
+	uint16 GAME_WINDOW_X_RES;
+	uint16 GAME_WINDOW_Y_RES;
+	std::string window_title;		//заголовок окна
+	int window_pos_x;				//позиция окна
+	int window_pos_y;				//позиция окна
+	int window_size_x;				//размер окна
+	int window_size_y;				//размер окна
+	std::thread t;					//указатель на поток
+
+	bool do_render = 0;
+	int elapsed_ms = 0;				//период времени
+	//масштаб
+	bool do_resize = 0;
+
+	//идентификатор окна
+	HWND window_id;
+
+	SidePanel panel;  //боковая панель
+	float display_scale = 0;
+	float mouse_scale = 1;
+
+public:
+
+	SRV_videocard();
+	sf::Font font;
+	std::string get_mode_name();				//получить название режима для отладки
+	bool has_focus();							//проверить наличие фокуса
+	void main_loop();							//синхронизация
+	void render();
+	void show();								//создать окно
+	void hide();								//убрать окно
+	void update(int new_elapsed_ms);				//синхронизация
+	bool is_visible();							//проверка наличия окна
+	void scale_up();
+	void scale_down();
+	mouse_xy get_mouse_pos();
+	void set_window_handle(HWND new_window_id);		//передаем идентификатор окна
+	void resize(uint16 new_width, uint16 new_height);	//новые размеры родительского окна
 };
 
 //=================== СТАВИТЬ после определения видеокарт
@@ -307,9 +395,12 @@ class Monitor
 {
 private:
 	videocard_type card_type = videocard_type::CGA;  //тип эмулируемой карты
-	CGA_videocard CGA_card;	   //CGA карта
-	MDA_videocard MDA_card;    //MDA карта
-	EGA_videocard EGA_card;    //EGA карта
+	CGA_videocard CGA_card;		//CGA карта
+	MDA_videocard MDA_card;		//MDA карта
+	EGA_videocard EGA_card;		//EGA карта
+	SRV_videocard SRV_card;		//заглушка
+	uint16 window_width = 0;	//ширина и высота окна
+	uint16 window_height = 0;
 
 public:
 	//конструктор
@@ -339,6 +430,15 @@ public:
 	mouse_xy get_mouse_pos();
 	uint8 direct_read(uint32 address);
 	void flash_font_rom(uint8 data);
+	void set_window_handle(HWND window_id);
+	void resize(uint16 new_width, uint16 new_height);
+	void power_on();
+	void power_off();
+	void exit();  //выход из эмулятора
+	uint16 get_window_width();
+	uint16 get_window_height();
+	uint8 get_bios_checksum();
+
 };
 
 //==================== Вспомогательные мониторы==========
@@ -352,7 +452,7 @@ protected:
 	int my_display_W;
 	uint16 GAME_WINDOW_X_RES;
 	uint16 GAME_WINDOW_Y_RES;
-	bool visible = 0; //признак видимости
+	std::atomic<bool> visible = 0; //признак видимости
 	std::string window_title;
 	int window_pos_x;
 	int window_pos_y;
@@ -373,6 +473,7 @@ public:
 	void hide();
 	void render();
 	void update(int new_elapsed_ms, int op_counter);
+	bool is_visible() { return visible; }
 };
 
 //монитор FDD
@@ -456,6 +557,7 @@ public:
 	void render();
 	void update(int new_elapsed_ms);
 };
+
 
 
 

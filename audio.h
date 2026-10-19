@@ -80,7 +80,9 @@ public:
 	void change_to_A();			//подготовить сэмпл А
 	void change_to_B();			//подготовить сэмпл В
 	bool wait_for_dispatch = 0;
-
+	void stop();				//остановка потоков при выходе
+	void start();
+	uint8 get_volume() { return volume; }
 };
 
 //класс аудио_монитора

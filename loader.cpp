@@ -4,10 +4,13 @@
 #include <sstream>
 #include <vector>
 #include <conio.h>
+#define byte win_byte // Временно переименовываем макрос Windows
 #include <Windows.h>
+#undef byte           // Сбрасываем переименование
 #include <fstream>
 #include "video.h"
 #include "audio.h"
+#include "adlib.h"
 #include "fdd.h"
 #include "hdd.h"
 #include "loader.h"
@@ -28,6 +31,10 @@ extern sf::Sprite font_sprite_80;
 extern sf::Texture font_texture_80_MDA;
 extern sf::Sprite font_sprite_80_MDA;
 
+//текстуры оформления
+extern sf::Texture panel_texture;
+extern sf::Sprite panel_sprite;
+
 extern Mem_Ctrl memory; //контроллер памяти
 extern Monitor monitor;	//монитор
 
@@ -45,10 +52,10 @@ string filename_HDD;
 string filename_v_rom;		//биос видеокарты
 string filename_opt_rom_1;  //Биос часов
 
-
 extern FDD_Ctrl FDD_A;
 extern HDD_Ctrl HDD;
 extern SoundMaker speaker;
+extern adlib_card soundcard;
 
 uint32 ROM_address = 0; //адрес загрузки файла ПЗУ
 uint32 EGA_ROM_address = 0; //адрес загрузки ПЗУ видеокарты
@@ -72,7 +79,7 @@ void load_diskette(uint8 drive, std::string filename_FDD)
 		cout << "FDD #" << (int)drive << " file opened OK" << endl;
 
 		//грузим сектора последовательно
-		while (file_FDD.read(&b, 1) && a<2880*1024)
+		while (file_FDD.read(&b, 1) && a < 2880 * 1024)
 		{
 			FDD_A.load_diskette((drive - 1) * 2880 * 1024 + a, b);
 			a++;
@@ -81,7 +88,7 @@ void load_diskette(uint8 drive, std::string filename_FDD)
 		file_FDD.close();
 		FDD_A.file_size[drive - 1] = a; //записываем размер файла
 		cout << "Загружено " << (int)(a) << " байт данных в FDD #" << (int)drive << " ";
-		
+
 		if (a)
 		{
 			//если загружены байты, обновляем данные 
@@ -156,55 +163,43 @@ void load_diskette(uint8 drive, std::string filename_FDD)
 
 
 }
-void load_hdd(std::string filename_HDD)
+void load_hdd(uint8 drv, std::string filename_HDD)
 {
-	//открываем файл HDD
+	if (drv > 1) return; //только диски 0 и 1
 
+	//открываем файл HDD
 	fstream file_HDD(path + filename_HDD, ios::binary | ios::in);
-	if (!file_HDD.is_open()) cout << "File HDD " << filename_HDD << " not found!" << endl;
+	if (!file_HDD.is_open()) cout << "File HDD[" << (int)drv << "] " << filename_HDD << " not found!" << endl;
 	else
 	{
 		//файл HDD открыт
 		int a = 0;
 		char b;    //buffer
-		while (!file_HDD.eof()) 
+		while (!file_HDD.eof())
 		{
 			file_HDD.read(&b, 1);
 			//записываем виртуальный HDD
-			HDD.load_disk_data(a, b);
+			HDD.load_disk_data(drv, a, b);
 			a++;
 		};
 		file_HDD.close();
-		HDD.filename = filename_HDD;//запоминаем имя файла
-		cout << "Загружено " << (int)(a - 1) << " байт данных в образ HDD" << endl;
+		HDD.filename[drv] = filename_HDD;//запоминаем имя файла
+		cout << "Загружено " << (int)(a - 1) << " байт данных в образ HDD[" << (int)drv << "] from " << filename_HDD << endl;
 	}
 	return;
 }
 
-void loader(int argc, char* argv[])
+void loader()
 {
 	//путь к текущему каталогу
-	path = argv[0];
-	int l_symb = (int)path.find_last_of('\\');
-	path.resize(++l_symb);
+	//path = argv[0];
+	//int l_symb = (int)path.find_last_of('\\');
+	//path.resize(++l_symb);
 	cout << "Working catalog = " << path << endl;
-	
-	//загружаем CGA шрифт в виде текстуры
-	if (font_texture_40.loadFromFile(path + "videorom_CGA_40.png")) cout << "CGA font ROM(40) loaded" << endl;
-	font_sprite_40.setTexture(font_texture_40);
-	font_texture_40.setSmooth(0);
-	font_sprite_40.setScale(sf::Vector2f(1, 1.2));
 
-	if (font_texture_80.loadFromFile(path + "videorom_CGA_80.png")) cout << "CGA font ROM(80) loaded" << endl;
-	font_sprite_80.setTexture(font_texture_80);
-	font_texture_80.setSmooth(0);
-	font_sprite_80.setScale(sf::Vector2f(1, 1.2));
-
-	//загружаем MDA шрифт в виде текстуры
-	if (font_texture_80_MDA.loadFromFile(path + "videorom_MDA.png")) cout << "MDA Font ROM(80) loaded" << endl;
-	font_sprite_80_MDA.setTexture(font_texture_80_MDA);
-	font_texture_80_MDA.setSmooth(0);
-	font_sprite_80_MDA.setScale(sf::Vector2f(1.0, 1.0));
+	//загружаем текстуру панели
+	if (panel_texture.loadFromFile(path + "panel.png")) cout << "panel texture loaded" << endl;
+	panel_texture.setSmooth(0);
 
 	//загружаем обычный шрифт для служебных надписей
 	if (!monitor.font.openFromFile(path + "CousineR.ttf")) cout << "Error loading debug font" << endl;
@@ -229,7 +224,7 @@ void loader(int argc, char* argv[])
 
 	if (!EGA_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "EGA_MON: error loading font" << endl;
 	else cout << "EGA_MON: font " << path + "CousineR.ttf" << " loaded" << endl;
-	
+
 	if (!COM_monitor.font.openFromFile(path + "CousineR.ttf")) cout << "COM_MON: error loading font" << endl;
 	else cout << "COM_MON: font " << path + "CousineR.ttf" << " loaded" << endl;
 
@@ -247,7 +242,7 @@ void loader(int argc, char* argv[])
 		{
 			//пропускаем комментарии
 			if (line.find('#') == 0) continue;
-			
+
 			// Ищем символ '=' в строке
 			size_t equal_pos = line.find('=');
 
@@ -288,7 +283,7 @@ void loader(int argc, char* argv[])
 				if (last_char_value != std::string::npos) {
 					value = value.substr(0, last_char_value + 1);
 				}
-			
+
 				//обрабатываем все параметры по одному
 
 				if (parameter == "BIOS") //имя файла БИОС
@@ -319,7 +314,7 @@ void loader(int argc, char* argv[])
 				{
 					if (value != "" && stoi(value, 0, 10)) FDD_A.set_active_drives(stoi(value, 0, 10));
 					cout << "FDD drives = " << (int)FDD_A.get_active_drives() << endl;
-					MB_switches = (MB_switches & 0b00111111) | ((~FDD_A.get_active_drives()) << 6);  //корректируем переключатели
+					MB_switches = (MB_switches & 0b00111111) | ((FDD_A.get_active_drives()-1) << 6);  //корректируем переключатели
 				}
 
 				if (parameter == "FDD1_FILE") //диск в дисководе 1
@@ -354,10 +349,16 @@ void loader(int argc, char* argv[])
 					//FDD_A.filename_FDD[3] = value;
 				}
 
-				if (parameter == "HDD_FILE") //
+				if (parameter == "HDD_0_FILE") //
 				{
-					//загружаем дискету в массив
-					if (value != "") load_hdd(value);
+					//загружаем HDD в массив
+					if (value != "") load_hdd(0, value);
+				}
+
+				if (parameter == "HDD_1_FILE") //
+				{
+					//загружаем HDD в массив
+					if (value != "") load_hdd(1, value);
 				}
 
 				if (parameter == "HDD_ROM_FILE") //
@@ -378,7 +379,7 @@ void loader(int argc, char* argv[])
 							checksum += b;
 						};
 						file_HDD_ROM.close();
-						cout << "Loaded " << dec << (int)(a) << " commands from HDD_ROM file (checksum = " << hex << (int)checksum  << ")" << endl;
+						cout << "Loaded " << dec << (int)(a) << " commands from HDD_ROM file (checksum = " << hex << (int)checksum << ")" << endl;
 					}
 				}
 
@@ -389,13 +390,21 @@ void loader(int argc, char* argv[])
 					else speaker.set_volume(0);
 				}
 
+				if (parameter == "ADLIB_VOLUME") //громкость звуковой
+				{
+					//устанавливаем громкость
+					if (value != "" && stoi(value, 0, 10)) soundcard.set_volume(stoi(value, 0, 10));
+					else soundcard.set_volume(0);
+				}
+
+
 				if (parameter == "VIDEO") //видеокарта
 				{
 					//выбираем тип видео
 					cout << "SET video to " << value << endl;
 					if (value == "CGA")
 					{
-						cout << "============CGA===========" <<endl;
+						cout << "============CGA===========" << endl;
 						monitor.set_card_type(videocard_type::CGA);
 						MB_switches = (MB_switches & 0xCF) | (0b00100000); //80 col CGA
 
@@ -413,7 +422,7 @@ void loader(int argc, char* argv[])
 						MB_switches = (MB_switches & 0xCF) | (0b00000000); //EGA
 					}
 				}
-				
+
 				if (parameter == "EGA_VIDEO_ROM_FILE") //ROM от EGA карты
 				{
 					//выбираем видео BIOS
@@ -463,9 +472,7 @@ void loader(int argc, char* argv[])
 		cout << "Loaded " << (int)(a) << " BIOS from ROM file (checksum = " << (int)sum << ")" << endl;
 	}
 
-	//загружаем шрифты CGA в виде ROM-файла
-	if (monitor.get_card_type() == videocard_type::CGA)
-	{
+	//загружаем шрифты MDA + CGA в виде ROM-файла
 		fstream file_cga_rom(path + "ibm_mda_cga_font.bin", ios::binary | ios::in);
 		if (!file_cga_rom.is_open()) cout << "File ibm_mda_cga_font.bin not found!" << endl;
 		else
@@ -475,34 +482,12 @@ void loader(int argc, char* argv[])
 			uint8 sum = 0;
 			while (file_cga_rom.read(&b, 1)) {
 				// записываем виртуальный ROM
-				if (a >= 4096) monitor.flash_font_rom(b);
+				monitor.flash_font_rom(b);
 				a++;
 			};
 			file_cga_rom.close();
-			cout << "Загружено " << dec << (int)(a-4096) << " байт данных в ПЗУ знакогенератора CGA" << endl;
+			cout << "Загружено " << dec << (int)(a) << " байт данных в ПЗУ знакогенераторов MDA и CGA" << endl;
 		}
-	}
-
-	//загружаем шрифт MDA в виде ROM-файла
-	if (monitor.get_card_type() == videocard_type::MDA)
-	{
-		fstream file_cga_rom(path + "ibm_mda_cga_font.bin", ios::binary | ios::in);
-		if (!file_cga_rom.is_open()) cout << "File ibm_mda_cga_font.bin not found!" << endl;
-		else
-		{
-			int a = 0;
-			char b;    //buffer
-			uint8 sum = 0;
-			while (file_cga_rom.read(&b, 1)) {
-				// записываем виртуальный ROM
-				if (a < 4096) monitor.flash_font_rom(b);
-				a++;
-			};
-			file_cga_rom.close();
-			cout << "Загружено " << dec << (int)(4096) << " байт данных в ПЗУ знакогенератора MDA" << endl;
-		}
-	}
-
 
 	//загружаем видео ПЗУ
 	if (filename_v_rom != "" && monitor.get_card_type() == videocard_type::EGA)

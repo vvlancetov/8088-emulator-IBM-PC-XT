@@ -25,7 +25,7 @@ extern uint8 service_counter;
 
 void Breakpointer::load_breakpoints()
 {
-	return;
+	//return;
 	
 	breakpoints.clear();
 	//breakpoints.push_back({ 0xfe231,"POST[455]: KEYBOARD RESET" });
@@ -52,20 +52,21 @@ void Breakpointer::load_breakpoints()
 	//breakpoints.push_back({ 0xc03cc,"EGA POD14_74:" });
 	//breakpoints.push_back({ 0xc03B0,"EGA POD14_4a:" });
 	//breakpoints.push_back({ 0xc03B5,"EGA POD14_4b:" });
-	breakpoints.push_back({ 0xc0480,"EGA MEM TEST:" });
-	breakpoints.push_back({ 0xc05cd,"EGA MEM ERROR:" });
-	breakpoints.push_back({ 0xc06bc,"EGA HB_END:" });
-	breakpoints.push_back({ 0xc05ef,"EGA MEM OK END" });
+	//breakpoints.push_back({ 0xc0480,"EGA MEM TEST:" });
+	//breakpoints.push_back({ 0xc05cd,"EGA MEM ERROR:" });
+	//breakpoints.push_back({ 0xc06bc,"EGA HB_END:" });
+	//breakpoints.push_back({ 0xc05ef,"EGA MEM OK END" });
 	//breakpoints.push_back({ 0xc0244,"EGA[971]: EGA POST" });
 	//breakpoints.push_back({ 0xc04eb,"EGA[]: EGA AA1" });
-	breakpoints.push_back({ 0xc04f6,"EGA[]: EGA AA2" });
-	breakpoints.push_back({ 0xc0523,"EGA[]: EGA AA3" });
-	breakpoints.push_back({ 0xc052e,"EGA[]: EGA aa4" });
-	breakpoints.push_back({ 0xc0448,"EGA[1354]: EGA error subroutine" });
-	breakpoints.push_back({ 0xc055b,"EGA[]: EGA aa5" });
-	breakpoints.push_back({ 0xc0566,"EGA[]: EGA aa6" });
-	breakpoints.push_back({ 0xc05d9,"EGA[1535]: EGA MEM OK" });
-	breakpoints.push_back({ 0xc068F,"EGA HOW_BIG" });
+	//breakpoints.push_back({ 0xc04f6,"EGA[]: EGA AA2" });
+	//breakpoints.push_back({ 0xc0523,"EGA[]: EGA AA3" });
+	//breakpoints.push_back({ 0xc052e,"EGA[]: EGA aa4" });
+	//breakpoints.push_back({ 0xc0448,"EGA[1354]: EGA error subroutine" });
+	//breakpoints.push_back({ 0xc055b,"EGA[]: EGA aa5" });
+	//breakpoints.push_back({ 0xc0566,"EGA[]: EGA aa6" });
+	//breakpoints.push_back({ 0xc05d9,"EGA[1535]: EGA MEM OK" });
+	//breakpoints.push_back({ 0xc068F,"EGA HOW_BIG" });
+	breakpoints.push_back({ 0xc03a0,"---" });
 }
 
 void Breakpointer::load_comments()
@@ -79,7 +80,7 @@ void Breakpointer::load_comments()
 	//comments.push_back({ 0xc03B0,"EGA POD14_4a:" });
 	//comments.push_back({ 0xc03B5,"EGA POD14_4b:" });
 	//comments.push_back({ 0xc03c5,"EGA POD14_7:" });
-	//comments.push_back({ 0xc0480,"EGA MEM TEST:" });
+	comments.push_back({ 0xc0480,"EGA MEM TEST:" });
 
 
 

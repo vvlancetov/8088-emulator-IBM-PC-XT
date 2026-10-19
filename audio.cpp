@@ -20,7 +20,23 @@ extern adlib_card soundcard;
 template< typename T >
 extern std::string int_to_bin(T i);
 
+//флаги работы эмулятора
+extern std::atomic<bool> PC_power_on;
+extern std::atomic<bool> winman_on;
+
 //динамик
+void SoundMaker::stop()
+{
+	audio_stream.stop();
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+void SoundMaker::start()
+{
+	audio_stream.play();
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
 void SoundMaker::beep_on()     //сигнал ВКЛ
 {
 	beeping = true;
@@ -287,6 +303,7 @@ void Audio_mon_device::main_loop()
 }
 void Audio_mon_device::show()
 {
+	if (!PC_power_on) return; //если ПК выключен, окно не запустится
 	//признак видимости
 	visible = 1;
 

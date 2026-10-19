@@ -40,62 +40,83 @@ extern IC8237 dma_ctrl;
 
 HDD_Ctrl::HDD_Ctrl()
 {
-	MAX_Cylinders = 306; //цилиндры
-	MAX_Heads = 8; //головки
-	MAX_Sectors = 17; //сектора
-	sector_data = (uint8*)calloc(MAX_Heads * MAX_Cylinders * MAX_Sectors * 512, 1);
+	MAX_Cylinders[0]	= 940;	//цилиндры
+	MAX_Heads[0]		= 8;	//головки
+	MAX_Sectors[0]		= 17;	//сектора
+	sector_data[0]		= (uint8*)calloc(MAX_Heads[0] * MAX_Cylinders[0] * MAX_Sectors[0] * 512, 1);
+
+	MAX_Cylinders[1]	= 940;	//цилиндры
+	MAX_Heads[1]		= 8;	//головки
+	MAX_Sectors[1]		= 17;	//сектора
+	sector_data[1] = (uint8*)calloc(MAX_Heads[1] * MAX_Cylinders[1] * MAX_Sectors[1] * 512, 1);
+
 	status_buffer_0.resize(5);//создаем буфер статуса
 	status_buffer_1.resize(5);//создаем буфер статуса
 }
-
 HDD_Ctrl::~HDD_Ctrl()
 {
 	while (flush_active); //ждем если активен сброс на диск
 	flush_buffer();
-	free(sector_data);
+	while (flush_active); //ждем если активен сброс на диск
+	free(sector_data[0]);
+	free(sector_data[1]);
 }
-
 uint32 HDD_Ctrl::real_address(uint8 head, uint16 cylinder, uint8 sector)
 {
 	//рассчитываем адрес байта в массиве
 	//добавить проверку корректности данных
-	return (cylinder * MAX_Sectors * MAX_Heads + MAX_Sectors * head + sector) * 512;
+	HDD_active = 10000; //индикатор активности
+	return (cylinder * MAX_Sectors[selected_drive] * MAX_Heads[selected_drive] + MAX_Sectors[selected_drive] * head + sector) * 512;
 }
-
 void HDD_Ctrl::flush_buffer()
 {
+	//сбрасываем данные на диски
+	fstream file_HDD_0(path + filename[0], ios::binary | ios::out);
+	fstream file_HDD_1(path + filename[1], ios::binary | ios::out);
 
-	//сбрасываем данные на диск
-	fstream file_HDD(path + filename, ios::binary | ios::out);
-
-	if (!file_HDD.is_open())
+	if (file_HDD_0.is_open())
 	{
-		if (log_to_console_HDD) cout << "File " << filename << " not found!" << endl;
-		return;
+		for (int i = 0; i < MAX_Cylinders[0] * MAX_Heads[0] * MAX_Sectors[0] * 512; i++)
+		{
+			file_HDD_0.write((char*)&sector_data[0][i], 1);
+		}
+		//file_HDD.flush();
+		file_HDD_0.close();
+	}
+	else
+	{
+		if (log_to_console_HDD) cout << "File[0] " << filename << " not found!" << endl;
 	}
 
-	for (int i = 0; i < MAX_Cylinders * MAX_Heads * MAX_Sectors * 512; i++)
+	if (file_HDD_1.is_open())
 	{
-		file_HDD.write((char*)&sector_data[i], 1);
+		for (int i = 0; i < MAX_Cylinders[1] * MAX_Heads[1] * MAX_Sectors[1] * 512; i++)
+		{
+			file_HDD_1.write((char*)&sector_data[1][i], 1);
+		}
+		//file_HDD.flush();
+		file_HDD_1.close();
 	}
-	//file_HDD.flush();
-	file_HDD.close();
+	else
+	{
+		if (log_to_console_HDD) cout << "File[1] " << filename << " not found!" << endl;
+	}
+
 	flush_active = 0;//снимаем флаг
 	//if (log_to_console_FDD) FDD_monitor.log("Buffer flushed to Disk#" + to_string(selected_drive + 1) + "(" + filename_FDD.at(selected_drive) + ")");
 }
-
 uint8 HDD_Ctrl::read_DMA_data()
 {
+	//читаем секторы с диска в буфер
 	if (!Ctrl_active) return 0; //выход, если не было SELECT
 	if (drv_state == HDD_states::read_sectors)
 	{
-
 		if (EOP)
 		{
 			//сигнал окончания от контроллера DMA
 			//data_left = 0;
 			EOP = 0;
-			if (log_to_console_HDD) cout << "HDD READ - EOP!" << endl;
+			if (log_to_console_HDD) cout << "HDD_" << (int)selected_drive << " READ - EOP!" << endl;
 		}
 		
 		if (!data_left)
@@ -105,7 +126,7 @@ uint8 HDD_Ctrl::read_DMA_data()
 		}
 
 		//считываем данные из основного массива
-		uint8 data_out = sector_data[data_ptr_current];
+		uint8 data_out = sector_data[selected_drive][data_ptr_current];
 		data_ptr_current++;
 		data_left--;
 
@@ -113,12 +134,14 @@ uint8 HDD_Ctrl::read_DMA_data()
 		sector_buffer[buffer_pointer] = data_out;
 		buffer_pointer++;
 		if (buffer_pointer == 512) buffer_pointer = 0; //не даем выйти за пределы массива
+		HDD_active = 50; //индикатор активности
 		return data_out;
 	}
 	return 0;
 }
 void HDD_Ctrl::write_DMA_data(uint8 data)
 {
+	//запись данных на диск из буфера
 	if (!Ctrl_active) return; //выход, если не было SELECT
 	//получаем данные через DMA
 	//cout << "write_DMA_data = " << (int)data << " data_left = " << (int)data_left << endl;
@@ -158,7 +181,7 @@ void HDD_Ctrl::write_DMA_data(uint8 data)
 		//if (buffer_pointer == 10) cout << (int)(data_ptr_current - 5) << "=[" << hex << (int)sector_buffer[0] << ", " << (int)sector_buffer[1] << ", " << (int)sector_buffer[2] << ", " << (int)sector_buffer[3] << ", " << (int)sector_buffer[4] << "]" << endl;
 
 		//записываем данные в основной массив
-		sector_data[data_ptr_current] = data;
+		sector_data[selected_drive][data_ptr_current] = data;
 		data_ptr_current++;
 		if (data_ptr_current == data_ptr_MAX)
 		{
@@ -174,11 +197,11 @@ void HDD_Ctrl::write_DMA_data(uint8 data)
 			
 			//data_left = 1;
 		}
-
+		
+		HDD_active = 50; //индикатор активности
 		data_left--;
 	}
 }
-
 void HDD_Ctrl::write_port(uint16 port, uint8 data)
 {
 	
@@ -214,8 +237,8 @@ void HDD_Ctrl::write_port(uint16 port, uint8 data)
 			if (!params_left)
 			{
 				//параметры введены, присваиваем значения внутренним переменным
-				MAX_Cylinders = in_buffer.at(0) * 256 + in_buffer.at(1); //цилиндры
-				MAX_Heads = in_buffer.at(2); //головки
+				MAX_Cylinders[selected_drive] = in_buffer.at(0) * 256 + in_buffer.at(1); //цилиндры
+				MAX_Heads[selected_drive] = in_buffer.at(2); //головки
 				RWC = in_buffer.at(3) * 256 + in_buffer.at(4); //Starting Reduced Write Current Cylinder
 				WPC = in_buffer.at(5) * 256 + in_buffer.at(6); //Starting Write Precompensation Cylinder
 				ECC_burst = in_buffer.at(7); //Maximum ECC Data Burst Length
@@ -358,11 +381,10 @@ uint8 HDD_Ctrl::read_port(uint16 port)
 
 	return 0xFF;
 }
-
 void HDD_Ctrl::sync_data(int elapsed_ms)
 {
 	static uint32 flush_timer = 0;   //таймер сброса на диск
-	if (sectors_changed) flush_timer += elapsed_ms;
+	if (sectors_changed[0] || sectors_changed[1]) flush_timer += elapsed_ms;
 
 	if (flush_timer > 2000000 && !flush_active)  //засекаем 2 сек
 	{
@@ -371,16 +393,13 @@ void HDD_Ctrl::sync_data(int elapsed_ms)
 		cout << "flush sectors to HDD" << endl;
 		std::thread t(&HDD_Ctrl::flush_buffer, this);
 		t.detach();
-		sectors_changed = 0; //сброс флага
+		sectors_changed[0] = 0; //сброс флага
+		sectors_changed[1] = 0; //сброс флага
 		flush_timer = 0;     //сброс таймера
 	}
 }
-
-
-
 void HDD_Ctrl::sync()
 {
-
 	if (!Ctrl_active) return; //выход, если не было SELECT
 	//синхронизация HDD
 	//задействует прерывание 5
@@ -400,7 +419,7 @@ void HDD_Ctrl::sync()
 
 	if (drv_state == HDD_states::command_exec)
 	{
-		
+		HDD_active = 250;
 		selected_drive = (in_buffer.at(1) >> 5) & 1;
 		EOP = 0; //сбрасываем бит окончания DMA
 
@@ -480,11 +499,11 @@ void HDD_Ctrl::sync()
 			drv_state = HDD_states::read_result; //ожидаем чтения статуса от хоста
 			in_buffer.clear();		//очищаем входной буффер
 			//если выбран диск #1 - выдаем ошибку
-			if (selected_drive == 1)
+			if ((selected_drive == 1 && drv_present[1] == false) || (selected_drive == 0 && drv_present[0] == false))
 			{
 				out_buffer.push_back(0b00100010); //признак ошибки диска #1
 				out_buffer.push_back(0b00000100); //код 04
-				out_buffer.push_back(0b00100000); //диск #1
+				out_buffer.push_back(selected_drive << 5); //диск #
 				out_buffer.push_back(0b00000000); //просто нули
 				out_buffer.push_back(0b00000000); //просто нули
 				//копируем в буфер статуса
@@ -508,11 +527,11 @@ void HDD_Ctrl::sync()
 			//перемещает головки на дорожку 0
 			drv_state = HDD_states::read_result; //ожидаем чтения статуса от хоста
 			//если выбран диск #1 - выдаем ошибку
-			if (selected_drive == 1)
+			if ((selected_drive == 1 && drv_present[1] == false) || (selected_drive == 0 && drv_present[0] == false))
 			{
 				out_buffer.push_back(0b00100010); //признак ошибки диска #1
 				out_buffer.push_back(0b00000100); //код 04
-				out_buffer.push_back(0b00100000); //диск #1
+				out_buffer.push_back(selected_drive << 5); //диск #1
 				out_buffer.push_back(0b00000000); //просто нули
 				out_buffer.push_back(0b00000000); //просто нули
 				//копируем в буфер статуса
@@ -562,11 +581,11 @@ void HDD_Ctrl::sync()
 			drv_state = HDD_states::read_result; //ожидаем чтения статуса от хоста
 			//если выбран диск #1 - выдаем ошибку
 			//в противном случае по умолчанию = 0
-			if (selected_drive == 1)
+			if ((selected_drive == 1 && drv_present[1] == false) || (selected_drive == 0 && drv_present[0] == false))
 			{
 				out_buffer.push_back(0b00100010); //признак ошибки диска #1
 				out_buffer.push_back(0b00000100); //код 04
-				out_buffer.push_back(0b00100000); //диск #1
+				out_buffer.push_back(selected_drive << 5); //диск #1
 				out_buffer.push_back(0b00000000); //просто нули
 				out_buffer.push_back(0b00000000); //просто нули
 				//копируем в буфер статуса
@@ -620,7 +639,7 @@ void HDD_Ctrl::sync()
 			cylinder = (in_buffer.at(2) >> 6) * 256 + in_buffer.at(3);		//стартовый цилиндр
 			sector = in_buffer.at(2) & 63;   //стартовый сектор
 			data_ptr_current = real_address(head, cylinder, sector);
-			data_ptr_MAX = real_address(head, cylinder, MAX_Sectors); //адрес конца дорожки
+			data_ptr_MAX = real_address(head, cylinder, MAX_Sectors[selected_drive]); //адрес конца дорожки
 			data_left = in_buffer.at(4) * 512; //кол-во байт для считывания
 			buffer_pointer = 0; //внутренний буфер данных
 			out_buffer.clear();	//очищаем входной буффер
@@ -807,11 +826,11 @@ void HDD_Ctrl::sync()
 		int_ctrl.request_IRQ(5); //запрашиваем прерывание
 		drv_state = HDD_states::read_result; //ожидаем чтения статуса от хоста
 		//если выбран диск #1 - выдаем ошибку
-		if (selected_drive == 1)
+		if ((selected_drive == 1 && drv_present[1] == false) || (selected_drive == 0 && drv_present[0] == false))
 		{
 			out_buffer.push_back(0b00100010); //признак ошибки диска #1
 			out_buffer.push_back(0b00000100); //код 04
-			out_buffer.push_back(0b00100000); //диск #1
+			out_buffer.push_back(selected_drive << 5); //диск #
 			out_buffer.push_back(0b00000000); //просто нули
 			out_buffer.push_back(0b00000000); //просто нули
 			//копируем в буфер статуса
@@ -845,11 +864,11 @@ void HDD_Ctrl::sync()
 		int_ctrl.request_IRQ(5); //запрашиваем прерывание
 		drv_state = HDD_states::read_result; //ожидаем чтения статуса от хоста
 		//если выбран диск #1 - выдаем ошибку
-		if (selected_drive == 1)
+		if ((selected_drive == 1 && drv_present[1] == false) ||(selected_drive == 0 && drv_present[0] == false))
 		{
 			out_buffer.push_back(0b00100010); //признак ошибки диска #1
 			out_buffer.push_back(0b00000100); //код 04
-			out_buffer.push_back(0b00100000); //диск #1
+			out_buffer.push_back(selected_drive << 5); //диск #
 			out_buffer.push_back(0b00000000); //просто нули
 			out_buffer.push_back(0b00000000); //просто нули
 			//копируем в буфер статуса
@@ -862,7 +881,7 @@ void HDD_Ctrl::sync()
 
 		//сброс данных в файл
 		//flush_buffer();
-		sectors_changed = 1; //выставляем флаг
+		sectors_changed[selected_drive] = 1; //выставляем флаг
 		return;
 	}
 
@@ -870,18 +889,17 @@ void HDD_Ctrl::sync()
 	cout << "HDD unknown state = " << (int)drv_state << endl;
 	step_mode = 1;
 }
-
-void HDD_Ctrl::load_disk_data(uint32 address, uint8 data)
+void HDD_Ctrl::load_disk_data(uint8 drive, uint32 address, uint8 data)
 {
-	if (address < MAX_Heads * MAX_Cylinders * MAX_Sectors * 512) sector_data[address] = data;
+	//грузим данные и выставляем флаг наличия устройства
+	if (address < MAX_Heads[0] * MAX_Cylinders[0] * MAX_Sectors[0] * 512 && drive == 0) { sector_data[0][address] = data; drv_present[0] = true; }
+	if (address < MAX_Heads[1] * MAX_Cylinders[1] * MAX_Sectors[1] * 512 && drive == 1) { sector_data[1][address] = data; drv_present[1] = true; }
 }
-
 int HDD_Ctrl::get_drv() { return selected_drive; }
 string HDD_Ctrl::get_CSH()
 { 
 	return to_string(cylinder) + "/" + to_string(sector) + "/" + to_string(head);
 }
-
 string HDD_Ctrl::get_state()
 {
 	switch (drv_state)
@@ -916,7 +934,6 @@ string HDD_Ctrl::get_state()
 	case HDD_states::write_sectors:
 		return "WR_sec";
 		break;
-
 	}
 	return "unknown";
 }
@@ -927,4 +944,27 @@ void HDD_Ctrl::flash_rom(uint32 address, uint8 data)
 uint8 HDD_Ctrl::read_rom(uint32 address)
 {
 	return rom[address];
+}
+bool HDD_Ctrl::get_drv_present(int drv)
+{
+	if (drv == 0 && drv_present[0] == true) return true;
+	if (drv == 1 && drv_present[1] == true) return true;
+	return false;
+}
+std::string HDD_Ctrl::get_file_path(int drv)
+{
+	if (drv == 0 && drv_present[0] == true) return filename[0];
+	if (drv == 1 && drv_present[1] == true) return filename[1];
+	return "";
+}
+uint8 HDD_Ctrl::get_drv_MB(int drv)
+{
+	if (drv == 0 && drv_present[0] == true) return MAX_Cylinders[0] * MAX_Heads[0] * MAX_Sectors[0] / 2 / 1024;
+	if (drv == 1 && drv_present[1] == true) return MAX_Cylinders[1] * MAX_Heads[1] * MAX_Sectors[1] / 2 / 1024;
+	return 0;
+}
+int HDD_Ctrl::get_HDD_active()
+{
+	if (HDD_active > 1) HDD_active -=2;
+	return HDD_active;
 }

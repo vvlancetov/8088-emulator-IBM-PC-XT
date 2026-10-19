@@ -2028,7 +2028,7 @@ void KBD::next()  //синхронизация клавиатуры
 	//if (!CLK_high) return;
 	//if (!data_line_enabled) return; //если отключена - возврат
 	//if (out_buffer.size()) out_buffer.erase(out_buffer.begin());
-	if (log_to_console || 1)
+	if (log_to_console)
 	{
 		//if (out_buffer.size()) cout << "\n[KB_next] 0x" << (int)out_buffer.at(0) << " ";
 		//else cout << "\n[KB_next] 0x" << (int)0 << "(empty) ";
@@ -2071,5 +2071,12 @@ KBD::KBD()
 KBD::~KBD()
 {
 	do_main_loop = 0;	//сигнал потоку завершиться
-	t.join();			//завершаем поток
+	if (t.joinable()) t.join();			//завершаем поток
+}
+
+void KBD::exit()
+{
+	do_main_loop = 0;	//сигнал потоку завершиться
+	if (t.joinable()) t.join();			//завершаем поток
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }

@@ -2,6 +2,7 @@
 #include <SFML/Audio.hpp>
 #include <conio.h>
 #include <bitset>
+#include <atomic>
 #include <string>
 #include <Windows.h>
 #include <iostream>
@@ -13,12 +14,15 @@
 #include <memory>
 #include "video.h"
 #include "audio.h"
+#include "adlib.h"
 #include "keyboard.h"
 #include "fdd.h"
 #include "hdd.h"
 #include "custom_classes.h"
 #include "serial_port.h"
 #include "mouse.h"
+#include "win_manager.h"
+
 //для тестов
 #include <random>
 #include <cstdint>
@@ -29,6 +33,10 @@ typedef unsigned __int32 uint32;
 
 using namespace std;
 
+//флаги работы эмулятора
+extern std::atomic<bool> PC_power_on;
+extern std::atomic<bool> winman_on;
+
 //текстура шрифта
 extern sf::Texture font_texture_40;
 extern sf::Sprite font_sprite_40;
@@ -37,9 +45,9 @@ extern sf::Sprite font_sprite_80;
 extern sf::Texture font_texture_80_MDA;
 extern sf::Sprite font_sprite_80_MDA;
 
-//текстуры графической палитры
-extern sf::Texture CGA_320_texture;
-extern sf::Sprite CGA_320_palette_sprite;
+//текстуры оформления
+extern sf::Texture panel_texture;
+extern sf::Sprite panel_sprite;
 
 //счетчики
 extern uint32 op_counter;
@@ -122,6 +130,7 @@ extern HDD_Ctrl HDD;
 extern IC8253 pc_timer;
 extern SerialPort COM1;
 extern Mouse ms_mouse;
+extern adlib_card soundcard;
 
 extern bool halt_cpu;		   //флаг остановки до получения прерывания
 
@@ -138,20 +147,30 @@ extern std::chrono::high_resolution_clock Hi_Res_Clk;
 //режим теста
 extern bool test_mode;
 
+//переключатели на плате
+extern uint8 MB_switches;
+
 //==================== CGA videocard =============
 
 void CGA_videocard::main_loop()   // синхронизация
 {
+	while (window_id == NULL) std::this_thread::sleep_for(std::chrono::milliseconds(50)); //ждем передачи идентификатора окна
 	//создаем окно
-	main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
-	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+	//main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
+	main_window.create(window_id);
+	//main_window.setPosition({ 0, 0 });
+	//main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
 	main_window.setFramerateLimit(0);
-	main_window.setMouseCursorVisible(0);
+	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
-	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	main_window.setActive(1);
+
+	my_display_H = monitor.get_window_height();
+	my_display_W = monitor.get_window_width();
+
+	mouse_scale = display_scale = my_display_W / 1040.0f;
 
 	while (visible)
 	{
@@ -165,17 +184,21 @@ void CGA_videocard::main_loop()   // синхронизация
 			}
 			//рисуем окно
 			render();
+			_mm_pause();
 			//события окна
-			while (main_window.pollEvent()) {};
+			//while (main_window.pollEvent()) {};
 		}
 		else
 		{
 			//отдыхаем
-			//_mm_pause();
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			_mm_pause();
+			_mm_pause();
+			_mm_pause();
+			_mm_pause();
+			if (step_mode || log_to_console) std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		}
 	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(5)); //задержка перед завершением
+	std::this_thread::sleep_for(std::chrono::milliseconds(10)); //задержка перед завершением
 	main_window.close();
 }
 void CGA_videocard::update(int new_elapsed_ms)
@@ -185,8 +208,18 @@ void CGA_videocard::update(int new_elapsed_ms)
 }
 void CGA_videocard::render()
 {
+	// ИСПРАВЛЕНО: Блокируем контекст на время отрисовки кадра. 
+	// Если в этот момент пользователь кликает по меню, потоки памяти C++ не пересекутся!
+	std::lock_guard<std::mutex> lock(EmuWindowManager::window_mutex);
+
+	// Мы принудительно сдвигаем координатную сетку OpenGL вниз на высоту меню.
+	// Это защитит меню от затирания при вызовах main_window.clear() и .display()!
+	//sf::View client_view(sf::FloatRect({ 0.f, 0.f }, { (float)window_size_x, (float)window_size_y }));
+	//main_window.setView(client_view);
+
 	frame_start_time = Hi_Res_Clk.now(); //запускаем таймер для корректного расчета битов статуса
 	main_window.setActive(1);
+
 	sf::RectangleShape rectangle;
 	uint8 width;
 	uint8 attrib = 0; //атрибуты символов
@@ -290,7 +323,7 @@ void CGA_videocard::render()
 				//рисуем символ
 				// Извлекаем байт битовой маски строки символа из нашего ПЗУ знакогенератора
 				uint8 font_byte = 0;
-				font_byte = cga_font_rom[(ascii_code) * 8 + font_line + 2048]; //2048 - это вторая половина ПЗУ с толстым шрифтом
+				font_byte = cga_font_rom[4096 + (ascii_code) * 8 + font_line + 2048]; //2048 - это вторая половина ПЗУ с толстым шрифтом
 
 				// Распаковываем 8 пикселей по горизонтали для текущей буквы
 				for (int p = 0; p < 8; ++p)
@@ -327,9 +360,11 @@ void CGA_videocard::render()
 		{
 			screen_texture_320_200.update(rgba_pixels.data());
 			sf::Sprite screen_sprite_320_200(screen_texture_320_200);
-			screen_sprite_320_200.setPosition(sf::Vector2f(20, 20));
+			screen_sprite_320_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 			//масштабирование до размера окна
-			screen_sprite_320_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 320.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+			//screen_sprite_320_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 320.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+			//screen_sprite_320_200.setScale(sf::Vector2f((window_size_x - 200 - 40) / 320.0f, (window_size_y - 40) / 200.0f));
+			screen_sprite_320_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 320.0f, (600 * my_display_H / 640.0) / 200.0f));
 			main_window.draw(screen_sprite_320_200);
 		}
 		else
@@ -337,9 +372,11 @@ void CGA_videocard::render()
 			//если ширина 80
 			screen_texture_640_200.update(rgba_pixels.data());
 			sf::Sprite screen_sprite_640_200(screen_texture_640_200);
-			screen_sprite_640_200.setPosition(sf::Vector2f(20, 20));
+			screen_sprite_640_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 			//масштабирование до размера окна
-			screen_sprite_640_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+			//screen_sprite_640_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+			//screen_sprite_640_200.setScale(sf::Vector2f((window_size_x - 200 - 40) / 640.0f, (window_size_y - 40) / 200.0f));
+			screen_sprite_640_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 640.0f, (600 * my_display_H / 640.0) / 200.0f));
 			main_window.draw(screen_sprite_640_200);
 		}
 
@@ -408,9 +445,9 @@ void CGA_videocard::render()
 			// Обновляем текстуру всей пачкой байт из ОЗУ
 			screen_texture_320_200.update(rgba_pixels.data());
 			sf::Sprite screen_sprite_320_200(screen_texture_320_200);
-			screen_sprite_320_200.setPosition(sf::Vector2f(20, 20));
+			screen_sprite_320_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 			//масштабирование до размера окна
-			screen_sprite_320_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 320.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+			screen_sprite_320_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 320.0f, (600 * my_display_H / 640.0) / 200.0f));
 			main_window.draw(screen_sprite_320_200);
 
 		}
@@ -458,9 +495,9 @@ void CGA_videocard::render()
 			// Обновляем текстуру всей пачкой байт из ОЗУ
 			screen_texture_640_200.update(rgba_pixels.data());
 			sf::Sprite screen_sprite_640_200(screen_texture_640_200);
-			screen_sprite_640_200.setPosition(sf::Vector2f(20, 20));
+			screen_sprite_640_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 			//масштабирование до размера окна
-			screen_sprite_640_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+			screen_sprite_640_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 640.0f, (600 * my_display_H / 640.0) / 200.0f));
 			main_window.draw(screen_sprite_640_200);
 		}
 	}
@@ -491,18 +528,24 @@ void CGA_videocard::render()
 		if (joy_sence_show_timer) main_window.draw(text);
 	}
 
+	Hi_Res_t_end = Hi_Res_Clk.now();
+
 	//информация для отладки
-	debug_mess_1 = ""; // to_string(1000000 / (duration_cast<microseconds>(Hi_Res_t_end - Hi_Res_t_start).count() + 1));
+	//debug_mess_1 = to_string(1000000 / (duration_cast<microseconds>(Hi_Res_t_end - frame_start_time).count() + 1));
+	//frame_start_time = Hi_Res_t_end;
 	text.setString(debug_mess_1);
-	text.setPosition(sf::Vector2f(0, 0));
+	text.setPosition(sf::Vector2f(200, 0));
 	text.setFillColor(sf::Color(255, 0, 0));
 	text.setOutlineThickness(3.1);
 	if (debug_mess_1 != "") main_window.draw(text);
 
 exit_CGA:
+
+	panel.draw(main_window, display_scale, mouse_scale);
+
 	main_window.display();
 	int_request = true;//устанавливаем флаг в конце кадра
-	main_window.setActive(0);
+	//main_window.setActive(0);
 }
 CGA_videocard::CGA_videocard()   // конструктор класса
 {
@@ -534,27 +577,19 @@ CGA_videocard::CGA_videocard()   // конструктор класса
 		3D5h - данные
 	*/
 
-	display_mode = 3;
-
 	//получаем данные о текущем дисплее
 	my_display_H = sf::VideoMode::getDesktopMode().size.y;
 	my_display_W = sf::VideoMode::getDesktopMode().size.x;
 
-	//базовое разрешение
-	GAME_WINDOW_X_RES = 320 * 5 + 40;		 // масштаб 1:5 + 500 px для отладки
-	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
-
-	display_scale = floor(5 * my_display_H / GAME_WINDOW_Y_RES);
-
-	cout << "Video Init (CGA) " << my_display_H << " x " << my_display_W << " display" << " scale " << (int)display_scale << endl;
+	cout << "Video Init (CGA) " << my_display_H << " x " << my_display_W << " display scale " << (int)display_scale << endl;
 
 	//задаем переменные окна
-	window_title = "IBM PC/XT emulator. CGA videocard.";		//заголовок окна
-	window_pos_x = (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
-	window_pos_y = (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
-	window_size_x = GAME_WINDOW_X_RES * display_scale / 5;			//размер окна
-	window_size_y = GAME_WINDOW_Y_RES * display_scale / 5;			//размер окна
-	cursor_clock.restart();										//запускаем таймер мигания
+	//window_title = "IBM PC/XT emulator. CGA videocard.";		//заголовок окна
+	window_pos_x = 0; // (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
+	window_pos_y = 0; // (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
+	window_size_x = 800;			//размер окна
+	window_size_y = 600;			//размер окна
+	cursor_clock.restart();			//запускаем таймер мигания
 
 	//создаем массив цветов CGA
 	CGA_colors[0] = sf::Color(0, 0, 0);
@@ -815,12 +850,11 @@ mouse_xy CGA_videocard::get_mouse_pos()
 
 	mouse_xy mouse_data;  //пакет данных мыши
 
-	mouse_data.mouse_x = localPosition.x;
-	mouse_data.mouse_y = localPosition.y;
-	mouse_data.screen_size_x = window_size_x;
-	mouse_data.screen_size_y = window_size_y;
-	mouse_data.screen_scale = display_scale;
-
+	mouse_data.mouse_x = localPosition.x * 1040.0f / window_size_x - 220;
+	mouse_data.mouse_y = localPosition.y * 640.0f / window_size_y - 20;
+	mouse_data.screen_size_x = 800;
+	mouse_data.screen_size_y = 600;
+	//mouse_data.screen_scale = (float)my_display_W / (float)1040; // display_scale;
 	return mouse_data;
 }
 void CGA_videocard::flash_font_rom(uint8 data)
@@ -828,10 +862,22 @@ void CGA_videocard::flash_font_rom(uint8 data)
 	//пишем в ПЗУ знакогенератора
 	cga_font_rom[font_rom_ptr] = data;
 	font_rom_ptr++;
-	if (font_rom_ptr == 4096) font_rom_ptr = 0; //защита от повторной записи
+	if (font_rom_ptr == 8192) font_rom_ptr = 0; //защита от повторной записи
 	//cout << (bitset<8>)data << endl;
 }
-
+void CGA_videocard::set_window_handle(HWND new_window_id)
+{
+	window_id = new_window_id;
+}
+void CGA_videocard::resize(uint16 new_width, uint16 new_height)
+{
+	//новый размер окна
+	//cout << "win size = " << (int)new_width << " x " << (int)new_height << endl;
+	window_size_x = new_width;
+	window_size_y = new_height;
+	if (my_display_W) mouse_scale = new_width * display_scale / my_display_W;
+	do_resize = true;
+}
 //отладочные экраны
 
 Dev_mon_device::Dev_mon_device(uint16 w, uint16 h, string title, uint16 x_pos, uint16 y_pos)   // конструктор класса
@@ -883,6 +929,7 @@ void Dev_mon_device::main_loop()   // синхронизация
 }
 void Dev_mon_device::show()
 {
+	if (!PC_power_on) return; //если ПК выключен, окно не запустится
 	//признак видимости
 	visible = 1;
 
@@ -1465,6 +1512,7 @@ void FDD_mon_device::main_loop()
 }
 void FDD_mon_device::show()
 {
+	if (!PC_power_on) return; //если ПК выключен, окно не запустится
 	//признак видимости
 	visible = 1;
 
@@ -1556,6 +1604,7 @@ void HDD_mon_device::main_loop()
 }
 void HDD_mon_device::show()
 {
+	if (!PC_power_on) return; //если ПК выключен, окно не запустится
 	//признак видимости
 	visible = 1;
 
@@ -1649,6 +1698,7 @@ void Mem_mon_device::main_loop()
 }
 void Mem_mon_device::show()
 {
+	if (!PC_power_on) return; //если ПК выключен, окно не запустится
 	//признак видимости
 	visible = 1;
 
@@ -1914,6 +1964,7 @@ void EGA_mon_device::main_loop()
 }
 void EGA_mon_device::show()
 {
+	if (!PC_power_on) return; //если ПК выключен, окно не запустится
 	//признак видимости
 	visible = 1;
 
@@ -2124,6 +2175,7 @@ void COM_mon_device::main_loop()
 }
 void COM_mon_device::show()
 {
+	if (!PC_power_on) return; //если ПК выключен, окно не запустится
 	//признак видимости
 	visible = 1;
 
@@ -2250,16 +2302,23 @@ void COM_mon_device::update(int new_elapsed_ms)
 
 void MDA_videocard::main_loop()
 {
+	while (window_id == NULL) std::this_thread::sleep_for(std::chrono::milliseconds(100)); //ждем передачи идентификатора окна
 	//создаем окно
-	main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
-	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+	//main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
+	main_window.create(window_id);
+	//main_window.setPosition({ window_pos_x, window_pos_y });
+	//main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
 	main_window.setFramerateLimit(0);
-	main_window.setMouseCursorVisible(0);
+	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
-	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	main_window.setActive(1);
+
+	my_display_H = monitor.get_window_height();
+	my_display_W = monitor.get_window_width();
+
+	mouse_scale = display_scale = my_display_W / 1040.0f;
 
 	while (visible)
 	{
@@ -2273,17 +2332,22 @@ void MDA_videocard::main_loop()
 			}
 			//рисуем окно
 			render();
+			_mm_pause();
 			//события окна
-			while (main_window.pollEvent()) {};
+			//while (main_window.pollEvent()) {};
 		}
 		else
 		{
 			//отдыхаем
 			_mm_pause();
-			//std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			_mm_pause();
+			_mm_pause();
+			_mm_pause();
+			if (step_mode || log_to_console) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
 		}
 	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(5)); //задержка перед завершением
+	std::this_thread::sleep_for(std::chrono::milliseconds(10)); //задержка перед завершением
 	main_window.close();
 }
 void MDA_videocard::update(int new_elapsed_ms)
@@ -2293,12 +2357,16 @@ void MDA_videocard::update(int new_elapsed_ms)
 }
 void MDA_videocard::render()					//синхронизация
 {
+	// ИСПРАВЛЕНО: Блокируем контекст на время отрисовки кадра. 
+	// Если в этот момент пользователь кликает по меню, потоки памяти C++ не пересекутся!
+
+	std::lock_guard<std::mutex> lock(EmuWindowManager::window_mutex);
 	main_window.setActive(1);
 	main_window.clear();// очистка экрана
 
 	//массив пикселей для текстуры
-	uint8_t* ptr_rgba = rgba_pixels.data();
 	rgba_pixels.resize(720 * 350 * 4, 0);
+	uint8_t* ptr_rgba = rgba_pixels.data();
 
 	uint16 addr;
 
@@ -2390,7 +2458,8 @@ void MDA_videocard::render()					//синхронизация
 				bool is_fg = false;
 				sf::Color pixel_color = current_fg_color;
 				//самая правая колонка - особый случай
-				if (p == 8) is_fg = (ascii_code >= 176 && ascii_code <= 223 && (font_byte & 1));
+				//доработать с учетом значения регистра
+				if (p == 8) is_fg = ((ascii_code >= 176) && (ascii_code <= 223) && (font_byte & 1));
 				else is_fg = ((font_byte >> (7 - p)) & 1);
 
 				if (is_fg)
@@ -2420,10 +2489,12 @@ exit_MDA:  //пропуск циклов если карта отключена
 	//выводим тектуру экрана
 	screen_texture_720_350.update(rgba_pixels.data());
 	sf::Sprite screen_sprite_720_350(screen_texture_720_350);
-	screen_sprite_720_350.setPosition(sf::Vector2f(20, 20));
+	screen_sprite_720_350.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 	//масштабирование до размера окна
-	screen_sprite_720_350.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 720.0f, (GAME_WINDOW_Y_RES - 40) / 350.0f));
+	screen_sprite_720_350.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 720.0f, (600 * my_display_H / 640.0) / 350.0f));
 	main_window.draw(screen_sprite_720_350);
+
+	panel.draw(main_window, display_scale, mouse_scale);
 
 	//тестовая информация джойстика
 	joy_sence_show_timer -= elapsed_ms;
@@ -2452,17 +2523,16 @@ exit_MDA:  //пропуск циклов если карта отключена
 		if (joy_sence_show_timer) main_window.draw(text);
 	}
 
-	debug_mess_1 = ""; // to_string(cursor_start_line) + " " + to_string(cursor_end_line) + " " + to_string(start_address) + " " + to_string(registers[0xe] * 256 + registers[0xf]);
+
+	std::lock_guard<std::mutex> lock1(string_mutex); // Блокируем мьютекс на чтение
+	//debug_mess_1 = ""; // to_string(cursor_start_line) + " " + to_string(cursor_end_line) + " " + to_string(start_address) + " " + to_string(registers[0xe] * 256 + registers[0xf]);
 	text.setString(debug_mess_1);
 	text.setCharacterSize(20);
-	text.setPosition(sf::Vector2f(0, 0));
+	text.setPosition(sf::Vector2f(250, 0));
 	text.setFillColor(sf::Color(255, 0, 0));
 	text.setOutlineThickness(3.1);
 	if (debug_mess_1 != "") main_window.draw(text);
-
 	main_window.display();
-	do_render = 0;
-	main_window.setActive(0);
 }
 void MDA_videocard::write_port(uint16 port, uint8 data)	//запись в порт адаптера
 {
@@ -2541,27 +2611,27 @@ bool MDA_videocard::has_focus()							//проверить наличие фокуса
 MDA_videocard::MDA_videocard()							//конструктор
 {
 	//инициализируем графические константы
-	GAME_WINDOW_X_RES = 320 * 5 + 40;	// масштаб 1:5 + 500 px для отладки
-	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
+	//GAME_WINDOW_X_RES = 320 * 5 + 40;	// масштаб 1:5 + 500 px для отладки
+	//GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
 
 	//получаем данные о текущем дисплее
 	my_display_H = sf::VideoMode::getDesktopMode().size.y;
 	my_display_W = sf::VideoMode::getDesktopMode().size.x;
 
 	//базовое разрешение
-	GAME_WINDOW_X_RES = 320 * 5 + 40;		 // масштаб 1:5 + 500 px для отладки
-	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
+	//GAME_WINDOW_X_RES = 320 * 5 + 40;		 // масштаб 1:5 + 500 px для отладки
+	//GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
 
-	display_scale = floor(5 * my_display_H / GAME_WINDOW_Y_RES);
+	display_scale = 1; //floor(5 * my_display_H / GAME_WINDOW_Y_RES);
 
 	cout << "Video Init (MDA) " << my_display_H << " x " << my_display_W << " display" << " scale " << (int)display_scale << endl;
 
 	//задаем переменные окна
-	window_title = "IBM PC/XT emulator. MDA videocard.";		//заголовок окна
-	window_pos_x = (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
-	window_pos_y = (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
-	window_size_x = GAME_WINDOW_X_RES * display_scale / 5;			//размер окна
-	window_size_y = GAME_WINDOW_Y_RES * display_scale / 5;			//размер окна
+	//window_title = "IBM PC/XT emulator. MDA videocard.";		//заголовок окна
+	window_pos_x = 0; // (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
+	window_pos_y = 0; // (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
+	window_size_x = 800; // GAME_WINDOW_X_RES* display_scale / 5;			//размер окна
+	window_size_y = 600; // GAME_WINDOW_Y_RES* display_scale / 5;			//размер окна
 	cursor_clock.restart();										//запускаем таймер мигания
 	//инициализация текстур
 	screen_texture_720_350.resize({ 720, 350 });
@@ -2614,16 +2684,18 @@ uint8 MDA_videocard::mem_read(uint32 address)
 }
 mouse_xy MDA_videocard::get_mouse_pos()
 {
+	std::lock_guard<std::mutex> lock(string_mutex); // Блокируем мьютекс
+
 	sf::Vector2i localPosition = sf::Mouse::getPosition(main_window); // window is a sf::Window
 
 	mouse_xy mouse_data;  //пакет данных мыши
 
-	mouse_data.mouse_x = localPosition.x;
-	mouse_data.mouse_y = localPosition.y;
-	mouse_data.screen_size_x = window_size_x;
-	mouse_data.screen_size_y = window_size_y;
-	mouse_data.screen_scale = display_scale;
-
+	mouse_data.mouse_x = localPosition.x * 1040.0f / window_size_x - 220;
+	mouse_data.mouse_y = localPosition.y * 640.0f / window_size_y - 20;
+	mouse_data.screen_size_x = 800;
+	mouse_data.screen_size_y = 600;
+	//mouse_data.screen_scale = window_size_x / 800.0f;
+	//debug_mess_1 = to_string(mouse_data.mouse_x) + "   " + to_string(mouse_data.mouse_y);
 	return mouse_data;
 }
 uint8 MDA_videocard::direct_read(uint32 address)
@@ -2637,8 +2709,21 @@ void MDA_videocard::flash_font_rom(uint8 data)
 	mda_font_rom[font_rom_ptr] = data;
 	//cout << hex << (int)font_rom_ptr<< " " << (bitset<8>)data << endl;
 	font_rom_ptr++;
-	if (font_rom_ptr == 4096) font_rom_ptr = 0; //защита от повторной записи
+	if (font_rom_ptr == 8192) font_rom_ptr = 0; //защита от повторной записи
 
+}
+void MDA_videocard::set_window_handle(HWND new_window_id)
+{
+	window_id = new_window_id;
+}
+void MDA_videocard::resize(uint16 new_width, uint16 new_height)
+{
+	//новый размер окна
+	//cout << "win size = " << (int)new_width << " x " << (int)new_height << endl;
+	window_size_x = new_width;
+	window_size_y = new_height;
+	if (my_display_W) mouse_scale = new_width * display_scale / my_display_W;
+	do_resize = true;
 }
 //==================== EGA videocard =============
 
@@ -2646,28 +2731,28 @@ EGA_videocard::EGA_videocard()							//конструктор
 {
 
 	//инициализируем графические константы
-	GAME_WINDOW_X_RES = 320 * 5 + 40;	// масштаб 1:5 + 500 px для отладки
-	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
+	//GAME_WINDOW_X_RES = 320 * 5 + 40;	// масштаб 1:5 + 500 px для отладки
+	//GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
 
 	//получаем данные о текущем дисплее
 	my_display_H = sf::VideoMode::getDesktopMode().size.y;
 	my_display_W = sf::VideoMode::getDesktopMode().size.x;
 
 	//базовое разрешение
-	GAME_WINDOW_X_RES = 320 * 5 + 40;		 // масштаб 1:5 + 500 px для отладки
-	GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
+	//GAME_WINDOW_X_RES = 320 * 5 + 40;		 // масштаб 1:5 + 500 px для отладки
+	//GAME_WINDOW_Y_RES = 200 * 1.2 * 5 + 40;  // масштаб 1:5
 
-	display_scale = floor(5 * my_display_H / GAME_WINDOW_Y_RES);
+	//display_scale = floor(5 * my_display_H / GAME_WINDOW_Y_RES);
 
 	cout << "Video Init (EGA) " << my_display_H << " x " << my_display_W << " display" << " scale " << (int)display_scale << endl;
 
 	//задаем переменные окна
-	window_title = "IBM PC/XT emulator. EGA videocard.";		//заголовок окна
-	window_pos_x = (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
-	window_pos_y = (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
-	window_size_x = GAME_WINDOW_X_RES * display_scale / 5;			//размер окна
-	window_size_y = GAME_WINDOW_Y_RES * display_scale / 5;			//размер окна
-	cursor_clock.restart();										//запускаем таймер мигания
+	//window_title = "IBM PC/XT emulator. EGA videocard.";		//заголовок окна
+	window_pos_x = 0; // (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
+	window_pos_y = 0; // (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
+	window_size_x = 800; // GAME_WINDOW_X_RES* display_scale / 5;			//размер окна
+	window_size_y = 600; // GAME_WINDOW_Y_RES* display_scale / 5;			//размер окна
+	cursor_clock.restart();												    //запускаем таймер мигания
 
 	//массив цветов для текста
 	TXT_colors[0] = sf::Color(0, 0, 0);
@@ -2796,7 +2881,6 @@ EGA_videocard::EGA_videocard()							//конструктор
 	screen_texture_720_350.resize({ 720, 350 }); //текст MDA
 	screen_texture_640_350.resize({ 640, 350 }); //текст EGA
 	screen_texture_320_350.resize({ 320, 350 }); //текст EGA (широкий)
-
 }
 void EGA_videocard::show()
 {
@@ -2825,16 +2909,23 @@ void EGA_videocard::update(int new_elapsed_ms)
 }
 void EGA_videocard::main_loop()
 {
+	while (window_id == NULL) std::this_thread::sleep_for(std::chrono::milliseconds(50)); //ждем передачи идентификатора окна
 	//создаем окно
-	main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
-	main_window.setPosition({ window_pos_x, window_pos_y });
-	main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+	//main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
+	main_window.create(window_id);
+	//main_window.setPosition({ window_pos_x, window_pos_y });
+	//main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
 	main_window.setFramerateLimit(0);
-	main_window.setMouseCursorVisible(0);
+	main_window.setMouseCursorVisible(1);
 	main_window.setKeyRepeatEnabled(0);
 	main_window.setVerticalSyncEnabled(1);
-	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	main_window.setActive(1);
+
+	my_display_H = monitor.get_window_height();
+	my_display_W = monitor.get_window_width();
+
+	mouse_scale = display_scale = my_display_W / 1040.0f;
 
 	while (visible)
 	{
@@ -2851,7 +2942,7 @@ void EGA_videocard::main_loop()
 			render();
 			_mm_pause();
 			//события окна
-			while (main_window.pollEvent()) {};
+			///while (main_window.pollEvent()) {};
 		}
 		else
 		{
@@ -2864,7 +2955,7 @@ void EGA_videocard::main_loop()
 		}
 
 	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(5)); //задержка перед завершением
+	std::this_thread::sleep_for(std::chrono::milliseconds(10)); //задержка перед завершением
 	main_window.close();
 }
 void EGA_videocard::write_port(uint16 port, uint8 data)	//запись в порт адаптера
@@ -2980,32 +3071,33 @@ uint8 EGA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 		static bool clock = 0;
 		clock = !clock;
 		uint8 out = 0;
+		uint8 card_switch = 0b1001;  // 1001 - EGA ENH  1010 - EGA BW
 		switch (On_board_switch_sel)
 		{
 		case 0:
-			out = 0b00000000; //переключатель 1 = ON
+			out = (card_switch & 1) << 4;		// 0b00010000; //переключатель 1 = ON
 			break;
 		case 1:
-			out = 0b00010000; //переключатель 2 = OFF
+			out = ((card_switch >> 1) & 1) << 4;// 0b00000000; //переключатель 2 = OFF
 			break;
 		case 2:
-			out = 0b00010000; //переключатель 3 = OFF
+			out = ((card_switch >> 2) & 1) << 4;// 0b00000000; //переключатель 3 = OFF
 			break;
 		case 3:
-			out = 0b00000000; //переключатель 4 = ON
+			out = ((card_switch >> 3) & 1) << 4;// 0b00010000; //переключатель 4 = ON
 			break;
 		}
 
 		if (clock) out = out | 0b10000000;		//идет показ изображения
 		else out = out & 0b01111111;			//можно читать свитчи + экран погашен
-		if (log_to_console) cout << "Read Vsync = " << (int)out << " ";
+		if (log_to_console_EGA) cout << "Read PORT 3c2 = " << (int)out << endl;
 		return out;
 	}
 
 	if ((port == 0x3ba && !IOAddrSel) || (port == 0x3da && IOAddrSel)) //Input Status Register One
 	{
 		ac_flipflop = 0; //сброс переключателя
-		
+
 		// Используем ваш глобальный таймер высокого разрешения Hi_Res_Clk
 		auto current_time = Hi_Res_Clk.now();
 
@@ -3014,12 +3106,6 @@ uint8 EGA_videocard::read_port(uint16 port)				//чтение из порта адаптера
 		int64_t micro_seconds_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(current_time - frame_start_time).count();
 
 		const int64_t microseconds_per_frame = 16666; // Полный кадр 60 Гц = 16.666 мс
-
-		// Защита от переполнения: если время кадра истекло, сбрасываемся на начало нового кадра
-		if (micro_seconds_elapsed >= microseconds_per_frame) {
-			frame_start_time = current_time;
-			micro_seconds_elapsed = 0;
-		}
 
 		uint8_t isr_value = 0x00; // Базовое состояние регистра статуса EGA
 
@@ -3215,13 +3301,22 @@ void EGA_videocard::render()					//синхронизация
 		ac_registers[19] - сдвиг влево попиксельно (0 - 7 пикселей)
 	*/
 
-	//frame_start_time = Hi_Res_Clk.now(); //запускаем таймер для корректного расчета битов статуса
+	// ИСПРАВЛЕНО: Блокируем контекст на время отрисовки кадра. 
+	// Если в этот момент пользователь кликает по меню, потоки памяти C++ не пересекутся!
+	std::lock_guard<std::mutex> lock(EmuWindowManager::window_mutex);
+
+	frame_start_time = Hi_Res_Clk.now(); //запускаем таймер для корректного расчета битов статуса
+	main_window.setActive(1);
 
 	sf::Text text(monitor.font);		//обычный шрифт
 	text.setCharacterSize(20);
 	text.setFillColor(sf::Color::White);
 
-	uint16 font_t_x, font_t_y;
+	_mm_pause(); //паузы для того, чтобы программы перестали писать в регистры
+	_mm_pause();
+	_mm_pause();
+	_mm_pause();
+
 	uint32 addr;
 	bool attr_under = false;       //атрибут подчеркивания
 	bool attr_blink = false;       //атрибут мигания
@@ -3238,6 +3333,14 @@ void EGA_videocard::render()					//синхронизация
 
 	//адрес курсора
 	uint16 cursor_pos = crt_registers[0xE] * 256 + crt_registers[0xF];
+
+	uint8 cursor_start_line = crt_registers[0x0A];
+	uint8 cursor_end_line = crt_registers[0x0B];
+
+	//длина строки в байтах
+	uint16 line_offset = crt_registers[0x13] * 2; //registr задает длину строки
+	//if (line_offset == 0) line_offset = 40; // Страховка от нулевого регистра
+	uint16 pixel_pan = ac_registers[0x13] & 7; //смещение влево
 
 	//используемые адреса видеопамяти
 	switch ((gc_registers[6] >> 2) & 3)
@@ -3262,14 +3365,14 @@ void EGA_videocard::render()					//синхронизация
 	}
 
 	//мигание курсора
-	if (cursor_clock.getElapsedTime().asMicroseconds() > 300000) //мигание курсора
+	if (cursor_clock.getElapsedTime().asMicroseconds() > 270000) //мигание курсора
 	{
 		cursor_clock.restart();
 		cursor_flipflop = !cursor_flipflop;
 	}
 
 	//управление цветом
-	bool color_enable = ~((ac_registers[16] >> 1) & 1);  //наличие цвета
+	bool color_enable = !((ac_registers[16] >> 1) & 1);  //наличие цвета
 
 	//рисование символов
 	bool dot9_enable = ((ac_registers[16] >> 2) & 1);  //дорисовка 9 точки у псевдографики (коды 0xC0 - 0xDF)
@@ -3311,9 +3414,10 @@ void EGA_videocard::render()					//синхронизация
 		//debug_mess_1 = "txt branch";
 		//текстовые режимы 0, 1, 2, 3, 7
 		//ширина
-		if ((seq_registers[1] >> 3) & 1)  //пиксельная частота
+		if (seq_registers[1] == 0xB)
 		{
 			//режимы шириной 40 - 0 и 1
+			//cout << "branch 40" << endl;
 			//линии 200/350 - переменная Lines_350
 			if (Lines_350) current_mode = video_modes::EGA_01_350;
 			else current_mode = video_modes::EGA_01_200;
@@ -3321,8 +3425,9 @@ void EGA_videocard::render()					//синхронизация
 		else
 		{
 			//режимы шириной 80 - 2, 3, 7 (dot9)
+			//cout << "branch 80" << endl;
 			//линии 200/350 - переменная Lines_350
-			if (High_pix_clock)
+			if (High_pix_clock && !IOAddrSel)
 			{
 				//режим 7 - 80 х 25, высота 14 пикселей (720х350)
 				current_mode = video_modes::EGA_7_720;
@@ -3345,7 +3450,6 @@ void EGA_videocard::render()					//синхронизация
 	{
 		//текстовые режимы 0 и 1 - 40x25
 		//8 страниц по 2КБ каждая
-
 		//заливаем цветом рамку
 		sf::RectangleShape rectangle;
 		rectangle.setScale(sf::Vector2f(1, 1));
@@ -3359,37 +3463,44 @@ void EGA_videocard::render()					//синхронизация
 		rectangle.setFillColor(sf::Color(0, 0, 0));
 		main_window.draw(rectangle);
 
-		//символов в строке
-		uint8 width = 40;
+		//массив пикселей для текстуры
+		rgba_pixels.resize(320 * 200 * 4, 0);
+		uint8_t* ptr_rgba = rgba_pixels.data();
 
-		//настройка масштаба символов для разных режимов
-		if (width == 40) rectangle.setSize(sf::Vector2f(5 * 8, 1.2 * 5 * 8));
-		else rectangle.setSize(sf::Vector2f(5 * 0.5 * 8, 1.2 * 5 * 8));
+		//определяем наборы символов
+		uint8 char_sel[2];
+		char_sel[0] = seq_registers[3] & 3;				//первый набор
+		char_sel[1] = (seq_registers[3] >> 2) & 3;		//выбор индекса - 3 бит байта атрибутов
 
 		uint8 attrib = 0; //атрибуты символов
+		uint8 width = 40; //символов в строке
 
 		sf::Color fg_color;
 		sf::Color bg_color;
 
 		//заполняем экран
-		for (int y = 0; y < 25; y++)  //25 строк
+		for (int y = 0; y < 200; y++)  //200 строк экрана
 		{
-			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
-			{
-				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
-				else addr = start_address + (y * width) + x + !PageBitOddEven * 0x20000;   //режим odd/even
-				font_t_y = videomemory[addr] >> 5;
-				font_t_x = videomemory[addr] - (font_t_y << 5);
-				attrib = videomemory[addr + 0x10000];
+			// Вычисляем, какая это текстовая строка (0..24) и какая строка пикселей внутри символа (0..7)
+			int text_row = y / 8;
+			int font_line = y % 8;
 
+			for (int x = 0; x < width; x++)  //40 символов в строке
+			{
+
+				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
+				else addr = start_address + (y * width) + x + !PageBitOddEven * 0x20000;			  //режим odd/even
+
+				// Адрес пары [Символ][Атрибут] в видеопамяти DOS (2 байта на символ, но разные плоскости)
+				addr = start_address + (text_row * width) + x;
+				uint8 ascii_code = videomemory[addr];		//код символа
+				attrib = videomemory[addr + 0x10000];		//код атрибута
 				if (color_enable)
 				{
-					//цветной режим
+					// Расшифровываем цвета атрибута
 					fg_color = EGA_colors[attrib & 15];
-					//if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = EGA_colors[attrib & 31];  //повышенная интенсивность
 					if (intensity_blink) bg_color = EGA_colors[(attrib >> 4) & 7];
 					else bg_color = EGA_colors[(attrib >> 4) & 15];
-					//if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = EGA_colors[(attrib >> 4) & 31];//повышенная интенсивность
 				}
 				else
 				{
@@ -3417,133 +3528,115 @@ void EGA_videocard::render()					//синхронизация
 						bg_color = t;
 					}
 				}
+
 				bool blink = ((attrib >> 7) & 1) & intensity_blink;
-
-				//рисуем фон символа
-				rectangle.setFillColor(bg_color);
-				if (width == 40) rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
-				else rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-				main_window.draw(rectangle);
-
-				//рисуем сам символ
-				if (!blink || cursor_flipflop)
-				{
-					if (width == 40)
-					{
-						font_sprite_40.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5, font_t_y * 8 * 5), sf::Vector2i(8 * 5, 8 * 5)));
-						font_sprite_40.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
-						font_sprite_40.setColor(fg_color);
-						main_window.draw(font_sprite_40);
-					}
-					else
-					{
-						font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
-						font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-						font_sprite_80.setColor(fg_color);
-						main_window.draw(font_sprite_80);
-					}
-				}
-
-				//подчеркивание в монохромном режиме
-				/*
-				if (!color_enable && ((attrib & 7) == 1))
-				{
-					sf::RectangleShape ul; //прямоугольник курсора
-					if (width == 40)
-					{
-						ul.setSize(sf::Vector2f(40, 2));
-						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5, font_t_y * 8 * 5));
-					}
-					else
-					{
-						ul.setSize(sf::Vector2f(20, 2));
-						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5));
-					}
-					ul.setFillColor(fg_color);
-					main_window.draw(ul);
-				}*/
-
 				bool draw_cursor = false;
-				if ((width == 40) && !(y * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
-				if ((width == 80) && !(y * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+				if ((width == 40) && !(text_row * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+				if ((width == 80) && !(text_row * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
 
-				//рисуем курсор
-				if (draw_cursor && cursor_flipflop && ((crt_registers[0xb] & 31) >= (crt_registers[0xa] & 31)))
+				//рисуем символ
+				// Извлекаем байт из нужной ячейки памяти на плоскости 2
+				uint8 font_byte = 0;
+				font_byte = videomemory[(ascii_code) * 32 + font_line + 0x20000 + 0x2000 * char_sel[(attrib >> 3) & 1]]; //0x20000 - это плоскость 2
+
+				// Распаковываем 8 пикселей по горизонтали для текущей буквы
+				for (int p = 0; p < 8; ++p)
 				{
-					if (width == 40)
+					bool is_fg = (font_byte >> (7 - p)) & 1;
+					sf::Color pixel_color;
+					if (is_fg)
 					{
-						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
-						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(40, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
-						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
-						cursor_rectangle.setFillColor(fg_color);
-						main_window.draw(cursor_rectangle);
+						if (!blink || cursor_flipflop) pixel_color = fg_color;
+						else pixel_color = bg_color;
 					}
 					else
 					{
-						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
-						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(20, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
-						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
-						cursor_rectangle.setFillColor(fg_color);
-						main_window.draw(cursor_rectangle);
+						pixel_color = bg_color;
 					}
+
+					//если в этом месте курсор, рисуем линии
+					if (draw_cursor && cursor_start_line <= font_line && cursor_end_line >= font_line && cursor_flipflop)
+					{
+						pixel_color = fg_color; //рисуем курсор
+					}
+
+					// Пишем пиксель во flat-буфер
+					*ptr_rgba++ = pixel_color.r;
+					*ptr_rgba++ = pixel_color.g;
+					*ptr_rgba++ = pixel_color.b;
+					*ptr_rgba++ = 255;
 				}
 			}
 		}
+
+		//выводим всю текстуру
+		//если ширина 80
+		screen_texture_320_200.update(rgba_pixels.data());
+		sf::Sprite screen_sprite_320_200(screen_texture_320_200);
+		screen_sprite_320_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
+		//масштабирование до размера окна
+		//screen_sprite_640_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+		//screen_sprite_640_200.setScale(sf::Vector2f((window_size_x - 200 - 40) / 640.0f, (window_size_y - 40) / 200.0f));
+		screen_sprite_320_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 320.0f, (600 * my_display_H / 640.0) / 200.0f));
+		main_window.draw(screen_sprite_320_200);
 	}
 	//текст 40х25 c увеличенными символами
 	if (current_mode == video_modes::EGA_01_350)
 	{
 		//текстовые режимы 0 и 1 - 40x25
 		//8 страниц по 2КБ каждая
-
+		//debug_mess_1 = "EGA_01_350";
 		//заливаем цветом рамку
 		sf::RectangleShape rectangle;
 		rectangle.setScale(sf::Vector2f(1, 1));
-		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+		rectangle.setSize(sf::Vector2f(1040, 640));
 		rectangle.setPosition(sf::Vector2f(0, 0));
 		rectangle.setFillColor(EGA_colors[border_RGBI]);
-
 		main_window.draw(rectangle);
-		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
+
+		rectangle.setSize(sf::Vector2f(800, 600));
 		rectangle.setPosition(sf::Vector2f(20, 20));
 		rectangle.setFillColor(sf::Color(0, 0, 0));
 		main_window.draw(rectangle);
 
-		//символов в строке
-		uint8 width = 40;
+		//массив пикселей для текстуры
+		rgba_pixels.resize(320 * 350 * 4, 0);
+		uint8_t* ptr_rgba = rgba_pixels.data();
 
-		//настройка масштаба символов для разных режимов
-		if (width == 40) rectangle.setSize(sf::Vector2f(5 * 8, 1.2 * 5 * 8));
-		else rectangle.setSize(sf::Vector2f(5 * 0.5 * 8, 1.2 * 5 * 8));
+		//определяем наборы символов
+		uint8 char_sel[2];
+		char_sel[0] = seq_registers[3] & 3;				//первый набор
+		char_sel[1] = (seq_registers[3] >> 2) & 3;		//выбор индекса - 3 бит байта атрибутов
 
 		uint8 attrib = 0; //атрибуты символов
+		uint8 width = 40; //символов в строке
 
 		sf::Color fg_color;
 		sf::Color bg_color;
 
 		//заполняем экран
-		for (int y = 0; y < 25; y++)  //25 строк
+		for (int y = 0; y < 350; y++)  //200 строк экрана
 		{
-			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
+			// Вычисляем, какая это текстовая строка (0..24) и какая строка пикселей внутри символа (0..7)
+			int text_row = y / 14;
+			int font_line = y % 14;
+
+			for (int x = 0; x < width; x++)  //40 символов в строке
 			{
-				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
-				else addr = start_address + (y * width) + x + PageBitOddEven * 0x20000;   //режим odd/even
 
+				if ((seq_registers[4] >> 2) & 1) addr = start_address + (y * width) + x;  //обычный режим
+				else addr = start_address + (y * width) + x + !PageBitOddEven * 0x20000;			  //режим odd/even
 
-				font_t_y = videomemory[addr] >> 5;
-				font_t_x = videomemory[addr] - (font_t_y << 5);
-				attrib = videomemory[addr + 0x10000];
-
+				// Адрес пары [Символ][Атрибут] в видеопамяти DOS (2 байта на символ, но разные плоскости)
+				addr = start_address + (text_row * width) + x;
+				uint8 ascii_code = videomemory[addr];		//код символа
+				attrib = videomemory[addr + 0x10000];		//код атрибута
 				if (color_enable)
 				{
-					//цветной режим
+					// Расшифровываем цвета атрибута
 					fg_color = EGA_colors[attrib & 15];
-					//if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = EGA_colors[attrib & 31];  //повышенная интенсивность
 					if (intensity_blink) bg_color = EGA_colors[(attrib >> 4) & 7];
 					else bg_color = EGA_colors[(attrib >> 4) & 15];
-					//if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = EGA_colors[(attrib >> 4) & 31];//повышенная интенсивность
 				}
 				else
 				{
@@ -3571,80 +3664,55 @@ void EGA_videocard::render()					//синхронизация
 						bg_color = t;
 					}
 				}
+
 				bool blink = ((attrib >> 7) & 1) & intensity_blink;
-
-				//рисуем фон символа
-				rectangle.setFillColor(bg_color);
-				if (width == 40) rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
-				else rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-				main_window.draw(rectangle);
-
-				//рисуем сам символ
-				if (!blink || cursor_flipflop)
-				{
-					if (width == 40)
-					{
-						font_sprite_40.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5, font_t_y * 8 * 5), sf::Vector2i(8 * 5, 8 * 5)));
-						font_sprite_40.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
-						font_sprite_40.setColor(fg_color);
-						main_window.draw(font_sprite_40);
-					}
-					else
-					{
-						font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
-						font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-						font_sprite_80.setColor(fg_color);
-						main_window.draw(font_sprite_80);
-					}
-				}
-
-				//подчеркивание в монохромном режиме
-				/*
-				if (!color_enable && ((attrib & 7) == 1))
-				{
-					sf::RectangleShape ul; //прямоугольник курсора
-					if (width == 40)
-					{
-						ul.setSize(sf::Vector2f(40, 2));
-						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5, font_t_y * 8 * 5));
-					}
-					else
-					{
-						ul.setSize(sf::Vector2f(20, 2));
-						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5));
-					}
-					ul.setFillColor(fg_color);
-					main_window.draw(ul);
-				}*/
-
 				bool draw_cursor = false;
-				if ((width == 40) && !(y * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
-				if ((width == 80) && !(y * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+				if ((width == 40) && !(text_row * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+				if ((width == 80) && !(text_row * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
 
-				//рисуем курсор
-				if (draw_cursor && cursor_flipflop && ((crt_registers[0xb] & 31) >= (crt_registers[0xa] & 31)))
+				//рисуем символ
+				// Извлекаем байт из нужной ячейки памяти на плоскости 2
+				uint8 font_byte = 0;
+				font_byte = videomemory[(ascii_code) * 32 + font_line + 0x20000 + 0x2000 * char_sel[(attrib >> 3) & 1]]; //0x20000 - это плоскость 2
+
+				// Распаковываем 8 пикселей по горизонтали для текущей буквы
+				for (int p = 0; p < 8; ++p)
 				{
-					if (width == 40)
+					bool is_fg = (font_byte >> (7 - p)) & 1;
+					sf::Color pixel_color;
+					if (is_fg)
 					{
-						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
-						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(40, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
-						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
-						cursor_rectangle.setFillColor(fg_color);
-						main_window.draw(cursor_rectangle);
+						if (!blink || cursor_flipflop) pixel_color = fg_color;
+						else pixel_color = bg_color;
 					}
 					else
 					{
-						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
-						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(20, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
-						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
-						cursor_rectangle.setFillColor(fg_color);
-						main_window.draw(cursor_rectangle);
+						pixel_color = bg_color;
 					}
+
+					//если в этом месте курсор, рисуем линии
+
+					if (draw_cursor && cursor_start_line <= font_line && cursor_end_line >= font_line && cursor_flipflop)
+					{
+						pixel_color = fg_color; //рисуем курсор
+					}
+
+					// Пишем пиксель во flat-буфер
+					*ptr_rgba++ = pixel_color.r;
+					*ptr_rgba++ = pixel_color.g;
+					*ptr_rgba++ = pixel_color.b;
+					*ptr_rgba++ = 255;
 				}
 			}
 		}
+
+		//выводим всю текстуру
+		screen_texture_320_350.update(rgba_pixels.data());
+		sf::Sprite screen_sprite_320_350(screen_texture_320_350);
+		screen_sprite_320_350.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
+		//масштабирование до размера окна
+		screen_sprite_320_350.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 320.0f, (600 * my_display_H / 640.0) / 350.0f));
+		main_window.draw(screen_sprite_320_350);
 	}
 	//текст 80х25
 	if (current_mode == video_modes::EGA_23_200)
@@ -3668,56 +3736,61 @@ void EGA_videocard::render()					//синхронизация
 		rectangle.setFillColor(sf::Color(0, 0, 0));
 		main_window.draw(rectangle);
 
-		//символов в строке
-		uint8 width = 80;
+		//массив пикселей для текстуры
+		rgba_pixels.resize(640 * 200 * 4, 0);
+		uint8_t* ptr_rgba = rgba_pixels.data();
 
-		//настройка масштаба символов для разных режимов
-		if (width == 40) rectangle.setSize(sf::Vector2f(5 * 8, 1.2 * 5 * 8));
-		else rectangle.setSize(sf::Vector2f(5 * 0.5 * 8, 1.2 * 5 * 8));
+		//определяем наборы символов
+		uint8 char_sel[2];
+		char_sel[0] = seq_registers[3] & 3;				//первый набор
+		char_sel[1] = (seq_registers[3] >> 2) & 3;		//выбор индекса - 3 бит байта атрибутов
 
 		uint8 attrib = 0; //атрибуты символов
+		uint8 width = 80; //символов в строке
 
 		sf::Color fg_color;
 		sf::Color bg_color;
 
 		//заполняем экран
-		for (int y = 0; y < 25; y++)  //25 строк
+		for (int y = 0; y < 200; y++)  //200 строк экрана
 		{
-			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
+			// Вычисляем, какая это текстовая строка (0..24) и какая строка пикселей внутри символа (0..7)
+			int text_row = y / 8;
+			int font_line = y % 8;
+
+			for (int x = 0; x < width; x++)  //40 символов в строке
 			{
+
 				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
-				else addr = start_address + (y * width) + x + !PageBitOddEven * 0x20000;   //режим odd/even
+				else addr = start_address + (y * width) + x + !PageBitOddEven * 0x20000;			  //режим odd/even
 
-
-				font_t_y = videomemory[addr] >> 5;
-				font_t_x = videomemory[addr] - (font_t_y << 5);
-				attrib = videomemory[addr + 0x10000];
-
+				// Адрес пары [Символ][Атрибут] в видеопамяти DOS (2 байта на символ, но разные плоскости)
+				addr = start_address + (text_row * width) + x;
+				uint8 ascii_code = videomemory[addr];		//код символа
+				attrib = videomemory[addr + 0x10000];		//код атрибута
 				if (color_enable)
 				{
-					//цветной режим
-					fg_color = TXT_colors[attrib & 15];
-					//if ((attrib >> 3) & 1)  fg_color = TXT_colors[attrib & 31];  //повышенная интенсивность
-					if (intensity_blink) bg_color = TXT_colors[(attrib >> 4) & 7];
-					else bg_color = TXT_colors[(attrib >> 4) & 15];
-					//if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = TXT_colors[(attrib >> 4) & 31];//повышенная интенсивность
+					// Расшифровываем цвета атрибута
+					fg_color = EGA_colors[attrib & 15];
+					if (intensity_blink) bg_color = EGA_colors[(attrib >> 4) & 7];
+					else bg_color = EGA_colors[(attrib >> 4) & 15];
 				}
 				else
 				{
 					//монохромный режим
-					fg_color = TXT_BW_colors[8];
-					bg_color = TXT_BW_colors[0];
+					fg_color = EGA_colors[8];
+					bg_color = EGA_colors[0];
 
 					if (!use_2_char_gen && ((attrib >> 3) & 1))
 					{
 						//повышенная интенсивность
-						fg_color = TXT_BW_colors[15];
+						fg_color = EGA_colors[15];
 					}
 
 					if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1))
 					{
 						//повышенная интенсивность
-						fg_color = TXT_BW_colors[15];
+						//fg_color = EGA_colors[15];
 					}
 
 					if (((attrib >> 4) & 7) == 7)
@@ -3728,54 +3801,59 @@ void EGA_videocard::render()					//синхронизация
 						bg_color = t;
 					}
 				}
+
 				bool blink = ((attrib >> 7) & 1) & intensity_blink;
+				bool draw_cursor = false;
+				if ((width == 40) && !(text_row * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+				if ((width == 80) && !(text_row * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
 
-				//рисуем фон символа
-				rectangle.setFillColor(bg_color);
-				if (width == 40) rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
-				else rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-				main_window.draw(rectangle);
+				//рисуем символ
+				// Извлекаем байт из нужной ячейки памяти на плоскости 2
+				uint8 font_byte = 0;
+				font_byte = videomemory[(ascii_code) * 32 + font_line + 0x20000 + 0x2000 * char_sel[(attrib >> 3) & 1]]; //0x20000 - это плоскость 2
 
-				//рисуем сам символ
-				if (!blink || cursor_flipflop)
+				// Распаковываем 8 пикселей по горизонтали для текущей буквы
+				for (int p = 0; p < 8; ++p)
 				{
-					if (width == 40)
+					bool is_fg = (font_byte >> (7 - p)) & 1;
+					sf::Color pixel_color;
+					if (is_fg)
 					{
-						font_sprite_40.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5, font_t_y * 8 * 5), sf::Vector2i(8 * 5, 8 * 5)));
-						font_sprite_40.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
-						font_sprite_40.setColor(fg_color);
-						main_window.draw(font_sprite_40);
+						if (!blink || cursor_flipflop) pixel_color = fg_color;
+						else pixel_color = bg_color;
 					}
 					else
 					{
-						font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
-						font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-						font_sprite_80.setColor(fg_color);
-						main_window.draw(font_sprite_80);
+						pixel_color = bg_color;
 					}
-				}
 
-				bool draw_cursor = false;
-				if (addr == (cursor_pos + start_address * 2)) draw_cursor = true;
-				//if ((width == 80) && !(start_address * 2 + y * 80 * 2 + x * 2 - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+					//если в этом месте курсор, рисуем линии
 
-				//рисуем курсор
-				if (draw_cursor && cursor_flipflop && ((crt_registers[0xB] & 31) >= (crt_registers[0xA] & 31)))
-				{
-					sf::RectangleShape cursor_rectangle; //прямоугольник курсора
-					cursor_rectangle.setScale(sf::Vector2f(1, 1));
-					cursor_rectangle.setSize(sf::Vector2f(20 + ((crt_registers[0xb] >> 5) & 3), (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
-					cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + crt_registers[0xa]) * 6 + 20));
-					cursor_rectangle.setFillColor(fg_color);
-					main_window.draw(cursor_rectangle);
+					if (draw_cursor && cursor_start_line <= font_line && cursor_end_line >= font_line && cursor_flipflop)
+					{
+						pixel_color = fg_color; //рисуем курсор
+					}
+
+					// Пишем пиксель во flat-буфер
+					*ptr_rgba++ = pixel_color.r;
+					*ptr_rgba++ = pixel_color.g;
+					*ptr_rgba++ = pixel_color.b;
+					*ptr_rgba++ = 255;
 				}
 			}
 		}
 
-		//время окончания отрисовки
-		auto end_time = std::chrono::high_resolution_clock::now();
-		auto duration_ms = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-		//debug_mess_1 = to_string(1000000 / duration_ms) + " fps";
+		//выводим всю текстуру
+		//если ширина 80
+		screen_texture_640_200.update(rgba_pixels.data());
+		sf::Sprite screen_sprite_640_200(screen_texture_640_200);
+		screen_sprite_640_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
+		//масштабирование до размера окна
+		//screen_sprite_640_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+		//screen_sprite_640_200.setScale(sf::Vector2f((window_size_x - 200 - 40) / 640.0f, (window_size_y - 40) / 200.0f));
+		screen_sprite_640_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 640.0f, (600 * my_display_H / 640.0) / 200.0f));
+		main_window.draw(screen_sprite_640_200);
+
 	}
 	//текст 80х25 c увеличенными символами
 	if (current_mode == video_modes::EGA_23_350)
@@ -3787,64 +3865,71 @@ void EGA_videocard::render()					//синхронизация
 		//заливаем цветом рамку
 		sf::RectangleShape rectangle;
 		rectangle.setScale(sf::Vector2f(1, 1));
-		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+		rectangle.setSize(sf::Vector2f(1040, 640));
 		rectangle.setPosition(sf::Vector2f(0, 0));
 		rectangle.setFillColor(EGA_colors[border_RGBI]);
-
 		main_window.draw(rectangle);
-		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
+
+		rectangle.setSize(sf::Vector2f(800, 600));
 		rectangle.setPosition(sf::Vector2f(20, 20));
 		rectangle.setFillColor(sf::Color(0, 0, 0));
 		main_window.draw(rectangle);
 
-		//символов в строке
-		uint8 width = 80;
+		//массив пикселей для текстуры
+		rgba_pixels.resize(640 * 350 * 4, 0);
+		uint8_t* ptr_rgba = rgba_pixels.data();
 
-		//настройка масштаба символов для разных режимов
-		if (width == 40) rectangle.setSize(sf::Vector2f(5 * 8, 1.2 * 5 * 8));
-		else rectangle.setSize(sf::Vector2f(5 * 0.5 * 8, 1.2 * 5 * 8));
+		//определяем наборы символов
+		uint8 char_sel[2];
+		char_sel[0] = seq_registers[3] & 3;				//первый набор
+		char_sel[1] = (seq_registers[3] >> 2) & 3;		//выбор индекса - 3 бит байта атрибутов
 
 		uint8 attrib = 0; //атрибуты символов
+		uint8 width = 80; //символов в строке
 
 		sf::Color fg_color;
 		sf::Color bg_color;
 
 		//заполняем экран
-		for (int y = 0; y < 25; y++)  //25 строк
+		for (int y = 0; y < 350; y++)  //200 строк экрана
 		{
-			for (int x = 0; x < width; x++)  //40 или 80 символов в строке
-			{
-				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * width * 2) + x * 2;  //обычный режим
-				else addr = start_address + (y * width) + x + PageBitOddEven * 0x20000;   //режим odd/even
-				font_t_y = videomemory[addr] >> 5;
-				font_t_x = videomemory[addr] - (font_t_y << 5);
-				attrib = videomemory[addr + 0x10000];
+			// Вычисляем, какая это текстовая строка (0..24) и какая строка пикселей внутри символа (0..7)
+			int text_row = y / 14;
+			int font_line = y % 14;
 
+			for (int x = 0; x < width; x++)  //40 символов в строке
+			{
+
+				if ((seq_registers[4] >> 2) & 1) addr = start_address + (y * width) + x;  //обычный режим
+				else addr = start_address + (y * width) + x + !PageBitOddEven * 0x20000;			  //режим odd/even
+
+				// Адрес пары [Символ][Атрибут] в видеопамяти DOS (2 байта на символ, но разные плоскости)
+				addr = start_address + (text_row * width) + x;
+				uint8 ascii_code = videomemory[addr];		//код символа
+				attrib = videomemory[addr + 0x10000];		//код атрибута
 				if (color_enable)
 				{
-					//цветной режим
-					fg_color = TXT_colors[attrib & 15];
-					//if (!use_2_char_gen && ((attrib >> 3) & 1))  fg_color = TXT_colors[attrib & 31];  //повышенная интенсивность
-					if (intensity_blink) bg_color = TXT_colors[(attrib >> 4) & 7];
-					else bg_color = TXT_colors[(attrib >> 4) & 15];
-					//if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1)) bg_color = TXT_colors[(attrib >> 4) & 31];//повышенная интенсивность
+					// Расшифровываем цвета атрибута
+					fg_color = EGA_colors[attrib & 15];
+					if (intensity_blink) bg_color = EGA_colors[(attrib >> 4) & 7];
+					else bg_color = EGA_colors[(attrib >> 4) & 15];
 				}
 				else
 				{
 					//монохромный режим
-					fg_color = TXT_BW_colors[8];
-					bg_color = TXT_BW_colors[0];
+					fg_color = EGA_colors[8];
+					bg_color = EGA_colors[0];
 
 					if (!use_2_char_gen && ((attrib >> 3) & 1))
 					{
 						//повышенная интенсивность
-						fg_color = TXT_BW_colors[15];
+						fg_color = EGA_colors[15];
 					}
 
 					if (((attrib >> 7) & 1) & !((ac_registers[16] >> 3) & 1))
 					{
 						//повышенная интенсивность
-						fg_color = TXT_BW_colors[15];
+						//fg_color = EGA_colors[15];
 					}
 
 					if (((attrib >> 4) & 7) == 7)
@@ -3855,80 +3940,56 @@ void EGA_videocard::render()					//синхронизация
 						bg_color = t;
 					}
 				}
+
 				bool blink = ((attrib >> 7) & 1) & intensity_blink;
-
-				//рисуем фон символа
-				rectangle.setFillColor(bg_color);
-				if (width == 40) rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
-				else rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-				main_window.draw(rectangle);
-
-				//рисуем сам символ
-				if (!blink || cursor_flipflop)
-				{
-					if (width == 40)
-					{
-						font_sprite_40.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5, font_t_y * 8 * 5), sf::Vector2i(8 * 5, 8 * 5)));
-						font_sprite_40.setPosition(sf::Vector2f(x * 8 * 5 + 20, y * 8 * 5 * 1.2 + 20));
-						font_sprite_40.setColor(fg_color);
-						main_window.draw(font_sprite_40);
-					}
-					else
-					{
-						font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
-						font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-						font_sprite_80.setColor(fg_color);
-						main_window.draw(font_sprite_80);
-					}
-				}
-
-				//подчеркивание в монохромном режиме
-				/*
-				if (!color_enable && ((attrib & 7) == 1))
-				{
-					sf::RectangleShape ul; //прямоугольник курсора
-					if (width == 40)
-					{
-						ul.setSize(sf::Vector2f(40, 2));
-						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5, font_t_y * 8 * 5));
-					}
-					else
-					{
-						ul.setSize(sf::Vector2f(20, 2));
-						ul.setPosition(sf::Vector2f(font_t_x * 8 * 5 * 0.5, font_t_y * 8 * 5));
-					}
-					ul.setFillColor(fg_color);
-					main_window.draw(ul);
-				}*/
-
 				bool draw_cursor = false;
-				if ((width == 40) && !(y * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
-				if ((width == 80) && !(y * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf])) draw_cursor = true;
+				if ((width == 40) && (text_row * 40 + x - crt_registers[0xe] * 256 - crt_registers[0xf]) == 0) draw_cursor = true;
+				if ((width == 80) && (text_row * 80 + x - crt_registers[0xe] * 256 - crt_registers[0xf]) == 0) draw_cursor = true;
 
-				//рисуем курсор
-				if (draw_cursor && cursor_flipflop && ((crt_registers[0xb] & 31) >= (crt_registers[0xa] & 31)))
+				//debug_mess_1 = to_string(crt_registers[0xe] * 256 + crt_registers[0xf]);
+
+				//рисуем символ
+				// Извлекаем байт из нужной ячейки памяти на плоскости 2
+				uint8 font_byte = 0;
+				font_byte = videomemory[(ascii_code) * 32 + font_line + 0x20000 + 0x2000 * char_sel[(attrib >> 3) & 1]]; //0x20000 - это плоскость 2
+
+				// Распаковываем 8 пикселей по горизонтали для текущей буквы
+				for (int p = 0; p < 8; ++p)
 				{
-					if (width == 40)
+					bool is_fg = (font_byte >> (7 - p)) & 1;
+					sf::Color pixel_color;
+					if (is_fg)
 					{
-						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
-						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(40, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
-						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
-						cursor_rectangle.setFillColor(fg_color);
-						main_window.draw(cursor_rectangle);
+						if (!blink || cursor_flipflop) pixel_color = fg_color;
+						else pixel_color = bg_color;
 					}
 					else
 					{
-						sf::RectangleShape cursor_rectangle; //прямоугольник курсора
-						cursor_rectangle.setScale(sf::Vector2f(1, 1));
-						cursor_rectangle.setSize(sf::Vector2f(20, (crt_registers[0xb] - crt_registers[0xa] + 1) * 6));
-						cursor_rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 8 + crt_registers[0xa]) * 5 * 1.2 + 20));
-						cursor_rectangle.setFillColor(fg_color);
-						main_window.draw(cursor_rectangle);
+						pixel_color = bg_color;
 					}
+
+					//если в этом месте курсор, рисуем линии
+					if (draw_cursor && (cursor_start_line <= font_line) && (cursor_end_line >= font_line) && cursor_flipflop)
+					{
+						pixel_color = fg_color; //рисуем курсор
+					}
+
+					// Пишем пиксель во flat-буфер
+					*ptr_rgba++ = pixel_color.r;
+					*ptr_rgba++ = pixel_color.g;
+					*ptr_rgba++ = pixel_color.b;
+					*ptr_rgba++ = 255;
 				}
 			}
 		}
+
+		//выводим всю текстуру
+		screen_texture_640_350.update(rgba_pixels.data());
+		sf::Sprite screen_sprite_640_350(screen_texture_640_350);
+		screen_sprite_640_350.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
+		//масштабирование до размера окна
+		screen_sprite_640_350.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 640.0f, (600 * my_display_H / 640.0) / 350.0f));
+		main_window.draw(screen_sprite_640_350);
 	}
 	//графика 320х200
 	if (current_mode == video_modes::EGA_45_320)
@@ -3971,9 +4032,9 @@ void EGA_videocard::render()					//синхронизация
 		// Обновляем текстуру всей пачкой байт из ОЗУ
 		screen_texture_320_200.update(rgba_pixels.data());
 		sf::Sprite screen_sprite_320_200(screen_texture_320_200);
-		screen_sprite_320_200.setPosition(sf::Vector2f(20, 20));
+		screen_sprite_320_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 		//масштабирование до размера окна
-		screen_sprite_320_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 320.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+		screen_sprite_320_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 320.0f, (600 * my_display_H / 640.0) / 200.0f));
 		main_window.draw(screen_sprite_320_200);
 	}
 	//графика 640х200
@@ -4017,9 +4078,9 @@ void EGA_videocard::render()					//синхронизация
 		// Обновляем текстуру всей пачкой байт из ОЗУ
 		screen_texture_640_200.update(rgba_pixels.data());
 		sf::Sprite screen_sprite_640_200(screen_texture_640_200);
-		screen_sprite_640_200.setPosition(sf::Vector2f(20, 20));
+		screen_sprite_640_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 		//масштабирование до размера окна
-		screen_sprite_640_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+		screen_sprite_640_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 640.0f, (600 * my_display_H / 640.0) / 200.0f));
 		main_window.draw(screen_sprite_640_200);
 	}
 	//текстовый монохромный режим 25х80 (MDA)
@@ -4027,35 +4088,32 @@ void EGA_videocard::render()					//синхронизация
 	{
 		//4 страницы по 4кб (если > 64К, то 8 страниц)
 
-		uint16 font_t_x, font_t_y;
+		//массив пикселей для текстуры
+		rgba_pixels.resize(720 * 350 * 4, 0);
+		uint8_t* ptr_rgba = rgba_pixels.data();
+
+		sf::RectangleShape rectangle;
+		rectangle.setScale(sf::Vector2f(1, 1));
+		rectangle.setSize(sf::Vector2f(1040, 640));
+		rectangle.setPosition(sf::Vector2f(0, 0));
+		rectangle.setFillColor(sf::Color::Black);
+		main_window.draw(rectangle);
+
 		uint32 addr;
 		bool attr_under = false;       //атрибут подчеркивания
 		bool attr_blink = false;       //атрибут мигания
 		bool attr_highlight = false;   //атрибут подсветки
 
-		sf::RectangleShape rectangle;  //объект для рисования
-
 		uint8 attrib = 0;			//атрибуты символов
 
 		sf::Text text(font);		//обычный шрифт
 
-		//проверка бита включения экрана
-		//if ((MDA_Mode_Select_Register & 8) == 0) goto exit_EGA_7; //карта отключена
-
 		//цикл отрисовки экрана
-		if (cursor_clock.getElapsedTime().asMicroseconds() > 300000) //мигание курсора
+		if (cursor_clock.getElapsedTime().asMicroseconds() > 270000) //мигание курсора
 		{
 			cursor_clock.restart();
 			cursor_flipflop = !cursor_flipflop;
 		}
-
-		text.setCharacterSize(40);
-		text.setFillColor(sf::Color::White);
-
-		rectangle.setScale(sf::Vector2f(0.4444, 0.6857));
-
-		//настройка масштаба символов для разных режимов
-		rectangle.setSize(sf::Vector2f(5 * 9, 5 * 14));
 
 		//Каждый символ мог обладать следующими атрибутами : невидимый, подчёркнутый, обычный, яркий(жирный), инвертированный и мигающий.
 		//Бит 5 MDA_Mode_Select_Register — 1 для включения мигания, 0 — для его отключения.
@@ -4063,85 +4121,94 @@ void EGA_videocard::render()					//синхронизация
 		//бит 3 - интенсивность
 
 		//заполняем экран
-		for (int y = 0; y < 25; y++)  //25 строк
+		for (int y = 0; y < 350; y++)  //350 линий
 		{
+			// Вычисляем, какая это текстовая строка (0..24) и какая строка пикселей внутри символа (0..13)
+			int text_row = y / 14;
+			int font_line = y % 14;
+
 			for (int x = 0; x < 80; x++)  //80 символов в строке
 			{
 				//задаем цвета
-				sf::Color fg_color = sf::Color::Green;
-				sf::Color fg_color_bright = sf::Color::Yellow;
+				sf::Color fg_color = sf::Color(160, 160, 160); //Grey
+				sf::Color fg_color_bright = sf::Color::White;
 				sf::Color fg_color_inverse = sf::Color::Black;
 				sf::Color bg_color = sf::Color::Black;
-				sf::Color bg_color_inverse = sf::Color::Green;
+				sf::Color bg_color_inverse = sf::Color(160, 160, 160);
 
-				addr = start_address * 2 + (y * 80 * 2) + x * 2;
+				//определяем наборы символов
+				uint8 char_sel[2];
+				char_sel[0] = seq_registers[3] & 3;				//первый набор
+				char_sel[1] = (seq_registers[3] >> 2) & 3;		//выбор индекса - 3 бит байта атрибутов
 
 				if ((seq_registers[4] >> 2) & 1) addr = start_address * 2 + (y * 80 * 2) + x * 2;  //обычный режим
-				else addr = start_address + (y * 80) + x + !PageBitOddEven * 0x20000;
+				else addr = start_address + (y * 80) + x + !PageBitOddEven * 0x20000;			  //режим odd/even
 
-				font_t_y = videomemory[addr] >> 5;
-				font_t_x = videomemory[addr] - (font_t_y << 5);
-				attrib = videomemory[addr + 1];
+				// Адрес пары [Символ][Атрибут] в видеопамяти DOS (2 байта на символ)
+				addr = start_address + (text_row * 80) + x;
+				uint8 ascii_code = videomemory[addr];		//код символа
+				attrib = videomemory[addr + 0x10000];				//код атрибута
 
 				bool bright = (attrib >> 3) & 1;
 				bool underline = ((attrib & 7) == 1);
 				bool blink = ((attrib >> 7) & 1);
 				bool inversed = ((attrib >> 4) & 1);
 
-				//исключения
-				if (attrib == 0x0 || attrib == 0x08 || attrib == 0x80 || attrib == 0x88) fg_color = sf::Color::Black;
-				if (attrib == 0x70 || attrib == 0xF0) { fg_color = sf::Color::Black; sf::Color bg_color = sf::Color(0, 192, 0); }
-				if (attrib == 0x78 || attrib == 0xF8) { fg_color = sf::Color(0, 64, 0); sf::Color bg_color = sf::Color(0, 192, 0); }
-
-				//рисуем фон символа
-				if (!inversed) rectangle.setFillColor(bg_color);
-				else rectangle.setFillColor(bg_color_inverse);
-				rectangle.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-				main_window.draw(rectangle);
+				//курсор
+				bool draw_cursor = false;
+				if (!(start_address + text_row * 80 + x - cursor_pos)) draw_cursor = true;
 
 				//рисуем сам символ
-				if (!blink || cursor_flipflop)
+				// Извлекаем байт битовой маски строки символа из нашего ПЗУ знакогенератора
 
+				uint8 font_byte = 0;
+				font_byte = videomemory[(ascii_code) * 32 + font_line + 0x20000 + 0x2000 * char_sel[(attrib >> 3) & 1]]; //0x20000 - это плоскость 2
+
+				sf::Color current_fg_color = fg_color;
+				if (bright) current_fg_color = fg_color_bright;
+				if (inversed) current_fg_color = fg_color_inverse;
+				sf::Color current_bg_color = bg_color;
+				if (inversed) current_bg_color = bg_color_inverse;
+
+				// Распаковываем 9 пикселей по горизонтали для текущей буквы
+				for (int p = 0; p < 9; ++p)
 				{
-					//font_t_x = 1;
-					//font_t_y = 0;
-					font_sprite_80_MDA.setTextureRect(sf::IntRect(sf::Vector2i(font_t_x * 40, font_t_y * 96), sf::Vector2i(40, 96)));
-					font_sprite_80_MDA.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-					font_sprite_80_MDA.setScale(sf::Vector2f(0.5, 0.5));
-					font_sprite_80_MDA.setColor(fg_color);
-					if (inversed) font_sprite_80_MDA.setColor(fg_color_inverse);
-					if (bright) font_sprite_80_MDA.setColor(fg_color_bright);
-					main_window.draw(font_sprite_80_MDA);
-				}
-				if (underline) //подчеркивание
-				{
-					sf::RectangleShape ul; //прямоугольник курсора
-					ul.setSize(sf::Vector2f(45 * 0.4444, 2));
-					ul.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, (y * 14 * 5 * 0.6857 + 20 + 45)));
-					ul.setFillColor(fg_color);
-					main_window.draw(ul);
-				}
+					bool is_fg = false;
+					sf::Color pixel_color = current_fg_color;
+					//самая правая колонка - особый случай
+					//доработать с учетом значения регистра
+					if (p == 8) is_fg = (ascii_code >= 176 && ascii_code <= 223 && (font_byte & 1));
+					else is_fg = ((font_byte >> (7 - p)) & 1);
 
-				bool draw_cursor = false;
-				if (addr == cursor_pos * 2) draw_cursor = true;
+					if (is_fg)
+					{
+						if (!blink || cursor_flipflop) pixel_color = current_fg_color; //обычный цвет
+						else pixel_color = current_bg_color; //гашение во время мигания
+					}
+					else pixel_color = current_bg_color; //обычный цвет фона
 
-				//рисуем курсор
+					//если в этом месте курсор, рисуем линию курсора
+					if (draw_cursor && cursor_start_line <= font_line && cursor_end_line >= font_line && cursor_flipflop) pixel_color = current_fg_color;
 
-				if (draw_cursor && cursor_flipflop)
-				{
-					//font_sprite_80.setTextureRect(sf::IntRect(sf::Vector2i(31 * 8 * 5 * 0.5, 2 * 8 * 5), sf::Vector2i(8 * 5 * 0.5, 8 * 5)));
-					//font_sprite_80.setPosition(sf::Vector2f(x * 8 * 5 * 0.5 + 20, y * 8 * 5 * 1.2 + 20));
-					//font_sprite_80.setColor(sf::Color::White);
-					//main_window.draw(font_sprite_80);
-					sf::RectangleShape cursor_rectangle; //прямоугольник курсора
-					cursor_rectangle.setScale(sf::Vector2f(0.4444, 0.6857));
-					cursor_rectangle.setSize(sf::Vector2f(45, 4));
-					cursor_rectangle.setPosition(sf::Vector2f(x * 20 + 20, y * 48 + 43 + 20));
-					cursor_rectangle.setFillColor(fg_color);
-					main_window.draw(cursor_rectangle);
+					//подчеркивание на 12 линии
+					if (underline && font_line == 12 && (!blink || cursor_flipflop)) pixel_color = current_fg_color;
+
+					// Пишем пиксель во flat-буфер
+					*ptr_rgba++ = pixel_color.r;
+					*ptr_rgba++ = pixel_color.g;
+					*ptr_rgba++ = pixel_color.b;
+					*ptr_rgba++ = 255;
 				}
 			}
 		}
+
+		// Обновляем текстуру всей пачкой байт из ОЗУ
+		screen_texture_720_350.update(rgba_pixels.data());
+		sf::Sprite screen_sprite_720_350(screen_texture_720_350);
+		screen_sprite_720_350.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
+		//масштабирование до размера окна
+		screen_sprite_720_350.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 720.0f, (600 * my_display_H / 640.0) / 350.0f));
+		main_window.draw(screen_sprite_720_350);
 	}
 	//графика 320х200 (только EGA)
 	if (current_mode == video_modes::EGA_D_320)
@@ -4166,11 +4233,6 @@ void EGA_videocard::render()					//синхронизация
 		rectangle.setPosition(sf::Vector2f(0, 0));
 		rectangle.setFillColor(EGA_colors[border_RGBI]);
 
-		//длина строки в байтах
-		uint16 line_offset = crt_registers[0x13] * 2; //registr задает длину строки
-		//if (line_offset == 0) line_offset = 40; // Страховка от нулевого регистра
-		uint16 pixel_pan = ac_registers[0x13] & 7 ; //смещение влево
-		//debug_mess_1 = to_string(ac_registers[0x13]);
 
 		for (int y = 0; y < 200; ++y)
 		{
@@ -4179,7 +4241,7 @@ void EGA_videocard::render()					//синхронизация
 				uint32 dot_addr = (start_address + line_offset * y + (x >> 3));
 				if (y >= line_compare_reg) dot_addr = line_offset * (y - line_compare_reg) + (x >> 3);
 				dot_addr = dot_addr & 0xFFFF;
-				uint8 col = ((videomemory[dot_addr]   >> (7 - (x % 8))) & 1) * 1 +
+				uint8 col = ((videomemory[dot_addr] >> (7 - (x % 8))) & 1) * 1 +
 					((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
 					((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +
 					((videomemory[dot_addr + 0x30000] >> (7 - (x % 8))) & 1) * 8;
@@ -4216,9 +4278,9 @@ void EGA_videocard::render()					//синхронизация
 		// Обновляем текстуру всей пачкой байт из ОЗУ
 		screen_texture_320_200.update(rgba_pixels.data());
 		sf::Sprite screen_sprite_320_200(screen_texture_320_200);
-		screen_sprite_320_200.setPosition(sf::Vector2f(20, 20));
+		screen_sprite_320_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 		//масштабирование до размера окна
-		screen_sprite_320_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 320.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+		screen_sprite_320_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 320.0f, (600 * my_display_H / 640.0) / 200.0f));
 		main_window.draw(screen_sprite_320_200);
 
 		//debug_mess_1 = to_string(1000000 / duration_ms) + " fps";
@@ -4242,25 +4304,50 @@ void EGA_videocard::render()					//синхронизация
 		// Указатель на начало нашего RGBA массива в памяти
 		uint8_t* ptr_rgba = rgba_pixels.data();
 
-		//rectangle.setSize(sf::Vector2f(5, 6));
+		//заливаем цветом рамку
+		rectangle.setScale(sf::Vector2f(1, 1));
+		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+		rectangle.setPosition(sf::Vector2f(0, 0));
+		rectangle.setFillColor(EGA_colors[border_RGBI]);
+
 		for (int y = 0; y < 200; ++y)
 		{
-			for (int x = 0; x < 640; ++x)
+			for (int x = pixel_pan; x < 640 + pixel_pan; ++x)
 			{
-				uint32 dot_addr = (start_address + 80 * y + (x >> 3));
+				uint32 dot_addr = (start_address + line_offset * y + (x >> 3));
+				if (y >= line_compare_reg) dot_addr = line_offset * (y - line_compare_reg) + (x >> 3);
 				dot_addr = dot_addr & 0xFFFF;
 				uint8 col = ((videomemory[dot_addr] >> (7 - (x % 8))) & 1) * 1 +
 					((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
 					((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +
 					((videomemory[dot_addr + 0x30000] >> (7 - (x % 8))) & 1) * 8;
 
-				//rectangle.setPosition(sf::Vector2f(x * 2.5 + 20, (y * 6) + 20));
-				//rectangle.setFillColor(EGA_colors[(ac_registers[col] & 0b111) + ((ac_registers[col] >> 1) & 8)]);
-				//main_window.draw(rectangle);
-				*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) + ((ac_registers[col] >> 1) & 8)].r;
-				*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) + ((ac_registers[col] >> 1) & 8)].g;
-				*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) + ((ac_registers[col] >> 1) & 8)].b;
-				*ptr_rgba++ = 255; // Alpha
+				if (intensity_blink)
+				{
+					//мигание
+					if (cursor_flipflop || !((ac_registers[col] >> 4) & 1))
+					{
+						*ptr_rgba++ = EGA_colors[ac_registers[col] & 0b111].r;
+						*ptr_rgba++ = EGA_colors[ac_registers[col] & 0b111].g;
+						*ptr_rgba++ = EGA_colors[ac_registers[col] & 0b111].b;
+						*ptr_rgba++ = 255; // Alpha
+					}
+					else
+					{
+						*ptr_rgba++ = EGA_colors[ac_registers[col]].r;
+						*ptr_rgba++ = EGA_colors[ac_registers[col]].g;
+						*ptr_rgba++ = EGA_colors[ac_registers[col]].b;
+						*ptr_rgba++ = 255; // Alpha
+					}
+				}
+				else
+				{
+					//усиленная яркость
+					*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) | ((ac_registers[col] >> 1) & 8)].r;
+					*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) | ((ac_registers[col] >> 1) & 8)].g;
+					*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) | ((ac_registers[col] >> 1) & 8)].b;
+					*ptr_rgba++ = 255; // Alpha
+				}
 
 			}
 		}
@@ -4268,11 +4355,10 @@ void EGA_videocard::render()					//синхронизация
 		// Обновляем текстуру всей пачкой байт из ОЗУ
 		screen_texture_640_200.update(rgba_pixels.data());
 		sf::Sprite screen_sprite_640_200(screen_texture_640_200);
-		screen_sprite_640_200.setPosition(sf::Vector2f(20, 20));
+		screen_sprite_640_200.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 		//масштабирование до размера окна
-		screen_sprite_640_200.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 200.0f));
+		screen_sprite_640_200.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 640.0f, (600 * my_display_H / 640.0) / 200.0f));
 		main_window.draw(screen_sprite_640_200);
-
 
 	}
 	//монохромная графика 640х350 (только EGA)
@@ -4287,64 +4373,65 @@ void EGA_videocard::render()					//синхронизация
 		// Указатель на начало нашего RGBA массива в памяти
 		uint8_t* ptr_rgba = rgba_pixels.data();
 
-		//Старый код
-		/*
-		sf::RectangleShape dot;
-		dot.setOutlineThickness(0);
-
-		//масштаб точек
-		float display_x_scale = 2.5; // (float)(GAME_WINDOW_X_RES - 40) / width;  //1600    5 или 2,5
-		float display_y_scale = 3.428; // (float)(GAME_WINDOW_Y_RES - 40) / height; //1200    6
-		dot.setScale(sf::Vector2f(1, 1));
-		dot.setSize(sf::Vector2f(display_x_scale, display_y_scale));
-		*/
+		//заливаем цветом рамку
+		sf::RectangleShape rectangle;
+		rectangle.setScale(sf::Vector2f(1, 1));
+		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+		rectangle.setPosition(sf::Vector2f(0, 0));
+		rectangle.setFillColor(EGA_colors[border_RGBI]);
 
 		//start_address  - начало буфера
 		//добавить переход в начало памяти
 
-		uint32 dot_addr = 0;
-		for (int y = 0; y < 350; y++)
+		for (int y = 0; y < 200; ++y)
 		{
-			for (int x = 0; x < 80; ++x)
+			for (int x = 0 + pixel_pan; x < 640 + pixel_pan; ++x)
 			{
-				dot_addr = start_address + (80 * y + x);
+				uint32 dot_addr = (start_address + line_offset * y + (x >> 3));
+				if (y >= line_compare_reg) dot_addr = line_offset * (y - line_compare_reg) + (x >> 3);
 				dot_addr = dot_addr & 0xFFFF;
-				for (int sub_x = 0; sub_x < 8; sub_x++)
+				uint8 col = ((videomemory[dot_addr] >> (7 - (x % 8))) & 1) * 1;
+
+				if (intensity_blink)
 				{
-					//dot.setPosition(sf::Vector2f(x * 8 * display_x_scale + 20 + sub_x * display_x_scale, (y * display_y_scale) + 20));
-					if (((videomemory[dot_addr] >> (7 - sub_x)) & 1) == 0)
+					//мигание
+					if (cursor_flipflop || !((ac_registers[col] >> 4) & 1))
 					{
-						//черный цвет
-						//dot.setFillColor(sf::Color::Black);
-						*ptr_rgba++ = 0;
-						*ptr_rgba++ = 0;
-						*ptr_rgba++ = 0;
+						*ptr_rgba++ = EGA_colors[ac_registers[col] & 0b111].r;
+						*ptr_rgba++ = EGA_colors[ac_registers[col] & 0b111].g;
+						*ptr_rgba++ = EGA_colors[ac_registers[col] & 0b111].b;
 						*ptr_rgba++ = 255; // Alpha
 					}
 					else
 					{
-						//белый цвет
-						//dot.setFillColor(sf::Color::White);
-						*ptr_rgba++ = 255;
-						*ptr_rgba++ = 255;
-						*ptr_rgba++ = 255;
+						*ptr_rgba++ = EGA_colors[ac_registers[col]].r;
+						*ptr_rgba++ = EGA_colors[ac_registers[col]].g;
+						*ptr_rgba++ = EGA_colors[ac_registers[col]].b;
 						*ptr_rgba++ = 255; // Alpha
 					}
-					//main_window.draw(dot);
+				}
+				else
+				{
+					//усиленная яркость
+					*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) | ((ac_registers[col] >> 1) & 8)].r;
+					*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) | ((ac_registers[col] >> 1) & 8)].g;
+					*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111) | ((ac_registers[col] >> 1) & 8)].b;
+					*ptr_rgba++ = 255; // Alpha
 				}
 			}
 		}
 
+
 		// Обновляем текстуру всей пачкой байт из ОЗУ
 		screen_texture_640_350.update(rgba_pixels.data());
 		sf::Sprite screen_sprite_640_350(screen_texture_640_350);
-		screen_sprite_640_350.setPosition(sf::Vector2f(20, 20));
+		screen_sprite_640_350.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 		//масштабирование до размера окна
-		screen_sprite_640_350.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 350.0f));
+		screen_sprite_640_350.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 640.0f, (600 * my_display_H / 640.0) / 350.0f));
 		main_window.draw(screen_sprite_640_350);
 
 	}
-	//графика 640х350 (только EGA)
+	//графика 640х350 (только EGA) 16 цветов
 	if (current_mode == video_modes::EGA_10_350)
 	{
 		//4 цвета при 64К (до 16 при большей памяти)
@@ -4355,39 +4442,43 @@ void EGA_videocard::render()					//синхронизация
 		// Указатель на начало нашего RGBA массива в памяти
 		uint8_t* ptr_rgba = rgba_pixels.data();
 
+		//заливаем цветом рамку
 		sf::RectangleShape rectangle;
 		rectangle.setScale(sf::Vector2f(1, 1));
-		rectangle.setSize(sf::Vector2f(320 * 5, 200 * 1.2 * 5));
-		rectangle.setPosition(sf::Vector2f(20, 20));
-		rectangle.setFillColor(sf::Color::Black); //заливаем фон
-		main_window.draw(rectangle);
+		rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+		rectangle.setPosition(sf::Vector2f(0, 0));
+		rectangle.setFillColor(EGA_colors[border_RGBI]);
 
 		for (int y = 0; y < 350; ++y)
 		{
-			for (int x = 0; x < 640; ++x)
+			for (int x = pixel_pan; x < 640 + pixel_pan; ++x)
 			{
-				uint32 dot_addr = (start_address + 80 * y + (x >> 3));
-				dot_addr = dot_addr & 0x7FFF;
+				uint32 dot_addr = (start_address + line_offset * y + (x >> 3));
+				if (y >= line_compare_reg) dot_addr = line_offset * (y - line_compare_reg) + (x >> 3);
+				dot_addr = dot_addr & 0xFFFF;
 				uint8 col = ((videomemory[dot_addr] >> (7 - (x % 8))) & 1) * 1 +
 					((videomemory[dot_addr + 0x10000] >> (7 - (x % 8))) & 1) * 2 +
 					((videomemory[dot_addr + 0x20000] >> (7 - (x % 8))) & 1) * 4 +
 					((videomemory[dot_addr + 0x30000] >> (7 - (x % 8))) & 1) * 8;
 
-				*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111111)].r;
-				*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111111)].g;
-				*ptr_rgba++ = EGA_colors[(ac_registers[col] & 0b111111)].b;
+				*ptr_rgba++ = (((ac_registers[col] >> 2) & 1) * 2 + ((ac_registers[col] >> 5) & 1)) * 85;
+				*ptr_rgba++ = (((ac_registers[col] >> 1) & 1) * 2 + ((ac_registers[col] >> 4) & 1)) * 85;
+				*ptr_rgba++ = (((ac_registers[col] >> 0) & 1) * 2 + ((ac_registers[col] >> 3) & 1)) * 85;
 				*ptr_rgba++ = 255; // Alpha
+
 			}
 		}
 
 		// Обновляем текстуру всей пачкой байт из ОЗУ
 		screen_texture_640_350.update(rgba_pixels.data());
 		sf::Sprite screen_sprite_640_350(screen_texture_640_350);
-		screen_sprite_640_350.setPosition(sf::Vector2f(20, 20));
+		screen_sprite_640_350.setPosition(sf::Vector2f(220.0 * my_display_W / 1040.0, 20.0 * my_display_H / 600.0));
 		//масштабирование до размера окна
-		screen_sprite_640_350.setScale(sf::Vector2f((GAME_WINDOW_X_RES - 40) / 640.0f, (GAME_WINDOW_Y_RES - 40) / 350.0f));
+		screen_sprite_640_350.setScale(sf::Vector2f((800 * my_display_W / 1040.0) / 640.0f, (600 * my_display_H / 640.0) / 350.0f));
 		main_window.draw(screen_sprite_640_350);
 	}
+
+	panel.draw(main_window, display_scale, mouse_scale);
 
 	//тестовая информация джойстика
 	joy_sence_show_timer -= elapsed_ms;
@@ -4416,13 +4507,14 @@ void EGA_videocard::render()					//синхронизация
 	}
 
 	text.setString(debug_mess_1);
-	text.setPosition(sf::Vector2f(100, 1000));
+	text.setPosition(sf::Vector2f(100, 100));
 	text.setFillColor(sf::Color(255, 0, 0));
 	text.setOutlineThickness(3.1);
 	if (debug_mess_1 != "") main_window.draw(text);
 
 	main_window.display();
-	frame_start_time = Hi_Res_Clk.now(); //запускаем таймер для корректного расчета битов статуса
+	debug_mess_1 = "";
+	//frame_start_time = Hi_Res_Clk.now(); //запускаем таймер для корректного расчета битов статуса
 }
 bool EGA_videocard::is_visible()
 {
@@ -4668,6 +4760,7 @@ uint8 EGA_videocard::mem_read(uint32 address)
 void EGA_videocard::flash_rom(uint32 address, uint8 data)
 {
 	rom[address] = data;
+	checksum += data;
 }
 uint8 EGA_videocard::read_rom(uint32 address)
 {
@@ -4814,12 +4907,11 @@ mouse_xy EGA_videocard::get_mouse_pos()
 
 	mouse_xy mouse_data;  //пакет данных мыши
 
-	mouse_data.mouse_x = localPosition.x;
-	mouse_data.mouse_y = localPosition.y;
-	mouse_data.screen_size_x = window_size_x;
-	mouse_data.screen_size_y = window_size_y;
-	mouse_data.screen_scale = display_scale;
-
+	mouse_data.mouse_x = localPosition.x * 1040.0f / window_size_x - 220;
+	mouse_data.mouse_y = localPosition.y * 640.0f / window_size_y - 20;
+	mouse_data.screen_size_x = 800;
+	mouse_data.screen_size_y = 600;
+	//mouse_data.screen_scale = (float)my_display_W / (float)1040; // display_scale;
 	return mouse_data;
 }
 uint8 EGA_videocard::direct_read(uint32 address)
@@ -4827,33 +4919,85 @@ uint8 EGA_videocard::direct_read(uint32 address)
 	if (address < 256 * 1024) return videomemory[address];
 	else return 0;
 }
+void EGA_videocard::set_window_handle(HWND new_window_id)
+{
+	window_id = new_window_id;
+}
+void EGA_videocard::resize(uint16 new_width, uint16 new_height)
+{
+	//новый размер окна
+	//cout << "win size = " << (int)new_width << " x " << (int)new_height << endl;
+	window_size_x = new_width;
+	window_size_y = new_height;
+	if (my_display_W) mouse_scale = new_width * display_scale / my_display_W;
+	do_resize = true;
+}
 
 //====================== Monitor =================
 
-void Monitor::set_card_type(videocard_type new_mode)
+void Monitor::power_on()
 {
-	card_type = new_mode;
-
-	//показываем или скрываем экраны
+	//отключаем заглушку
+	if (SRV_card.is_visible()) SRV_card.hide();
+	//включаем видеокарту
+	cout << "Monitor: power ON" << endl;
 	switch (card_type)
 	{
 	case videocard_type::CGA:
-		if (MDA_card.is_visible()) MDA_card.hide();
-		if (EGA_card.is_visible()) EGA_card.hide();
 		if (!CGA_card.is_visible()) CGA_card.show();
 		CGA_card.font = font;
 		break;
 	case videocard_type::MDA:
-		if (CGA_card.is_visible()) CGA_card.hide();
-		if (EGA_card.is_visible()) EGA_card.hide();
 		if (!MDA_card.is_visible()) MDA_card.show();
 		MDA_card.font = font;
 		break;
 	case videocard_type::EGA:
-		if (MDA_card.is_visible()) MDA_card.hide();
-		if (CGA_card.is_visible()) CGA_card.hide();
 		if (!EGA_card.is_visible()) EGA_card.show();
 		EGA_card.font = font;
+		break;
+	}
+}
+void Monitor::exit()
+{
+	if (SRV_card.is_visible()) SRV_card.hide();  //отключаем заглушку
+}
+void Monitor::power_off()
+{
+	//отключаем видеокарту
+	cout << "Monitor: power OFF" << endl;
+
+	switch (card_type)
+	{
+	case videocard_type::CGA:
+		if (CGA_card.is_visible()) CGA_card.hide();
+		break;
+	case videocard_type::MDA:
+		if (MDA_card.is_visible()) MDA_card.hide();
+		break;
+	case videocard_type::EGA:
+		if (EGA_card.is_visible()) EGA_card.hide();
+		break;
+	}
+
+	if (!SRV_card.is_visible())
+	{
+		SRV_card.font = font;
+		SRV_card.show();  //включаем заглушку
+	}
+}
+void Monitor::set_card_type(videocard_type new_mode)
+{
+	card_type = new_mode;
+	switch (new_mode)
+	{
+	case videocard_type::CGA:
+		MB_switches = (MB_switches & 0xCF) | (0b00100000);
+		break;
+	case videocard_type::MDA:
+		MB_switches = (MB_switches & 0xCF) | (0b00110000); //MDA
+		break;
+	case videocard_type::EGA:
+		MB_switches = (MB_switches & 0xCF) | (0b00000000); //EGA
 		break;
 	}
 }
@@ -4861,21 +5005,28 @@ videocard_type Monitor::get_card_type()
 {
 	return card_type;
 }
-
 void Monitor::update(int elapsed_ms)
 {
-	switch (card_type)
+	if (PC_power_on)
 	{
-	case videocard_type::CGA:
-		CGA_card.update(elapsed_ms);
-		break;
-	case videocard_type::MDA:
-		MDA_card.update(elapsed_ms);
-		break;
-	case videocard_type::EGA:
-		EGA_card.update(elapsed_ms);
-		break;
+		switch (card_type)
+		{
+		case videocard_type::CGA:
+			CGA_card.update(elapsed_ms);
+			break;
+		case videocard_type::MDA:
+			MDA_card.update(elapsed_ms);
+			break;
+		case videocard_type::EGA:
+			EGA_card.update(elapsed_ms);
+			break;
+		}
 	}
+	else
+	{
+		SRV_card.update(elapsed_ms);
+	}
+
 }
 void Monitor::write_port(uint16 port, uint8 data)
 {
@@ -4944,6 +5095,8 @@ bool Monitor::has_focus()							//проверить наличие фокуса
 	case videocard_type::EGA:
 		return EGA_card.has_focus();
 	}
+	if (!PC_power_on) return SRV_card.has_focus();
+
 	return 0;
 }
 void Monitor::scale_up()
@@ -5114,17 +5267,375 @@ Monitor::Monitor()
 void Monitor::flash_font_rom(uint8 data)
 {
 	//загрузка шрифта в знакогенератор
+	CGA_card.flash_font_rom(data);
+	MDA_card.flash_font_rom(data);
+}
+void Monitor::set_window_handle(HWND window_id)
+{
+	MDA_card.set_window_handle(window_id);
+	CGA_card.set_window_handle(window_id);
+	EGA_card.set_window_handle(window_id);
+	SRV_card.set_window_handle(window_id);
+}
+void Monitor::resize(uint16 new_width, uint16 new_height)
+{
+	//новый размер окна
+	window_width = new_width;
+	window_height = new_height;
 	switch (card_type)
 	{
 	case videocard_type::CGA:
-		CGA_card.flash_font_rom(data);
+		CGA_card.resize(new_width, new_height);
 		break;
 	case videocard_type::MDA:
-		MDA_card.flash_font_rom(data);
-		//return MDA_card.get_mouse_pos();
+		MDA_card.resize(new_width, new_height);
 		break;
 	case videocard_type::EGA:
-		//return EGA_card.get_mouse_pos();
+		EGA_card.resize(new_width, new_height);
 		break;
 	}
+	SRV_card.resize(new_width, new_height);
+}
+uint16 Monitor::get_window_width() { return window_width; }
+uint16 Monitor::get_window_height() { return window_height; }
+uint8 Monitor::get_bios_checksum()
+{
+	if (card_type == videocard_type::EGA) return EGA_card.checksum;
+	return 255;
+}
+
+
+//========================= SRV_videocard ========================
+
+void SRV_videocard::main_loop()
+{
+	while (window_id == NULL) std::this_thread::sleep_for(std::chrono::milliseconds(50)); //ждем передачи идентификатора окна
+	//создаем окно
+	//main_window.create(sf::VideoMode(sf::Vector2u(320 * 5 + 40, 240 * 5 + 40)), window_title, sf::Style::Titlebar, sf::State::Windowed);
+	main_window.create(window_id);
+	//main_window.setPosition({ 0, 0 });
+	//main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+	main_window.setFramerateLimit(0);
+	main_window.setMouseCursorVisible(1);
+	main_window.setKeyRepeatEnabled(0);
+	main_window.setVerticalSyncEnabled(1);
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	main_window.setActive(1);
+
+	my_display_H = monitor.get_window_height();
+	my_display_W = monitor.get_window_width();
+
+	mouse_scale = display_scale = my_display_W / 1040.0f;
+
+	while (visible)
+	{
+		if (do_render)
+		{
+			do_render = 0;
+			if (do_resize)
+			{
+				main_window.setSize(sf::Vector2u(window_size_x, window_size_y));
+				do_resize = 0;
+			}
+			//рисуем окно
+			render();
+			//события окна
+			//while (main_window.pollEvent()) {};
+		}
+		else
+		{
+			//отдыхаем
+			//_mm_pause();
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(5)); //задержка перед завершением
+	main_window.close();
+}
+void SRV_videocard::render()
+{
+	std::lock_guard<std::mutex> lock(EmuWindowManager::window_mutex);
+	main_window.setActive(1);
+	main_window.clear();		// очистка экрана
+
+	sf::RectangleShape rectangle;
+	rectangle.setScale(sf::Vector2f(sf::Vector2f(my_display_W / 1040.0, my_display_H / 640.0f)));
+	rectangle.setSize(sf::Vector2f(320 * 5 + 40, 200 * 1.2 * 5 + 40));
+	rectangle.setPosition(sf::Vector2f(0, 0));
+	rectangle.setFillColor(sf::Color(255, 0, 0));
+	//main_window.draw(rectangle);
+
+	//шрифт для отладки
+	sf::Text text(font);		//обычный шрифт
+	text.setCharacterSize(20);
+	text.setScale(sf::Vector2f(my_display_W / 1040.0, my_display_H / 640.0f));
+	text.setFillColor(sf::Color::Green);
+	text.setOutlineThickness(3.1);
+
+	switch (monitor.get_card_type())
+	{
+	case videocard_type::CGA:
+		text.setString("Videocard: CGA");
+		break;
+
+	case videocard_type::MDA:
+		text.setString("Videocard: MDA");
+		break;
+
+	case videocard_type::EGA:
+		text.setString("Videocard: EGA (BIOS checksum = 0x" + int_to_hex(monitor.get_bios_checksum(), 2) + ")");
+		break;
+	}
+
+	text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * 20));
+	main_window.draw(text);
+
+	text.setString("Soundcard: Adlib");
+	text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * 50));
+	main_window.draw(text);
+
+	text.setString("RAM:       640KB");
+	text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * 80));
+	main_window.draw(text);
+
+	text.setString("EMS Board: 2MB");
+	text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * 110));
+	main_window.draw(text);
+
+	text.setString("FDD Drives");
+	text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * 150));
+	main_window.draw(text);
+
+	text.setString("===============================================");
+	text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * 180));
+	main_window.draw(text);
+
+	//кол-во дисководов
+	uint8 drvs = (MB_switches >> 6) + 1;
+
+	for (int i = 0; i < 4; i++)
+	{
+		text.setFillColor(sf::Color::Green);
+		if (i < drvs)
+		{
+			if (FDD_A.diskette_in[i])
+			{
+				text.setString("FDD " + to_string(i) + ": " + FDD_A.filename_FDD.at(i) + " (" + to_string(FDD_A.file_size[i] / 1024) + "KB)");
+			}
+			else text.setString("FDD " + to_string(i) + ": no diskette");
+		}
+		else
+		{
+			text.setFillColor(sf::Color::Yellow);
+			text.setString("FDD " + to_string(i) + ": no drive");
+		}
+
+		text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * (210 + i * 30)));
+		main_window.draw(text);
+		text.setFillColor(sf::Color::Green);
+	}
+
+	text.setString("HDD Drives");
+	text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * 350));
+	main_window.draw(text);
+
+	text.setString("");
+
+	for (int i = 0; i < 2; i++)
+	{
+		text.setFillColor(sf::Color::Green);
+		if (HDD.get_drv_present(i))
+		{
+			text.setString("HDD " + to_string(i) + ": " + HDD.get_file_path(i) + " (" + to_string(HDD.get_drv_MB(i)) + "MB)");
+		}
+		else
+		{
+			text.setFillColor(sf::Color::Yellow);
+			text.setString("HDD " + to_string(i) + ": no drive");
+		}
+		text.setPosition(sf::Vector2f(my_display_W / 1040.0 * 220, my_display_H / 640.0f * (410 + i * 30)));
+		main_window.draw(text);
+		text.setFillColor(sf::Color::Green);
+	}
+
+	//отрисовка панели
+	panel.draw(main_window, display_scale, mouse_scale);
+
+	main_window.display();
+}
+void SRV_videocard::show()
+{
+	//признак видимости
+	visible = 1;
+
+	//создаем поток
+	std::thread new_t(&SRV_videocard::main_loop, this);
+	t = std::move(new_t);
+}
+void SRV_videocard::hide()
+{
+	//запоминаем координаты
+	sf::Vector2i p = main_window.getPosition();
+	window_pos_x = p.x;
+	window_pos_y = p.y;
+
+	//скрываем окно
+	visible = 0;
+	if (t.joinable()) t.join();
+}
+void SRV_videocard::update(int new_elapsed_ms)
+{
+	elapsed_ms = new_elapsed_ms;
+	do_render = 1;					//обновить экран
+}
+bool SRV_videocard::is_visible() { return visible; }
+SRV_videocard::SRV_videocard()   // конструктор класса
+{
+	//задаем переменные окна
+	//window_title = "IBM PC/XT emulator. CGA videocard.";		//заголовок окна
+	window_pos_x = 0; // (my_display_W - GAME_WINDOW_X_RES * display_scale / 5) / 2;		//позиция окна
+	window_pos_y = 0; // (my_display_H - GAME_WINDOW_Y_RES * display_scale / 5 - 30) / 2;		//позиция окна
+	window_size_x = 800;			//размер окна
+	window_size_y = 600;			//размер окна
+	//cursor_clock.restart();										//запускаем таймер мигания
+}
+void SRV_videocard::set_window_handle(HWND new_window_id)		//передаем идентификатор окна
+{
+	window_id = new_window_id;
+}
+void SRV_videocard::resize(uint16 new_width, uint16 new_height)	//новые размеры родительского окна
+{
+	window_size_x = new_width;
+	window_size_y = new_height;
+	if (my_display_W) mouse_scale = new_width * display_scale / my_display_W;
+	do_resize = true;
+}
+bool SRV_videocard::has_focus()
+{
+	return main_window.hasFocus();
+}
+
+void SidePanel::draw(sf::RenderWindow& main_window, float this_scale, float mouse_scale)
+{
+	sf::Vector2f scale = { this_scale, this_scale };
+	//отрисовка боковой панели
+	//sf::Sprite panel_sprite(panel_texture);
+	panel_sprite.setTextureRect(sf::IntRect({ {0, 0}, {200, 640} }));
+	panel_sprite.setPosition(sf::Vector2f(0, 0));
+	panel_sprite.setScale(scale);
+	main_window.draw(panel_sprite);
+
+	//рисуем индикатор питания
+	sf::CircleShape circle;
+	circle.setPosition(sf::Vector2f(111 * scale.x, 549 * scale.y));
+	circle.setScale(scale);
+	circle.setRadius(6);
+	circle.setFillColor(sf::Color(0, 255, 0));
+	if (PC_power_on) main_window.draw(circle);
+
+	//рисуем индикатор HDD
+	circle.setPosition(sf::Vector2f(111 * scale.x, 592 * scale.y));
+	circle.setScale(scale);
+	circle.setRadius(6);
+	circle.setFillColor(sf::Color(HDD.get_HDD_active() * 5, 0, 0));
+	main_window.draw(circle);
+
+	//рисуем индикатор FDD
+	sf::RectangleShape rectangle;
+	rectangle.setPosition(sf::Vector2f(42 * scale.x, 68 * scale.y));
+	rectangle.setScale(scale);
+	rectangle.setSize(sf::Vector2f(10, 5));
+	rectangle.setFillColor(sf::Color(0, FDD_A.get_FDD_active(0) * 5, 0));
+	main_window.draw(rectangle);
+
+	rectangle.setPosition(sf::Vector2f(42 * scale.x, 164 * scale.y));
+	rectangle.setScale(scale);
+	rectangle.setSize(sf::Vector2f(10, 5));
+	rectangle.setFillColor(sf::Color(0, FDD_A.get_FDD_active(1) * 5, 0));
+	main_window.draw(rectangle);
+
+	//проверяем позицию мыши
+	sf::Vector2i mousePos = sf::Mouse::getPosition(main_window);
+	float vx = mousePos.x / mouse_scale, vy = mousePos.y / mouse_scale;
+	bool FDD1_hover = (hit_drive(vx, vy) == 0);
+	bool FDD2_hover = (hit_drive(vx, vy) == 1);
+
+	// eject  3.668   57.668
+	// insert 3.647   57.647
+
+	//рисуем дискеты в дисководах и надписи
+	if (FDD_A.diskette_in[0])
+	{
+		panel_sprite.setTextureRect(sf::IntRect({ {0, 690}, {200, 7} })); //дискета
+		panel_sprite.setPosition(sf::Vector2f(0 * this_scale, 42 * this_scale));
+		main_window.draw(panel_sprite);
+		if (FDD1_hover)
+		{
+			panel_sprite.setTextureRect(sf::IntRect({ {57, 668}, {49, 17} })); //надпись EJECT с подсветкой
+		}
+		else panel_sprite.setTextureRect(sf::IntRect({ {3, 668}, {49, 17} })); //надпись EJECT
+
+		panel_sprite.setPosition(sf::Vector2f(141 * this_scale, 75 * this_scale));
+		main_window.draw(panel_sprite);
+	}
+	else
+	{
+		if (FDD1_hover)
+		{
+			panel_sprite.setTextureRect(sf::IntRect({ {57, 647}, {49, 17} })); //надпись INSERT с подсветкой
+		}
+		else panel_sprite.setTextureRect(sf::IntRect({ {3, 647}, {49, 17} })); //надпись INSERT
+		panel_sprite.setPosition(sf::Vector2f(141 * this_scale, 75 * this_scale));
+		main_window.draw(panel_sprite);
+	}
+
+	if (FDD_A.diskette_in[1])
+	{
+		panel_sprite.setTextureRect(sf::IntRect({ {0, 690}, {200, 7} })); //дискета
+		panel_sprite.setPosition(sf::Vector2f(0 * this_scale, 138 * this_scale));
+		main_window.draw(panel_sprite);
+		if (FDD2_hover)
+		{
+			panel_sprite.setTextureRect(sf::IntRect({ {57, 668}, {49, 17} })); //надпись EJECT с подсветкой
+		}
+		else panel_sprite.setTextureRect(sf::IntRect({ {3, 668}, {49, 17} })); //надпись EJECT
+
+		panel_sprite.setPosition(sf::Vector2f(141 * this_scale, 171 * this_scale));
+		main_window.draw(panel_sprite);
+	}
+	else
+	{
+		panel_sprite.setTextureRect(sf::IntRect({ {2, 647}, {49, 17} })); //надпись INSERT
+		panel_sprite.setPosition(sf::Vector2f(141 * this_scale, 171 * this_scale));
+		main_window.draw(panel_sprite);
+		if (FDD2_hover)
+		{
+			panel_sprite.setTextureRect(sf::IntRect({ {57, 647}, {49, 17} })); //надпись INSERT с подсветкой
+		}
+		else panel_sprite.setTextureRect(sf::IntRect({ {3, 647}, {49, 17} })); //надпись INSERT
+
+		panel_sprite.setPosition(sf::Vector2f(141 * this_scale, 171 * this_scale));
+		main_window.draw(panel_sprite);
+	}
+
+	//рисуем ползунки громкости
+	panel_sprite.setTextureRect(sf::IntRect({ {113, 648}, {23, 23} })); //пимпочка регулятора
+
+	panel_sprite.setPosition(sf::Vector2f(38 * this_scale, (459 - speaker.get_volume() * 141 / 100) * this_scale));
+	panel_sprite.setScale(scale);
+	main_window.draw(panel_sprite);
+
+	panel_sprite.setPosition(sf::Vector2f(134 * this_scale, (459 - soundcard.get_volume() * 141 / 100) * this_scale));
+	panel_sprite.setScale(scale);
+	main_window.draw(panel_sprite);
+
+}
+int SidePanel::hit_drive(float vx, float vy)
+{
+	if (vx > 141 && vx < 188)
+	{
+		if (vy > 76 && vy < 90)   return 0;
+		if (vy > 172 && vy < 186) return 1;
+	}
+	return -1;
 }

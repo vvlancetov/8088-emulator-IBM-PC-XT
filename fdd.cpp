@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <fstream>
 #include <chrono>
+#include < mutex >
+#include <cstring>
 #include "custom_classes.h"
 #include "fdd.h"
 #include "video.h"
@@ -38,6 +40,8 @@ extern IC8237 dma_ctrl;
 //данные файла дискеты
 extern string path;
 extern Monitor monitor;
+
+extern FDD_Ctrl FDD_A;//сам дисковод
 
 FDD_Ctrl::FDD_Ctrl()
 {
@@ -75,7 +79,8 @@ void FDD_Ctrl::flush_buffer()
 {
 
 	//сбрасываем данные на диск
-	fstream file_FDD(path + filename_FDD.at(selected_drive), ios::binary | ios::out);
+	//fstream file_FDD(path + filename_FDD.at(selected_drive), ios::binary | ios::out);
+	fstream file_FDD(image_path(selected_drive), ios::binary | ios::out);   // было path + filename_FDD.at(...)
 
 	if (!file_FDD.is_open())
 	{
@@ -91,6 +96,26 @@ void FDD_Ctrl::flush_buffer()
 	file_FDD.close();
 	//if (log_to_console_FDD) FDD_monitor.log("Buffer flushed to Disk#" + to_string(selected_drive + 1) + "(" + filename_FDD.at(selected_drive) + ")");
 }
+
+//ошибка при пустом дисководе
+void FDD_Ctrl::finish_no_disk()
+{
+	Data_fifo.clear();
+	Data_fifo.push_back(0b01000000 | (H_head[selected_drive] << 2) | selected_drive);   // ST0: IC=01, аварийное завершение
+	Data_fifo.push_back(0b00000101);                                                    // ST1: нет адресной метки, нет данных
+	Data_fifo.push_back(0b00000000);                                                    // ST2
+	Data_fifo.push_back(C_cylinder[selected_drive]);
+	Data_fifo.push_back(H_head[selected_drive]);
+	Data_fifo.push_back(R_sector[selected_drive]);
+	Data_fifo.push_back(SectorSizeCode[selected_drive]);
+	results_left = 7;
+	RQM = 1; DIO = 1; CMD_BUSY = 1; DMA_ON = 0;
+	FDD_busy_bits &= ~(1 << selected_drive);
+	in_buffer.clear(); out_buffer.clear();
+	int_ctrl.request_IRQ(6);
+	drv_state = FDD_states::read_result;
+}
+
 
 //FDD controller
 uint8 FDD_Ctrl::read_port(uint16 port)
@@ -537,6 +562,8 @@ void FDD_Ctrl::sync()
 		//в буфере FIFO только параметры!
 		//CMD_BUSY = 0;
 
+		//FDD_active[selected_drive] = 50;
+
 		if (command == 3)  //Specify
 		{
 			//из нужны параметров задает только использование DMA
@@ -592,8 +619,9 @@ void FDD_Ctrl::sync()
 			FDD_monitor.log("CMD 5 [WRITE] head=" + to_string(H_head[selected_drive]) + " CYL=" + to_string(C_cylinder[selected_drive]) + " DRV=" + to_string(selected_drive) + " SEC_begin = " + to_string(R_sector[selected_drive]) + " SEC_size = " + to_string(Sector_size[selected_drive]) + " MT = " + to_string(MT[selected_drive]) + " EOT = " + to_string(EOT));
 			Data_fifo.clear();
 
-			//делаем выгрузку 
+			if (drive_empty(selected_drive)) { finish_no_disk(); return; } //если дискеты нет - ошибка
 
+			//делаем выгрузку 
 			if (DMA_ON && DMA_enabled) //передача в режиме DMA
 			{
 				//step_mode = 1;
@@ -751,9 +779,10 @@ void FDD_Ctrl::sync()
 #endif
 			//log_to_console = 1;
 			Data_fifo.clear();
+			
+			if (drive_empty(selected_drive)) { finish_no_disk(); return; } //если дискеты нет - ошибка
 
 			//делаем выгрузку 
-
 			if (DMA_ON && DMA_enabled) //передача в режиме DMA
 			{
 				//step_mode = 1;
@@ -942,6 +971,7 @@ void FDD_Ctrl::sync()
 			if (f_started == 0)  //начало процесса
 			{
 				selected_drive = Data_fifo.at(0) & 3;    //выбор диска
+				if (drive_empty(selected_drive)) { finish_no_disk(); return; }   // f_started остаЄтс€ 0
 				H_head[selected_drive] = ((Data_fifo.at(0) >> 2) & 1);   //мен€ем головку
 				SectorSizeCode[selected_drive] = Data_fifo.at(1); //кол-во байт в секторе (см. таблицу)
 				Sector_size[selected_drive] = pow(2, SectorSizeCode[selected_drive]) * 128;
@@ -1201,6 +1231,7 @@ uint8 FDD_Ctrl::read_DMA_data()
 		//если идет чтение с дискеты
 		out = sector_data[read_start];
 		read_start++;
+		FDD_active[selected_drive] = 50;
 	}
 	else
 	{
@@ -1221,6 +1252,7 @@ void FDD_Ctrl::write_DMA_data(uint8 data)
 		//cout << "DMA receive " << (int)data << endl;
 	}
 	in_buffer.push_back(data);
+	FDD_active[selected_drive] = 50;
 }
 void FDD_Ctrl::set_active_drives(uint8 d)
 {
@@ -1237,4 +1269,103 @@ uint8 FDD_Ctrl::get_active_drives()
 void FDD_Ctrl::set_MFM(uint8 drive, bool MFM)
 {
 	MFM_mode[drive] = MFM;
+}
+
+int FDD_Ctrl::get_FDD_active(int drv)
+{
+	if (FDD_active[drv] > 1) FDD_active[drv] -= 2;
+	return FDD_active[drv];
+}
+
+bool FDD_Ctrl::insert_diskette(uint8 drive, const std::string& file)
+{
+	if (drive >= 4) return false;
+
+	std::ifstream f(file, std::ios::binary | std::ios::ate);
+	if (!f.is_open()) return false;
+	uint32 size = (uint32)f.tellg();
+
+	struct Geometry { uint32 size; uint8 cyl, heads, sectors; };
+	static const Geometry known[] = {
+		{ 163840, 40, 1, 8 },  { 184320, 40, 1, 9 },  { 327680, 40, 2, 8 },  { 368640, 40, 2, 9 },
+		{ 737280, 80, 2, 9 },  { 1228800, 80, 2, 15 }, { 1474560, 80, 2, 18 }, { 1720320, 80, 2, 21 },
+		{ 2949120, 80, 2, 36 } };
+	const Geometry* g = nullptr;
+	for (const auto& k : known) if (k.size == size) { g = &k; break; }
+	if (!g) { cout << "FDD: unsupported image size " << size << " bytes" << endl; return false; }
+
+	std::vector<uint8> tmp(size);                 // сначала читаем во временный буфер
+	f.seekg(0);
+	f.read((char*)tmp.data(), size);
+	if (!f) return false;                         // состо€ние дисковода не тронуто
+
+	uint8* slot = sector_data + (size_t)drive * 2880 * 1024;
+	memset(slot, 0, 2880 * 1024);
+	memcpy(slot, tmp.data(), size);
+
+	file_size[drive] = size;
+	diskette_cylinders[drive] = g->cyl;
+	diskette_heads[drive] = g->heads;
+	diskette_sectors[drive] = g->sectors;
+	filename_FDD.at(drive) = file;             // полный путь
+	DWORD attr = GetFileAttributesA(file.c_str());
+	write_protect[drive] = (attr != INVALID_FILE_ATTRIBUTES) && (attr & FILE_ATTRIBUTE_READONLY);
+	diskette_in[drive] = true;
+	return true;
+}
+
+void FDD_Ctrl::eject_diskette(uint8 drive)
+{
+	if (drive >= 4) return;
+	diskette_in[drive] = false;
+	file_size[drive] = 0;                         // 0 = Ђдискеты нетї (на это опираетс€ seek/recalibrate)
+	write_protect[drive] = false;
+	filename_FDD.at(drive).clear();
+	memset(sector_data + (size_t)drive * 2880 * 1024, 0, 2880 * 1024);
+}
+
+bool FDD_Ctrl::is_drive_busy(uint8 drive) const
+{
+	return (FDD_busy_bits & (1 << drive)) || (selected_drive == drive && drv_state == FDD_states::command_exec);
+}
+
+// образы из диалога Ч с абсолютным путЄм, из конфигурации Ч относительно path
+std::string FDD_Ctrl::image_path(uint8 drive) const
+{
+	const std::string& f = filename_FDD.at(drive);
+	bool absolute = f.size() > 1 && (f[1] == ':' || (f[0] == '\\' && f[1] == '\\'));
+	return absolute ? f : path + f;
+}
+
+//работа с очередью
+
+static std::mutex fdd_req_mutex;
+static std::vector<FddRequest> fdd_req_queue;
+
+void fdd_post_request(const FddRequest& r)
+{
+	std::lock_guard<std::mutex> l(fdd_req_mutex);
+	fdd_req_queue.push_back(r);
+}
+
+void fdd_process_requests()
+{
+	std::vector<FddRequest> pending;
+	{
+		std::lock_guard<std::mutex> l(fdd_req_mutex);
+		if (fdd_req_queue.empty()) return;
+		pending.swap(fdd_req_queue);
+	}
+	std::vector<FddRequest> postponed;
+	for (const auto& r : pending)
+	{
+		if (FDD_A.is_drive_busy((uint8)r.drive)) { postponed.push_back(r); continue; }   // дисковод зан€т командой
+		if (r.insert) { if (!FDD_A.insert_diskette((uint8)r.drive, r.file)) cout << "FDD: cannot insert " << r.file << endl; }
+		else FDD_A.eject_diskette((uint8)r.drive);
+	}
+	if (!postponed.empty())
+	{
+		std::lock_guard<std::mutex> l(fdd_req_mutex);
+		fdd_req_queue.insert(fdd_req_queue.begin(), postponed.begin(), postponed.end());   // пор€док сохран€етс€
+	}
 }

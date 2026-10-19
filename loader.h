@@ -4,4 +4,4 @@
 
 
 
-void loader(int argc, char* argv[]);
+void loader();

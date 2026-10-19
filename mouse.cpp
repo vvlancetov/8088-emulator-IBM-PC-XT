@@ -3,6 +3,7 @@
 #include <chrono>
 #include <ctime>
 #include <iostream>
+#include <algorithm>
 #include "mouse.h"
 #include "video.h"
 #include "serial_port.h"
@@ -35,22 +36,30 @@ void Mouse::poll_mouse()
 	if (step_mode) return;
 	//опрос курсора
 	position_new = monitor.get_mouse_pos();
-	
-	//cout << "new_x = " << (int)position_new.mouse_x << " new_y = " << (int)position_new.mouse_y << endl;
+
+	//проверяем, что мышь в пределах экрана
+	bool in_screen = false;
+	if (position_new.mouse_x >= 0 && position_new.mouse_x < position_new.screen_size_x && position_new.mouse_y >= 0 && position_new.mouse_y < position_new.screen_size_y) in_screen = true;
 
 	//опрос клавишь
 	buttons_new = 0;
-	if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left))  buttons_new = buttons_new | 0b00100000;
-	if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) buttons_new = buttons_new | 0b00010000;
+	if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && in_screen)  buttons_new = buttons_new | 0b00100000;
+	if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Right) && in_screen) buttons_new = buttons_new | 0b00010000;
 
 	//рассчитываем изменения
-	char Dx = (position_new.mouse_x - position_old.mouse_x) / position_new.screen_scale * 2;
-	if (position_new.mouse_x < 0) Dx = - 50 / position_new.screen_scale;
-	if (position_new.mouse_x > position_new.screen_size_x) Dx = 50 / position_new.screen_scale;
+	char Dx = (position_new.mouse_x - position_old.mouse_x) * 0.8;
+	if (abs(Dx) < 3) {
+		Dx = 0; position_new.mouse_x = position_old.mouse_x;
+	}
+	if (position_new.mouse_x < 0) Dx = - 10;
+	if (position_new.mouse_x > position_new.screen_size_x) Dx = 10;
 	
-	char Dy = (position_new.mouse_y - position_old.mouse_y) / position_new.screen_scale * 2;
-	if (position_new.mouse_y < 0) Dy = -50 / position_new.screen_scale;
-	if (position_new.mouse_y > position_new.screen_size_y) Dy = 50 / position_new.screen_scale;
+	char Dy = (position_new.mouse_y - position_old.mouse_y) * 0.8;
+	if (abs(Dy) < 2) {
+		Dy = 0; position_new.mouse_y = position_old.mouse_y;
+	}
+	if (position_new.mouse_y < 0) Dy = -10;
+	if (position_new.mouse_y > position_new.screen_size_y) Dy = 10;
 
 	if ((Dx || Dy || (buttons_old != buttons_new)) && COM1.get_RTS())
 	{

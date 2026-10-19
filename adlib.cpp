@@ -1,4 +1,4 @@
-#include <conio.h>
+п»ї#include <conio.h>
 #include <bitset>
 #include <iostream>
 #include <chrono>
@@ -15,25 +15,41 @@ using namespace std;
 extern adlib_card soundcard;
 extern Audio_mon_device Audio_monitor;
 
-// Вспомогательная функция для получения реального значения множителя частоты
+// Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅР°СЏ С„СѓРЅРєС†РёСЏ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ СЂРµР°Р»СЊРЅРѕРіРѕ Р·РЅР°С‡РµРЅРёСЏ РјРЅРѕР¶РёС‚РµР»СЏ С‡Р°СЃС‚РѕС‚С‹
 float get_mult_value(uint8 mult) {
 	if (mult == 0) return 0.5f;
 	if (mult >= 1 && mult <= 10) return (float)mult;
 	if (mult == 11) return 10.0f;
 	if (mult == 12 || mult == 13) return 12.0f;
-	return 15.0f; // 14 и 15
+	return 15.0f; // 14 Рё 15
 }
 
+int16_t adlib_card::mix_to_int16(float mix)
+{
+	// СѓСЂРѕРІРµРЅСЊ РєР°Рє Сѓ С‡РёРїР°: РѕРґРёРЅ РѕРїРµСЂР°С‚РѕСЂ РЅР° РјР°РєСЃРёРјСѓРјРµ в‰€ 4084 РёР· 32768; volume = 30 СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓРµС‚ В«РєР°Рє РЅР° РєР°СЂС‚РµВ»
+	float s = mix * (4084.0f / 32768.0f) * (volume / 30.0f);
 
-// Теперь функция get_wave_sample должна принимать полную 18-битную фазу, а не готовый 10-битный индекс!
+	// С„РёР»СЊС‚СЂ РїРѕСЃС‚РѕСЏРЅРЅРѕР№ СЃРѕСЃС‚Р°РІР»СЏСЋС‰РµР№ (РЅР° РєР°СЂС‚Рµ СЌС‚Рѕ СЂР°Р·РґРµР»РёС‚РµР»СЊРЅС‹Р№ РєРѕРЅРґРµРЅСЃР°С‚РѕСЂ), СЃСЂРµР· в‰€ 11 Р“С†
+	float y = s - dc_x + 0.9985f * dc_y;
+	dc_x = s; dc_y = y;
+	s = y;
+
+	// РјСЏРіРєРёР№ РѕРіСЂР°РЅРёС‡РёС‚РµР»СЊ С‚РѕР»СЊРєРѕ Сѓ СЃР°РјРѕРіРѕ РІРµСЂС…Р°; РЅРёР¶Рµ 0,8 СЃРёРіРЅР°Р» РЅРµ С‚СЂРѕРіР°РµС‚СЃСЏ
+	float a = std::fabs(s);
+	if (a > 0.8f) s = std::copysign(0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f), s);
+
+	return (int16_t)std::lrintf(s * 32767.0f);
+}
+
+// РўРµРїРµСЂСЊ С„СѓРЅРєС†РёСЏ get_wave_sample РґРѕР»Р¶РЅР° РїСЂРёРЅРёРјР°С‚СЊ РїРѕР»РЅСѓСЋ 18-Р±РёС‚РЅСѓСЋ С„Р°Р·Сѓ, Р° РЅРµ РіРѕС‚РѕРІС‹Р№ 10-Р±РёС‚РЅС‹Р№ РёРЅРґРµРєСЃ!
 float adlib_card::get_wave_sample(uint32 full_phase_18bit, uint8 waveform) {
 	if (!wave_select_enable) waveform = 0;
 
-	// Извлекаем интерполированный синус
+	// РР·РІР»РµРєР°РµРј РёРЅС‚РµСЂРїРѕР»РёСЂРѕРІР°РЅРЅС‹Р№ СЃРёРЅСѓСЃ
 	float base_sine = get_interpolated_sine(full_phase_18bit);
 
-	// Логика обрезки полуволн для waveform 1, 2, 3 остается прежней, 
-	// но индексы для условий проверяем по старшим битам:
+	// Р›РѕРіРёРєР° РѕР±СЂРµР·РєРё РїРѕР»СѓРІРѕР»РЅ РґР»СЏ waveform 1, 2, 3 РѕСЃС‚Р°РµС‚СЃСЏ РїСЂРµР¶РЅРµР№, 
+	// РЅРѕ РёРЅРґРµРєСЃС‹ РґР»СЏ СѓСЃР»РѕРІРёР№ РїСЂРѕРІРµСЂСЏРµРј РїРѕ СЃС‚Р°СЂС€РёРј Р±РёС‚Р°Рј:
 	uint32_t table_idx = (full_phase_18bit >> 8) & 1023;
 
 	switch (waveform) {
@@ -47,70 +63,50 @@ float adlib_card::get_wave_sample(uint32 full_phase_18bit, uint8 waveform) {
 	}
 }
 
-void adlib_card::advance_envelope(uint8_t& stage, float& env_atten, float dt, uint8_t rate_a, uint8_t rate_d, uint8_t rate_s, uint8_t rate_r, bool eg_type)
+void adlib_card::advance_envelope(uint8_t& stage, float& env_atten, uint8_t rate_a, uint8_t rate_d,
+	uint8_t sl, uint8_t rate_r, bool eg_type, uint8_t ks)
 {
-	if (stage == 0) { // IDLE
-		env_atten = 511.0f;
-		return;
-	}
+	if (stage == 0) { env_atten = 511.0f; return; }
 
-	// Перевод параметра Sustain (0..15) в аппаратные шаги затухания OPL2.
-	// Каждый шаг индекса Sustain — это примерно 3 дБ затухания (всего до 24-36 шагов)
-	float target_sustain_atten = (float)rate_s * 3.0f;
+	auto R = [&](uint8_t rate) -> int { return rate ? std::min(63, 4 * rate + ks) : 0; };
+	const float sl_atten = (sl == 15) ? 496.0f : (float)(sl * 16);   // С€Р°Рі 3 РґР‘; 15 = 93 РґР‘
 
-	switch (stage) {
-	case 1: // ATTACK
-		// В фазе атаки затухание падает до 0 (звук нарастает)
-		env_atten -= attack_steps[rate_a] * dt;
-		if (env_atten <= 0.0f) {
-			env_atten = 0.0f;
-			stage = 2; // Переходим в DECAY
-		}
+	switch (stage)
+	{
+	case 1: // ATTACK: Р·Р°С‚СѓС…Р°РЅРёРµ СѓР±С‹РІР°РµС‚ СЌРєСЃРїРѕРЅРµРЅС†РёР°Р»СЊРЅРѕ (Р±С‹СЃС‚СЂС‹Р№ СЃС‚Р°СЂС‚, РїР»Р°РІРЅРѕРµ Р·Р°РІРµСЂС€РµРЅРёРµ)
+	{
+		float k = eg_attack_k[R(rate_a)];
+		if (k >= 1.0f) env_atten = 0.0f; else env_atten -= env_atten * k;
+		if (env_atten < 1.0f) { env_atten = 0.0f; stage = 2; }
 		break;
-
+	}
 	case 2: // DECAY
-		// В децибелах звук падает = шаги затухания РАСТУТ
-		env_atten += decay_release_steps[rate_d] * dt;
-		if (env_atten >= target_sustain_atten) {
-			env_atten = target_sustain_atten;
-			stage = 3; // В SUSTAIN
-		}
+		env_atten += eg_decay_step[R(rate_d)];
+		if (env_atten >= sl_atten) { env_atten = sl_atten; stage = 3; }
 		break;
-
-	case 3: // SUSTAIN
-		if (eg_type == 0) { // Percussive режим (как наше пианино)
-			// Звук продолжает затухать со скоростью Release
-			env_atten += decay_release_steps[rate_r] * dt;
-			if (env_atten >= 511.0f) {
-				env_atten = 511.0f;
-				stage = 0; // IDLE
-			}
-		}
+	case 3: // SUSTAIN: РїСЂРё EG-TYPE=0 РїСЂРѕРґРѕР»Р¶Р°РµС‚ Р·Р°С‚СѓС…Р°С‚СЊ СЃРѕ СЃРєРѕСЂРѕСЃС‚СЊСЋ Release
+		if (!eg_type) env_atten += eg_decay_step[R(rate_r)];
 		break;
-
 	case 4: // RELEASE
-		env_atten += decay_release_steps[rate_r] * dt;
-		if (env_atten >= 511.0f) {
-			env_atten = 511.0f;
-			stage = 0; // IDLE
-		}
+		env_atten += eg_decay_step[R(rate_r)];
 		break;
 	}
+	if (stage >= 2 && env_atten >= 504.0f) { env_atten = 511.0f; stage = 0; }   // РѕРіРёР±Р°СЋС‰Р°СЏ РІС‹РєР»СЋС‡РµРЅР°
 }
 
 float adlib_card::get_interpolated_sine(uint32 phase_18bit) {
-	// Старшие 10 бит идут в индекс таблицы
+	// РЎС‚Р°СЂС€РёРµ 10 Р±РёС‚ РёРґСѓС‚ РІ РёРЅРґРµРєСЃ С‚Р°Р±Р»РёС†С‹
 	uint32_t idx_curr = (phase_18bit >> 8) & 1023;
 	uint32_t idx_next = (idx_curr + 1) & 1023;
 
-	// Младшие 8 бит фазы (0..255) — это наша дробная часть (остаток)
+	// РњР»Р°РґС€РёРµ 8 Р±РёС‚ С„Р°Р·С‹ (0..255) вЂ” СЌС‚Рѕ РЅР°С€Р° РґСЂРѕР±РЅР°СЏ С‡Р°СЃС‚СЊ (РѕСЃС‚Р°С‚РѕРє)
 	float frac = (float)(phase_18bit & 0xFF) / 256.0f;
 
-	// Берем два соседних значения из синуса
+	// Р‘РµСЂРµРј РґРІР° СЃРѕСЃРµРґРЅРёС… Р·РЅР°С‡РµРЅРёСЏ РёР· СЃРёРЅСѓСЃР°
 	float s1 = sine_table[idx_curr];
 	float s2 = sine_table[idx_next];
 
-	// Линейно интерполируем между ними
+	// Р›РёРЅРµР№РЅРѕ РёРЅС‚РµСЂРїРѕР»РёСЂСѓРµРј РјРµР¶РґСѓ РЅРёРјРё
 	return s1 + (s2 - s1) * frac;
 }
 
@@ -122,28 +118,28 @@ void adlib_card::set_index(uint8 reg_index)
 
 void adlib_card::set_value(uint8 reg_value)
 {
-	//присваиваем значение индексу
+	//РїСЂРёСЃРІР°РёРІР°РµРј Р·РЅР°С‡РµРЅРёРµ РёРЅРґРµРєСЃСѓ
 	index_array[current_index] = reg_value;
 
 	//cout << "ADLIB: set[0x" << hex << (int)current_index << "] = 0x" << hex << (int)reg_value << endl;
 
-	if (current_index == 0x01) wave_select_enable = (reg_value & 0x20) != 0; // Бит 5 разрешает альтернативные волны
+	if (current_index == 0x01) wave_select_enable = (reg_value & 0x20) != 0; // Р‘РёС‚ 5 СЂР°Р·СЂРµС€Р°РµС‚ Р°Р»СЊС‚РµСЂРЅР°С‚РёРІРЅС‹Рµ РІРѕР»РЅС‹
 
 	if (current_index == 2)
 	{
-		timer_1 = reg_value * 80 / 1024 * 1000; //значение таймера 1
+		timer_1 = reg_value * 80 / 1024 * 1000; //Р·РЅР°С‡РµРЅРёРµ С‚Р°Р№РјРµСЂР° 1
 		return;
 	}
 
 	if (current_index == 3)
 	{
-		timer_2 = reg_value * 320 / 1024 * 1000; //значение таймера 2
+		timer_2 = reg_value * 320 / 1024 * 1000; //Р·РЅР°С‡РµРЅРёРµ С‚Р°Р№РјРµСЂР° 2
 		return;
 	}
 
 	if (current_index == 4)
 	{
-		// ИСПРАВЛЕНО: Бит 7 (сброс флагов) обрабатывается параллельно с масками, а не вместо них!
+		// РРЎРџР РђР’Р›Р•РќРћ: Р‘РёС‚ 7 (СЃР±СЂРѕСЃ С„Р»Р°РіРѕРІ) РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ РїР°СЂР°Р»Р»РµР»СЊРЅРѕ СЃ РјР°СЃРєР°РјРё, Р° РЅРµ РІРјРµСЃС‚Рѕ РЅРёС…!
 		if (reg_value & 0x80)
 		{
 			FT1 = 0;
@@ -151,7 +147,7 @@ void adlib_card::set_value(uint8 reg_value)
 			F_IRQ = 0;
 		}
 
-		// Маски и триггеры запуска обновляются ВСЕГДА при записи в регистр 04h
+		// РњР°СЃРєРё Рё С‚СЂРёРіРіРµСЂС‹ Р·Р°РїСѓСЃРєР° РѕР±РЅРѕРІР»СЏСЋС‚СЃСЏ Р’РЎР•Р“Р”Рђ РїСЂРё Р·Р°РїРёСЃРё РІ СЂРµРіРёСЃС‚СЂ 04h
 		timer_1_masked = ((reg_value >> 6) & 1);
 		timer_2_masked = ((reg_value >> 5) & 1);
 
@@ -161,23 +157,23 @@ void adlib_card::set_value(uint8 reg_value)
 		return;
 	}
 
-	//установка параметров каналов
-	uint8 group = current_index & 0xE0;  // Определяем группу регистров (20h, 40h, 60h...)
-	uint8 offset = current_index & 0x1F; // Смещение внутри группы (00h..1Fh)
+	//СѓСЃС‚Р°РЅРѕРІРєР° РїР°СЂР°РјРµС‚СЂРѕРІ РєР°РЅР°Р»РѕРІ
+	uint8 group = current_index & 0xE0;  // РћРїСЂРµРґРµР»СЏРµРј РіСЂСѓРїРїСѓ СЂРµРіРёСЃС‚СЂРѕРІ (20h, 40h, 60h...)
+	uint8 offset = current_index & 0x1F; // РЎРјРµС‰РµРЅРёРµ РІРЅСѓС‚СЂРё РіСЂСѓРїРїС‹ (00h..1Fh)
 
-	// --- Группа 20h - 35h: Характеристики звука (Tremolo, Vibrato, Sustain, Mult) ---
+	// --- Р“СЂСѓРїРїР° 20h - 35h: РҐР°СЂР°РєС‚РµСЂРёСЃС‚РёРєРё Р·РІСѓРєР° (Tremolo, Vibrato, Sustain, Mult) ---
 	if (group == 0x20) {
 		uint8 ch = reg_to_channel[offset];
 		if (ch == 0xFF) return;
 
-		if (!reg_to_operator[offset]) { // Модулятор (Op1)
+		if (!reg_to_operator[offset]) { // РњРѕРґСѓР»СЏС‚РѕСЂ (Op1)
 			channels[ch].op1_mult = reg_value & 0x0F;
 			channels[ch].op1_ksr = (reg_value & 0x10) != 0;
 			channels[ch].op1_eg_type = (reg_value & 0x20) != 0;
 			channels[ch].op1_vibrato = (reg_value & 0x40) != 0;
 			channels[ch].op1_tremolo = (reg_value & 0x80) != 0;
 		}
-		else { // Носитель (Op2)
+		else { // РќРѕСЃРёС‚РµР»СЊ (Op2)
 			channels[ch].op2_mult = reg_value & 0x0F;
 			channels[ch].op2_ksr = (reg_value & 0x10) != 0;
 			channels[ch].op2_eg_type = (reg_value & 0x20) != 0;
@@ -186,7 +182,7 @@ void adlib_card::set_value(uint8 reg_value)
 		}
 	}
 
-	// --- Группа 40h - 55h: Громкость (KSL / Total Level) ---
+	// --- Р“СЂСѓРїРїР° 40h - 55h: Р“СЂРѕРјРєРѕСЃС‚СЊ (KSL / Total Level) ---
 	else if (group == 0x40) {
 		uint8 ch = reg_to_channel[offset];
 		if (ch == 0xFF) return;
@@ -201,7 +197,7 @@ void adlib_card::set_value(uint8 reg_value)
 		}
 	}
 
-	// --- Группа 60h - 75h: Атака и Спад (Attack / Decay) ---
+	// --- Р“СЂСѓРїРїР° 60h - 75h: РђС‚Р°РєР° Рё РЎРїР°Рґ (Attack / Decay) ---
 	else if (group == 0x60) {
 		uint8 ch = reg_to_channel[offset];
 		if (ch == 0xFF) return;
@@ -216,7 +212,7 @@ void adlib_card::set_value(uint8 reg_value)
 		}
 	}
 
-	// --- Группа 80h - 95h: Сустейн и Релиз (Sustain / Release) ---
+	// --- Р“СЂСѓРїРїР° 80h - 95h: РЎСѓСЃС‚РµР№РЅ Рё Р РµР»РёР· (Sustain / Release) ---
 	else if (group == 0x80) {
 		uint8 ch = reg_to_channel[offset];
 		if (ch == 0xFF) return;
@@ -231,13 +227,13 @@ void adlib_card::set_value(uint8 reg_value)
 		}
 	}
 
-	// --- Группа A0h - A8h: Младший байт F-Number ---
+	// --- Р“СЂСѓРїРїР° A0h - A8h: РњР»Р°РґС€РёР№ Р±Р°Р№С‚ F-Number ---
 	else if (current_index >= 0xA0 && current_index <= 0xA8) {
 		uint8 ch = current_index - 0xA0;
 		channels[ch].f_number = (channels[ch].f_number & 0x0300) | reg_value;
 	}
 
-	// --- Группа B0h - B8h: Старшие биты F-Number, Октава и KEY_ON ---
+	// --- Р“СЂСѓРїРїР° B0h - B8h: РЎС‚Р°СЂС€РёРµ Р±РёС‚С‹ F-Number, РћРєС‚Р°РІР° Рё KEY_ON ---
 	else if (current_index >= 0xB0 && current_index <= 0xB8) {
 		uint8 ch = current_index - 0xB0;
 
@@ -247,8 +243,8 @@ void adlib_card::set_value(uint8 reg_value)
 		bool new_key_on = (reg_value & 0x20) != 0;
 
 		if (new_key_on) {
-			// Если нота включается (или обновляется частота при нажатой клавише)
-			if (!channels[ch].key_on) { // Только если это первое нажатие
+			// Р•СЃР»Рё РЅРѕС‚Р° РІРєР»СЋС‡Р°РµС‚СЃСЏ (РёР»Рё РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ С‡Р°СЃС‚РѕС‚Р° РїСЂРё РЅР°Р¶Р°С‚РѕР№ РєР»Р°РІРёС€Рµ)
+			if (!channels[ch].key_on) { // РўРѕР»СЊРєРѕ РµСЃР»Рё СЌС‚Рѕ РїРµСЂРІРѕРµ РЅР°Р¶Р°С‚РёРµ
 				channels[ch].op1_phase = 0;
 				channels[ch].op2_phase = 0;
 				channels[ch].op1_env_stage = 1; // ATTACK
@@ -258,8 +254,8 @@ void adlib_card::set_value(uint8 reg_value)
 			}
 		}
 		else {
-			// БЕЗУСЛОВНАЯ ЛОГИКА KEY_OFF: Если бит KEY_ON равен 0, 
-			// мы ВСЕГДА отправляем работающие операторы в RELEASE(4)
+			// Р‘Р•Р—РЈРЎР›РћР’РќРђРЇ Р›РћР“РРљРђ KEY_OFF: Р•СЃР»Рё Р±РёС‚ KEY_ON СЂР°РІРµРЅ 0, 
+			// РјС‹ Р’РЎР•Р“Р”Рђ РѕС‚РїСЂР°РІР»СЏРµРј СЂР°Р±РѕС‚Р°СЋС‰РёРµ РѕРїРµСЂР°С‚РѕСЂС‹ РІ RELEASE(4)
 			if (channels[ch].op1_env_stage >= 1 && channels[ch].op1_env_stage <= 3) {
 				channels[ch].op1_env_stage = 4;
 			}
@@ -267,7 +263,7 @@ void adlib_card::set_value(uint8 reg_value)
 				channels[ch].op2_env_stage = 4;
 			}
 
-			// Сброс фидбэка, чтобы исключить зависание частотной модуляции
+			// РЎР±СЂРѕСЃ С„РёРґР±СЌРєР°, С‡С‚РѕР±С‹ РёСЃРєР»СЋС‡РёС‚СЊ Р·Р°РІРёСЃР°РЅРёРµ С‡Р°СЃС‚РѕС‚РЅРѕР№ РјРѕРґСѓР»СЏС†РёРё
 			channels[ch].op1_old_out = 0.0f;
 			channels[ch].op1_new_out = 0.0f;
 		}
@@ -276,14 +272,14 @@ void adlib_card::set_value(uint8 reg_value)
 
 
 
-	// --- Группа C0h - C8h: Режим синтеза и Обратная связь ---
+	// --- Р“СЂСѓРїРїР° C0h - C8h: Р РµР¶РёРј СЃРёРЅС‚РµР·Р° Рё РћР±СЂР°С‚РЅР°СЏ СЃРІСЏР·СЊ ---
 	else if (current_index >= 0xC0 && current_index <= 0xC8) {
 		uint8 ch = current_index - 0xC0;
 		channels[ch].feedback_type = reg_value & 0x01;
 		channels[ch].feedback_strength = (reg_value >> 1) & 0x07;
 	}
 
-	// --- Регистрация формы волны (E0h - F5h) ---
+	// --- Р РµРіРёСЃС‚СЂР°С†РёСЏ С„РѕСЂРјС‹ РІРѕР»РЅС‹ (E0h - F5h) ---
 	else if (current_index >= 0xE0 && current_index <= 0xF5) {
 		uint8 wave_offset = current_index & 0x1F;
 		uint8 ch = reg_to_channel[wave_offset];
@@ -298,292 +294,329 @@ void adlib_card::set_value(uint8 reg_value)
 	}
 
 	else if (current_index == 0xBD) {
-		rhythm_mode = (reg_value & 0x20) != 0; // Бит 5: включение ритм-режима
+		rhythm_mode = (reg_value & 0x20) != 0; // Р‘РёС‚ 5: РІРєР»СЋС‡РµРЅРёРµ СЂРёС‚Рј-СЂРµР¶РёРјР°
 
-		// Считываем триггеры ударов
-		drum_bd = (reg_value & 0x10) != 0; // Bass Drum
-		drum_sd = (reg_value & 0x08) != 0; // Snare Drum
-		drum_tom = (reg_value & 0x04) != 0; // Tom-Tom
-		drum_tc = (reg_value & 0x02) != 0; // Cymbal
-		drum_hh = (reg_value & 0x01) != 0; // Hi-Hat
+		// РўСЂРёРіРіРµСЂС‹ С„РёРєСЃРёСЂСѓРµРј РїРѕ С„СЂРѕРЅС‚Сѓ 0 -> 1, С‡С‚РѕР±С‹ РїРѕРІС‚РѕСЂРЅР°СЏ Р·Р°РїРёСЃСЊ СЂРµРіРёСЃС‚СЂР°
+		// СЃ СѓРґРµСЂР¶РёРІР°РµРјС‹Рј Р±РёС‚РѕРј РЅРµ РїРµСЂРµР·Р°РїСѓСЃРєР°Р»Р° Р°С‚Р°РєСѓ РЅР° РєР°Р¶РґРѕРј РѕР±СЂР°С‰РµРЅРёРё.
+		const bool new_bd = (reg_value & 0x10) != 0;
+		const bool new_sd = (reg_value & 0x08) != 0;
+		const bool new_tom = (reg_value & 0x04) != 0;
+		const bool new_tc = (reg_value & 0x02) != 0;
+		const bool new_hh = (reg_value & 0x01) != 0;
 
-		// Логика KEY_ON для барабанов: если бит взвелся, переводим огибающие в ATTACK (stage 1)
 		if (rhythm_mode) {
-			if (drum_bd) { channels[6].op1_env_stage = 1; channels[6].op2_env_stage = 1; }
-			if (drum_sd) { channels[7].op2_env_stage = 1; }
-			if (drum_tom) { channels[8].op1_env_stage = 1; }
-			if (drum_tc) { channels[8].op2_env_stage = 1; }
-			if (drum_hh) { channels[7].op1_env_stage = 1; }
+			if (new_bd && !drum_bd) {
+				//channels[6].op1_env_atten = channels[6].op2_env_atten = 511.0f;
+				channels[6].op1_env_stage = channels[6].op2_env_stage = 1;
+				channels[6].op1_phase = channels[6].op2_phase = 0;
+			}
+			if (new_sd && !drum_sd) {
+				channels[7].op2_env_atten = 511.0f; channels[7].op2_env_stage = 1;
+			}
+			if (new_tom && !drum_tom) {
+				channels[8].op1_env_atten = 511.0f; channels[8].op1_env_stage = 1;
+			}
+			if (new_tc && !drum_tc) {
+				channels[8].op2_env_atten = 511.0f; channels[8].op2_env_stage = 1;
+			}
+			if (new_hh && !drum_hh) {
+				channels[7].op1_env_atten = 511.0f; channels[7].op1_env_stage = 1;
+			}
 		}
+
+		drum_bd = new_bd;
+		drum_sd = new_sd;
+		drum_tom = new_tom;
+		drum_tc = new_tc;
+		drum_hh = new_hh;
+
 	}
 }
 
 uint8 adlib_card::read_status()
 {
-	// Перед чтением статуса обязательно делаем sync, чтобы таймеры успели обновиться
+	// РџРµСЂРµРґ С‡С‚РµРЅРёРµРј СЃС‚Р°С‚СѓСЃР° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ РґРµР»Р°РµРј sync, С‡С‚РѕР±С‹ С‚Р°Р№РјРµСЂС‹ СѓСЃРїРµР»Рё РѕР±РЅРѕРІРёС‚СЊСЃСЏ
 	sync();
 
-	// Аппаратная логика OPL2: флаг прерывания IRQ (бит 7) взводится ТОЛЬКО в том случае,
-	// если сработал таймер, который в данный момент НЕ замаскирован игрой!
+	// РђРїРїР°СЂР°С‚РЅР°СЏ Р»РѕРіРёРєР° OPL2: С„Р»Р°Рі РїСЂРµСЂС‹РІР°РЅРёСЏ IRQ (Р±РёС‚ 7) РІР·РІРѕРґРёС‚СЃСЏ РўРћР›Р¬РљРћ РІ С‚РѕРј СЃР»СѓС‡Р°Рµ,
+	// РµСЃР»Рё СЃСЂР°Р±РѕС‚Р°Р» С‚Р°Р№РјРµСЂ, РєРѕС‚РѕСЂС‹Р№ РІ РґР°РЅРЅС‹Р№ РјРѕРјРµРЅС‚ РќР• Р·Р°РјР°СЃРєРёСЂРѕРІР°РЅ РёРіСЂРѕР№!
 	bool effective_ft1 = FT1 && !timer_1_masked;
 	bool effective_ft2 = FT2 && !timer_2_masked;
 
 	F_IRQ = effective_ft1 || effective_ft2;
 
 	uint8 status = 0;
-	if (F_IRQ)         status |= 0x80; // Бит 7: Общий IRQ
-	if (effective_ft1) status |= 0x40; // Бит 6: Флаг Таймера 1
-	if (effective_ft2) status |= 0x20; // Бит 5: Флаг Таймера 2
+	if (F_IRQ)         status |= 0x80; // Р‘РёС‚ 7: РћР±С‰РёР№ IRQ
+	if (effective_ft1) status |= 0x40; // Р‘РёС‚ 6: Р¤Р»Р°Рі РўР°Р№РјРµСЂР° 1
+	if (effective_ft2) status |= 0x20; // Р‘РёС‚ 5: Р¤Р»Р°Рі РўР°Р№РјРµСЂР° 2
 
-	// Биты 0-4 на OPL2 жестко зануляются (в отличие от некоторых других чипов)
+	// Р‘РёС‚С‹ 0-4 РЅР° OPL2 Р¶РµСЃС‚РєРѕ Р·Р°РЅСѓР»СЏСЋС‚СЃСЏ (РІ РѕС‚Р»РёС‡РёРµ РѕС‚ РЅРµРєРѕС‚РѕСЂС‹С… РґСЂСѓРіРёС… С‡РёРїРѕРІ)
 	return status;
 }
 
 void adlib_card::sync()
 {
-	//синхронизация
-	timer_end = Hi_Res_Clk.now(); //считываем время
+	//СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ
+	timer_end = Hi_Res_Clk.now(); //СЃС‡РёС‚С‹РІР°РµРј РІСЂРµРјСЏ
 
-	//проверка для таймеров
+	//РїСЂРѕРІРµСЂРєР° РґР»СЏ С‚Р°Р№РјРµСЂРѕРІ
 	int duration_timers = duration_cast<nanoseconds>(timer_end - timer_start_timers).count();
 
 	if (duration_timers)
 	{
-		//обновляем счетчики и выставляем флаги
+		//РѕР±РЅРѕРІР»СЏРµРј СЃС‡РµС‚С‡РёРєРё Рё РІС‹СЃС‚Р°РІР»СЏРµРј С„Р»Р°РіРё
 
-		if (timer_1_ON) //счетчик 1 включен
+		if (timer_1_ON) //СЃС‡РµС‚С‡РёРє 1 РІРєР»СЋС‡РµРЅ
 		{
-			timer_1 = timer_1 + (duration_timers >> 10) + 10; //вместо 1000 делим на 1024
+			timer_1 = timer_1 + (duration_timers >> 10) + 10; //РІРјРµСЃС‚Рѕ 1000 РґРµР»РёРј РЅР° 1024
 			if (timer_1 >= 20480 / 1024 * 1000)
 			{
 				if (!timer_1_masked)
 				{
-					FT1 = 1; //флаг
+					FT1 = 1; //С„Р»Р°Рі
 					F_IRQ = 1;
 				}
-				timer_1 = 0; //перезапуск
+				timer_1 = 0; //РїРµСЂРµР·Р°РїСѓСЃРє
 			}
 		}
 
-		if (timer_2_ON) //счетчик 2 включен
+		if (timer_2_ON) //СЃС‡РµС‚С‡РёРє 2 РІРєР»СЋС‡РµРЅ
 		{
 			timer_2 = timer_2 + (duration_timers >> 10) + 10;
 			if (timer_2 >= 81920 / 1024 * 1000)
 			{
 				if (!timer_2_masked)
 				{
-					FT2 = 1; //флаг
+					FT2 = 1; //С„Р»Р°Рі
 					F_IRQ = 1;
 				}
-				timer_2 = 0; //перезапуск
+				timer_2 = 0; //РїРµСЂРµР·Р°РїСѓСЃРє
 			}
 		}
 
-		timer_start_timers = timer_end; //засекаем заново
+		timer_start_timers = timer_end; //Р·Р°СЃРµРєР°РµРј Р·Р°РЅРѕРІРѕ
 	}
 
-
-	//проверка для генерации сэмплов
+	//РїСЂРѕРІРµСЂРєР° РґР»СЏ РіРµРЅРµСЂР°С†РёРё СЃСЌРјРїР»РѕРІ
 	int duration = duration_cast<microseconds>(timer_end - timer_start).count();
 
-	if (duration < (1000000.0f / 48000.0f + sample_time_corr)) return; //выход, если времени слишком мало
-
-	//проверка синхронизации с середине сэмпла семпл 4800 = 50 000 мкс
+	if (duration < (1000000.0f / 48000.0f + sample_time_corr)) return; //РІС‹С…РѕРґ, РµСЃР»Рё РІСЂРµРјРµРЅРё СЃР»РёС€РєРѕРј РјР°Р»Рѕ
+	if (next_byte_to_gen == sample_size) return; //Р±СѓС„РµСЂ Р·Р°РїРѕР»РЅРµРЅ, Р¶РґРµРј РІС‹РіСЂСѓР·РєРё РЅР° РєР°СЂС‚Сѓ
+	//РїСЂРѕРІРµСЂРєР° СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё СЃ СЃРµСЂРµРґРёРЅРµ СЃСЌРјРїР»Р° СЃРµРјРїР» 4800 = 50 000 РјРєСЃ
 	if (next_byte_to_gen == 1200)
 	{
 		int duration_sample = duration_cast<microseconds>(timer_end - timer_start_sample).count();
-		if (duration_sample > 12500) sample_time_corr = -2;
-		if (duration_sample > 15000) sample_time_corr = -5;
-		if (duration_sample < 12000) sample_time_corr = -1;
+		if (duration_sample > 12500) sample_time_corr = -4;
+		if (duration_sample > 15000) sample_time_corr = -8;
+		if (duration_sample < 12000) sample_time_corr = -3;
 	}
 
 	if (next_byte_to_gen == 2400)
 	{
 		int duration_sample = duration_cast<microseconds>(timer_end - timer_start_sample).count();
-		if (duration_sample > 25000) sample_time_corr = -3;
+		if (duration_sample > 25000) sample_time_corr = -5;
 		if (duration_sample > 30000) sample_time_corr = -8;
-		if (duration_sample < 24500) sample_time_corr = -1;
+		if (duration_sample < 24500) sample_time_corr = -3;
 	}
 
 	if (next_byte_to_gen == 3600)
 	{
 		int duration_sample = duration_cast<microseconds>(timer_end - timer_start_sample).count();
-		if (duration_sample > 37500) sample_time_corr = -3;
+		if (duration_sample > 37500) sample_time_corr = -7;
 		if (duration_sample > 45000) sample_time_corr = -10;
-		if (duration_sample < 36500) sample_time_corr = -1;
+		if (duration_sample < 36500) sample_time_corr = -3;
 	}
 
-	timer_start = timer_end; // засекаем заново
+	timer_start = timer_end; // Р·Р°СЃРµРєР°РµРј Р·Р°РЅРѕРІРѕ
 
-	//добавляем очередной сэмпл в массив
-	//Частота дискретизации нашего вывода (родная для OPL2)
+	//РґРѕР±Р°РІР»СЏРµРј РѕС‡РµСЂРµРґРЅРѕР№ СЃСЌРјРїР» РІ РјР°СЃСЃРёРІ
+	//Р§Р°СЃС‚РѕС‚Р° РґРёСЃРєСЂРµС‚РёР·Р°С†РёРё РЅР°С€РµРіРѕ РІС‹РІРѕРґР° (СЂРѕРґРЅР°СЏ РґР»СЏ OPL2)
 	const float sample_rate = 49716.0f;
-	//const float sample_rate = 48000.0f;  //заменил на нормальную
+	//const float sample_rate = 48000.0f;  //Р·Р°РјРµРЅРёР» РЅР° РЅРѕСЂРјР°Р»СЊРЅСѓСЋ
 
 	float mix_sample = 0.0f;
 
-	// Продвигаем фазы глобальных LFO (частота dt = 20.114 мкс на сэмпл) 3.7 Гц для тремоло
-	tremolo_lfo_phase += 0.0000037f * duration;
-	// 6.4 Гц для вибрато
-	vibrato_lfo_phase += 0.0000064f * duration;
+	// РџСЂРѕРґРІРёРіР°РµРј С„Р°Р·С‹ РіР»РѕР±Р°Р»СЊРЅС‹С… LFO (С‡Р°СЃС‚РѕС‚Р° dt = 20.114 РјРєСЃ РЅР° СЃСЌРјРїР») 3.7 Р“С† РґР»СЏ С‚СЂРµРјРѕР»Рѕ
+	//tremolo_lfo_phase += 0.0000037f * duration;
+	tremolo_lfo_phase += 3.7f / 48000.0f;
+	// 6.4 Р“С† РґР»СЏ РІРёР±СЂР°С‚Рѕ
+	//vibrato_lfo_phase += 0.0000064f * duration;
+	vibrato_lfo_phase += 6.4f / 48000.0f;
 
-	// Генерируем значения модуляции
-	// Тремоло дает колебание затухания от 0 до +24 шагов (примерно 4.8 дБ)
+	// Р“РµРЅРµСЂРёСЂСѓРµРј Р·РЅР°С‡РµРЅРёСЏ РјРѕРґСѓР»СЏС†РёРё
+	// РўСЂРµРјРѕР»Рѕ РґР°РµС‚ РєРѕР»РµР±Р°РЅРёРµ Р·Р°С‚СѓС…Р°РЅРёСЏ РѕС‚ 0 РґРѕ +24 С€Р°РіРѕРІ (РїСЂРёРјРµСЂРЅРѕ 4.8 РґР‘)
 	float current_tremolo_atten = (std::sin(tremolo_lfo_phase * 2.0f * 3.1415926f) + 1.0f) * 12.0f;
 
-	// Вибрато дает небольшое качание частоты (коэффициент от 0.993 до 1.007, то есть ~0.7%)
+	// Р’РёР±СЂР°С‚Рѕ РґР°РµС‚ РЅРµР±РѕР»СЊС€РѕРµ РєР°С‡Р°РЅРёРµ С‡Р°СЃС‚РѕС‚С‹ (РєРѕСЌС„С„РёС†РёРµРЅС‚ РѕС‚ 0.993 РґРѕ 1.007, С‚Рѕ РµСЃС‚СЊ ~0.7%)
 	float current_vibrato_factor = 1.0f + std::sin(vibrato_lfo_phase * 2.0f * 3.1415926f) * 0.007f;
 
-	// Продвигаем 23-битный LFSR генератор шума OPL2
-	// На каждом сэмпле берем биты 22 и 17, делаем XOR и сдвигаем
+	// РџСЂРѕРґРІРёРіР°РµРј 23-Р±РёС‚РЅС‹Р№ LFSR РіРµРЅРµСЂР°С‚РѕСЂ С€СѓРјР° OPL2
+	// РќР° РєР°Р¶РґРѕРј СЃСЌРјРїР»Рµ Р±РµСЂРµРј Р±РёС‚С‹ 22 Рё 17, РґРµР»Р°РµРј XOR Рё СЃРґРІРёРіР°РµРј
 	uint32_t bit = ((noise_lfsr >> 22) ^ (noise_lfsr >> 17)) & 1;
 	noise_lfsr = (noise_lfsr << 1) | bit;
-	float current_noise = (noise_lfsr & 1) ? 1.0f : -1.0f; // Результат шума: -1.0 или 1.0
+	float current_noise = (noise_lfsr & 1) ? 1.0f : -1.0f; // Р РµР·СѓР»СЊС‚Р°С‚ С€СѓРјР°: -1.0 РёР»Рё 1.0
 
 
-		// Проходим по всем 9 каналам
+		// РџСЂРѕС…РѕРґРёРј РїРѕ РІСЃРµРј 9 РєР°РЅР°Р»Р°Рј
 	for (int ch = 0; ch < 9; ++ch) {
 		OPL2_Channel& channel = channels[ch];
 
-		float channel_output = 0.0f; // Результат текущего канала
+		float channel_output = 0.0f; // Р РµР·СѓР»СЊС‚Р°С‚ С‚РµРєСѓС‰РµРіРѕ РєР°РЅР°Р»Р°
 
 		// =================================================================
-		// БЕЗУСЛОВНАЯ ЗАЩИТА ОГИБАЮЩЕЙ (Для всех 9 каналов без исключения!)
+		// Р‘Р•Р—РЈРЎР›РћР’РќРђРЇ Р—РђР©РРўРђ РћР“РР‘РђР®Р©Р•Р™ (Р”Р»СЏ РІСЃРµС… 9 РєР°РЅР°Р»РѕРІ Р±РµР· РёСЃРєР»СЋС‡РµРЅРёСЏ!)
 		// =================================================================
-		// Если игра отпустила KEY_ON (key_on == false), но огибающие 
-		// всё еще находятся в стадиях ATTACK(1), DECAY(2) или SUSTAIN(3),
-		// мы ОБЯЗАНЫ принудительно перевести их в стадию RELEASE(4)
+		// Р•СЃР»Рё РёРіСЂР° РѕС‚РїСѓСЃС‚РёР»Р° KEY_ON (key_on == false), РЅРѕ РѕРіРёР±Р°СЋС‰РёРµ 
+		// РІСЃС‘ РµС‰Рµ РЅР°С…РѕРґСЏС‚СЃСЏ РІ СЃС‚Р°РґРёСЏС… ATTACK(1), DECAY(2) РёР»Рё SUSTAIN(3),
+		// РјС‹ РћР‘РЇР—РђРќР« РїСЂРёРЅСѓРґРёС‚РµР»СЊРЅРѕ РїРµСЂРµРІРµСЃС‚Рё РёС… РІ СЃС‚Р°РґРёСЋ RELEASE(4)
 		if (!channel.key_on) {
 			if (channel.op1_env_stage >= 1 && channel.op1_env_stage <= 3) channel.op1_env_stage = 4;
 			if (channel.op2_env_stage >= 1 && channel.op2_env_stage <= 3) channel.op2_env_stage = 4;
 		}
 
-		// Если оба оператора аппаратно затихли (IDLE), полностью обнуляем канал и идем дальше
+		// Р•СЃР»Рё РѕР±Р° РѕРїРµСЂР°С‚РѕСЂР° Р°РїРїР°СЂР°С‚РЅРѕ Р·Р°С‚РёС…Р»Рё (IDLE), РїРѕР»РЅРѕСЃС‚СЊСЋ РѕР±РЅСѓР»СЏРµРј РєР°РЅР°Р» Рё РёРґРµРј РґР°Р»СЊС€Рµ
 		if (channel.op1_env_stage == 0 && channel.op2_env_stage == 0) {
 			channel.op1_old_out = 0.0f;
 			channel.op1_new_out = 0.0f;
 			continue;
 		}
 
-		// 1. ПРОДВИГАЕМ ОГИБАЮЩИЕ ВПЕРЕД ПО ВРЕМЕНИ
-		advance_envelope(channel.op1_env_stage, channel.op1_env_atten, 20.1143f,
-			channel.op1_attack, channel.op1_decay, channel.op1_sustain, channel.op1_release,
-			channel.op1_eg_type);
+		// 1. РџР РћР”Р’РР“РђР•Рњ РћР“РР‘РђР®Р©РР• Р’РџР•Р Р•Р” РџРћ Р’Р Р•РњР•РќР
+		// KSR: РїРѕРїСЂР°РІРєР° СЃРєРѕСЂРѕСЃС‚Рё РѕРіРёР±Р°СЋС‰РµР№ РїРѕ РІС‹СЃРѕС‚Рµ РЅРѕС‚С‹
+		const bool nts = (index_array[0x08] & 0x40) != 0;
+		const uint8_t ksv = (uint8_t)((channel.block << 1) | ((channel.f_number >> (nts ? 8 : 9)) & 1));
+		const uint8_t ks1 = ksv >> (channel.op1_ksr ? 0 : 2);
+		const uint8_t ks2 = ksv >> (channel.op2_ksr ? 0 : 2);
 
-		advance_envelope(channel.op2_env_stage, channel.op2_env_atten, 20.1143f,
-			channel.op2_attack, channel.op2_decay, channel.op2_sustain, channel.op2_release,
-			channel.op2_eg_type);
+		advance_envelope(channel.op1_env_stage, channel.op1_env_atten, channel.op1_attack, channel.op1_decay,
+			channel.op1_sustain, channel.op1_release, channel.op1_eg_type, ks1);
+		advance_envelope(channel.op2_env_stage, channel.op2_env_atten, channel.op2_attack, channel.op2_decay,
+			channel.op2_sustain, channel.op2_release, channel.op2_eg_type, ks2);
 
-		// 2. Расчет базового шага частоты фазы
-		float base_step = (float)channel.f_number * std::pow(2.0f, (float)channel.block - 1.0f);
+		// KSL: Р·Р°С‚СѓС…Р°РЅРёРµ РїРѕ РІС‹СЃРѕС‚Рµ РЅРѕС‚С‹ (РµРґРёРЅРёС†С‹ РѕРіРёР±Р°СЋС‰РµР№)
+		static const uint8_t ksl_rom[16] = { 0, 32, 40, 45, 48, 51, 53, 55, 56, 58, 59, 60, 61, 62, 63, 64 };
+		static const uint8_t ksl_shift[4] = { 8, 1, 2, 0 };   // РїРѕР»Рµ 0: РЅРµС‚, 1: 3 РґР‘/РѕРєС‚, 2: 1,5 РґР‘/РѕРєС‚, 3: 6 РґР‘/РѕРєС‚
+		int ksl_base = (ksl_rom[channel.f_number >> 6] << 2) - ((8 - channel.block) << 5);
+		if (ksl_base < 0) ksl_base = 0;
 
-		// Эффект вибрато применяется только в обычном режиме (не к барабанам)
+		// 2. Р Р°СЃС‡РµС‚ Р±Р°Р·РѕРІРѕРіРѕ С€Р°РіР° С‡Р°СЃС‚РѕС‚С‹ С„Р°Р·С‹
+		//float base_step = static_cast<float>(channel.f_number)	* std::pow(2.0f, static_cast<float>(channel.block) - 1.0f) * (49716.0f / 48000.0f);
+		float base_step = (float)channel.f_number * std::pow(2.0f, (float)channel.block - 2.0f)	* (49716.0f / 48000.0f) * 1024.0f;
+
+		// Р­С„С„РµРєС‚ РІРёР±СЂР°С‚Рѕ РїСЂРёРјРµРЅСЏРµС‚СЃСЏ С‚РѕР»СЊРєРѕ РІ РѕР±С‹С‡РЅРѕРј СЂРµР¶РёРјРµ (РЅРµ Рє Р±Р°СЂР°Р±Р°РЅР°Рј)
 		bool is_drum_channel = false;
 		if (rhythm_mode) {
-			if (ch == 6 && drum_bd) is_drum_channel = true; // Бочка на 6-м канале
-			if (ch == 7 && (drum_sd || drum_hh)) is_drum_channel = true; // Малый/Хэт на 7-м канале
-			if (ch == 8 && (drum_tc || drum_tom)) is_drum_channel = true; // Тарелка/Том на 8-м канале
+			if (ch == 6 && drum_bd) is_drum_channel = true; // Р‘РѕС‡РєР° РЅР° 6-Рј РєР°РЅР°Р»Рµ
+			if (ch == 7 && (drum_sd || drum_hh)) is_drum_channel = true; // РњР°Р»С‹Р№/РҐСЌС‚ РЅР° 7-Рј РєР°РЅР°Р»Рµ
+			if (ch == 8 && (drum_tc || drum_tom)) is_drum_channel = true; // РўР°СЂРµР»РєР°/РўРѕРј РЅР° 8-Рј РєР°РЅР°Р»Рµ
 		}
 
 		float op1_vib = (channel.op1_vibrato && !is_drum_channel) ? current_vibrato_factor : 1.0f;
 		float op2_vib = (channel.op2_vibrato && !is_drum_channel) ? current_vibrato_factor : 1.0f;
 
-		uint32_t op1_step = static_cast<uint32_t>(base_step * get_mult_value(channel.op1_mult) * op1_vib);
-		uint32_t op2_step = static_cast<uint32_t>(base_step * get_mult_value(channel.op2_mult) * op2_vib);
+		//uint32_t op1_step = static_cast<uint32_t>(base_step * get_mult_value(channel.op1_mult) * op1_vib);
+		//uint32_t op2_step = static_cast<uint32_t>(base_step * get_mult_value(channel.op2_mult) * op2_vib);
+		uint32_t op1_step = (uint32_t)(base_step * get_mult_value(channel.op1_mult) * op1_vib);
+		uint32_t op2_step = (uint32_t)(base_step * get_mult_value(channel.op2_mult) * op2_vib);
 
-		// Обновляем фазовые аккумуляторы (18-битная маска OPL2)
-		channel.op1_phase = (channel.op1_phase + op1_step) & 0x3FFFF;
-		channel.op2_phase = (channel.op2_phase + op2_step) & 0x3FFFF;
+		// РћР±РЅРѕРІР»СЏРµРј С„Р°Р·РѕРІС‹Рµ Р°РєРєСѓРјСѓР»СЏС‚РѕСЂС‹ (18-Р±РёС‚РЅР°СЏ РјР°СЃРєР° OPL2)
+		//channel.op1_phase = (channel.op1_phase + op1_step) & 0x3FFFF;
+		//channel.op2_phase = (channel.op2_phase + op2_step) & 0x3FFFF;
+		channel.op1_phase = (channel.op1_phase + op1_step) & 0xFFFFFFF;   // 28 Р±РёС‚
+		channel.op2_phase = (channel.op2_phase + op2_step) & 0xFFFFFFF;
 
-		// --- ВЫЧИСЛЕНИЕ АМПЛИТУД С УЧЕТОМ ТРЕМОЛО ---
+		uint32_t ph1 = channel.op1_phase >> 10;    // 18-Р±РёС‚РЅР°СЏ С„Р°Р·Р° РґР»СЏ С‚Р°Р±Р»РёС†С‹ СЃРёРЅСѓСЃР°
+		uint32_t ph2 = channel.op2_phase >> 10;
+
+		// --- Р’Р«Р§РРЎР›Р•РќРР• РђРњРџР›РРўРЈР” РЎ РЈР§Р•РўРћРњ РўР Р•РњРћР›Рћ ---
 		float op1_amp = 0.0f;
+
 		if (channel.op1_env_stage != 0) {
-			float op1_trem = (channel.op1_tremolo && !is_drum_channel) ? current_tremolo_atten : 0.0f;
-			float op1_total_atten = (float)channel.op1_total_level + channel.op1_env_atten + op1_trem;
-			if (op1_total_atten < 511.0f) op1_amp = std::pow(2.0f, -op1_total_atten / 16.0f);
+			const float op1_trem = (channel.op1_tremolo && !is_drum_channel) ? current_tremolo_atten : 0.0f;
+
+			// Total Level: 1 С€Р°Рі = 4 РµРґРёРЅРёС†С‹ РѕРіРёР±Р°СЋС‰РµР№ = 0,75 РґР‘.
+			const float op1_total_atten = channel.op1_env_atten + channel.op1_total_level * 4.0f + (float)(ksl_base >> ksl_shift[channel.op1_ksl]) + op1_trem;
+			op1_amp = (op1_total_atten >= 384.0f) ? 0.0f : std::exp2(-op1_total_atten / 32.0f);   // в€’72 РґР‘ = С‚РёС€РёРЅР°, РєР°Рє Сѓ С‡РёРїР°
 		}
 
 		float avg_feedback = (channel.op1_old_out + channel.op1_new_out) * 0.5f;
 
-		// ИСПРАВЛЕНО: Аппаратно-точный логарифмический сдвиг обратной связи OPL2.
-		// Вместо линейного умножения сдвигаем фазу на основе avg_feedback, 
-		// переведенного в разрядность 18-битного аккумулятора (<< 8).
+		// РРЎРџР РђР’Р›Р•РќРћ: РђРїРїР°СЂР°С‚РЅРѕ-С‚РѕС‡РЅС‹Р№ Р»РѕРіР°СЂРёС„РјРёС‡РµСЃРєРёР№ СЃРґРІРёРі РѕР±СЂР°С‚РЅРѕР№ СЃРІСЏР·Рё OPL2.
+		// Р’РјРµСЃС‚Рѕ Р»РёРЅРµР№РЅРѕРіРѕ СѓРјРЅРѕР¶РµРЅРёСЏ СЃРґРІРёРіР°РµРј С„Р°Р·Сѓ РЅР° РѕСЃРЅРѕРІРµ avg_feedback, 
+		// РїРµСЂРµРІРµРґРµРЅРЅРѕРіРѕ РІ СЂР°Р·СЂСЏРґРЅРѕСЃС‚СЊ 18-Р±РёС‚РЅРѕРіРѕ Р°РєРєСѓРјСѓР»СЏС‚РѕСЂР° (<< 8).
 		int32_t op1_fb_shift = 0;
-		if (channel.feedback_strength > 0) {
-			// Сила фидбэка OPL2 масштабируется экспоненциально (от сдвига на 1/32 периода до 4 периодов)
-			op1_fb_shift = static_cast<int32_t>(avg_feedback * (1 << (channel.feedback_strength + 1))) << 2;
-		}
+		if (channel.feedback_strength > 0)
+			op1_fb_shift = (int32_t)(avg_feedback * 2.0f * MOD_IDX / (float)(1 << (9 - channel.feedback_strength)));
 
-		// Применяем фидбэк ДО сдвига индекса таблицы синуса!
-		uint32_t op1_full_phase = static_cast<uint32_t>(int32_t(channel.op1_phase) + op1_fb_shift) & 0x3FFFF;
-		uint32_t op1_idx = (op1_full_phase >> 8) & 1023;
+		// РџСЂРёРјРµРЅСЏРµРј С„РёРґР±СЌРє Р”Рћ СЃРґРІРёРіР° РёРЅРґРµРєСЃР° С‚Р°Р±Р»РёС†С‹ СЃРёРЅСѓСЃР°!
+		uint32_t op1_full_phase = static_cast<uint32_t>(int32_t(ph1) + op1_fb_shift) & 0x3FFFF;
+		//uint32_t op1_idx = (op1_full_phase >> 8) & 1023;
 
 		channel.op1_old_out = channel.op1_new_out;
 		channel.op1_new_out = get_wave_sample(op1_full_phase, channel.op1_waveform) * op1_amp;
 
 		float op2_amp = 0.0f;
 		if (channel.op2_env_stage != 0) {
-			float op2_trem = (channel.op2_tremolo && !is_drum_channel) ? current_tremolo_atten : 0.0f;
-			float op2_total_atten = (float)channel.op2_total_level + channel.op2_env_atten + op2_trem;
-			if (op2_total_atten < 511.0f) op2_amp = std::pow(2.0f, -op2_total_atten / 16.0f);
+			const float op2_trem = (channel.op2_tremolo && !is_drum_channel) ? current_tremolo_atten : 0.0f;
+
+			const float op2_total_atten = channel.op2_env_atten + channel.op2_total_level * 4.0f + (float)(ksl_base >> ksl_shift[channel.op2_ksl]) + op2_trem;
+			op2_amp = (op2_total_atten >= 384.0f) ? 0.0f : std::exp2(-op2_total_atten / 32.0f);   // в€’72 РґР‘ = С‚РёС€РёРЅР°, РєР°Рє Сѓ С‡РёРїР°
 		}
 
-
 		// =================================================================
-		// РАЗДЕЛЕНИЕ РЕЖИМОВ: ОБЫЧНЫЙ (FM/ADD) ИЛИ БАРАБАНЫ
+		// Р РђР—Р”Р•Р›Р•РќРР• Р Р•Р–РРњРћР’: РћР‘Р«Р§РќР«Р™ (FM/ADD) РР›Р Р‘РђР РђР‘РђРќР«
 		// =================================================================
 		if (!is_drum_channel) {
-			// >>> ОБЫЧНЫЙ МЕЛОДИЧЕСКИЙ РЕЖИМ (СИНТЕЗ ДВИГАТЕЛЯ) <<<
+			// >>> РћР‘Р«Р§РќР«Р™ РњР•Р›РћР”РР§Р•РЎРљРР™ Р Р•Р–РРњ (РЎРРќРўР•Р— Р”Р’РР“РђРўР•Р›РЇ) <<<
 
-			float avg_feedback = (channel.op1_old_out + channel.op1_new_out) * 0.5f;
+			//float avg_feedback = (channel.op1_old_out + channel.op1_new_out) * 0.5f;
 
-			// Ограничиваем фидбэк Модулятора для защиты от хаоса
-			if (avg_feedback > 1.0f)  avg_feedback = 1.0f;
-			if (avg_feedback < -1.0f) avg_feedback = -1.0f;
+			// РћРіСЂР°РЅРёС‡РёРІР°РµРј С„РёРґР±СЌРє РњРѕРґСѓР»СЏС‚РѕСЂР° РґР»СЏ Р·Р°С‰РёС‚С‹ РѕС‚ С…Р°РѕСЃР°
+			//if (avg_feedback > 1.0f)  avg_feedback = 1.0f;
+			//if (avg_feedback < -1.0f) avg_feedback = -1.0f;
 
-			// Исправленный логарифмический фидбэк OPL2
-			int32_t op1_fb_shift = 0;
+			// РСЃРїСЂР°РІР»РµРЅРЅС‹Р№ Р»РѕРіР°СЂРёС„РјРёС‡РµСЃРєРёР№ С„РёРґР±СЌРє OPL2
+			//int32_t op1_fb_shift = 0;
 			if (channel.feedback_strength > 0) {
-				op1_fb_shift = static_cast<int32_t>(avg_feedback * (1 << (channel.feedback_strength + 1))) << 2;
+				//op1_fb_shift = static_cast<int32_t>(avg_feedback * (1 << (channel.feedback_strength + 1))) << 2;
 			}
 
-			// Применяем фидбэк к полной фазе
-			uint32_t op1_full_phase = static_cast<uint32_t>(int32_t(channel.op1_phase) + op1_fb_shift) & 0x3FFFF;
+			// РџСЂРёРјРµРЅСЏРµРј С„РёРґР±СЌРє Рє РїРѕР»РЅРѕР№ С„Р°Р·Рµ
+			//uint32_t op1_full_phase = static_cast<uint32_t>(int32_t(channel.op1_phase) + op1_fb_shift) & 0x3FFFF;
 
-			channel.op1_old_out = channel.op1_new_out;
-			channel.op1_new_out = get_wave_sample(op1_full_phase, channel.op1_waveform) * op1_amp;
+			//channel.op1_old_out = channel.op1_new_out;
+			//channel.op1_new_out = get_wave_sample(op1_full_phase, channel.op1_waveform) * op1_amp;
 
 			if (channel.feedback_type == 0) {
-				// Режим FM-синтеза
-				int32_t fm_phase_modulation = static_cast<int32_t>(channel.op1_new_out * 1024.0f);
-				uint32_t op2_full_phase = static_cast<uint32_t>(int32_t(channel.op2_phase) + (fm_phase_modulation << 8) + 0x40000) & 0x3FFFF;
+				// Р РµР¶РёРј FM-СЃРёРЅС‚РµР·Р°
+				int32_t fm_phase_modulation = (int32_t)(channel.op1_new_out * MOD_IDX);
+				uint32_t op2_full_phase = static_cast<uint32_t>(int32_t(ph2) + fm_phase_modulation) & 0x3FFFF;
 				channel_output = get_wave_sample(op2_full_phase, channel.op2_waveform) * op2_amp;
 			}
 			else {
-				// Режим аддитивного синтеза (Именно здесь поет двигатель F-15!)
-				// Подставляем полную интерполированную фазу Носителя
-				float op2_out = get_wave_sample(channel.op2_phase, channel.op2_waveform) * op2_amp;
+				// Р РµР¶РёРј Р°РґРґРёС‚РёРІРЅРѕРіРѕ СЃРёРЅС‚РµР·Р° (РРјРµРЅРЅРѕ Р·РґРµСЃСЊ РїРѕРµС‚ РґРІРёРіР°С‚РµР»СЊ F-15!)
+				// РџРѕРґСЃС‚Р°РІР»СЏРµРј РїРѕР»РЅСѓСЋ РёРЅС‚РµСЂРїРѕР»РёСЂРѕРІР°РЅРЅСѓСЋ С„Р°Р·Сѓ РќРѕСЃРёС‚РµР»СЏ
+				float op2_out = get_wave_sample(ph2, channel.op2_waveform) * op2_amp;
 				float op1_active_out = (channel.op1_env_stage != 0) ? channel.op1_new_out : 0.0f;
 
-				// Складываем сигналы Модулятора и Носителя
+				// РЎРєР»Р°РґС‹РІР°РµРј СЃРёРіРЅР°Р»С‹ РњРѕРґСѓР»СЏС‚РѕСЂР° Рё РќРѕСЃРёС‚РµР»СЏ
 				channel_output = (op1_active_out + op2_out) * 0.5f;
 			}
 		}
 		else {
-			// >>> НАСТОЯЩИЙ РИТМ-РЕЖИМ БАРАБАНОВ (Только при ударах!) <<<
+			// >>> РќРђРЎРўРћРЇР©РР™ Р РРўРњ-Р Р•Р–РРњ Р‘РђР РђР‘РђРќРћР’ (РўРѕР»СЊРєРѕ РїСЂРё СѓРґР°СЂР°С…!) <<<
+			// РљРђРќРђР› 6: BASS DRUM
 
-			// КАНАЛ 6: BASS DRUM
 			if (ch == 6) {
-				uint32_t op1_idx = (channel.op1_phase >> 8) & 1023;
-				float op1_out = get_wave_sample(channel.op1_phase, channel.op1_waveform) * op1_amp;
 
-				uint32_t fm_mod = static_cast<uint32_t>(op1_out * 1024.0f);
-				uint32_t op2_idx = ((channel.op2_phase >> 8) + fm_mod) & 1023;
-				float bd_output = get_wave_sample(channel.op2_phase, channel.op2_waveform) * op2_amp;
-				channel_output = bd_output * 4.5f;
+				float op1_out = get_wave_sample(ph1, channel.op1_waveform) * op1_amp;
+				int32_t fm_mod = static_cast<int32_t>(op1_out * 8.0f * 256.0f);
+				uint32_t bd_phase = static_cast<uint32_t>(int32_t(ph2) + fm_mod) & 0x3FFFF;
+				float bd_output = get_wave_sample(bd_phase, channel.op2_waveform) * op2_amp;
+				channel_output = bd_output * 1.8f;
 			}
 
-			// КАНАЛ 7: CLOSED HI-HAT & SNARE DRUM
+			// РљРђРќРђР› 7: CLOSED HI-HAT & SNARE DRUM
 			if (ch == 7) {
 				if (drum_hh) {
 					float hh_output = current_noise * op1_amp * 2.0f;
@@ -591,72 +624,76 @@ void adlib_card::sync()
 				}
 
 				if (drum_sd) {
-					uint32_t op2_idx = (channel.op2_phase >> 8) & 1023;
-					if (noise_lfsr & 1) op2_idx = (op2_idx + 512) & 1023;
-					float sd_output = get_wave_sample(channel.op2_phase, channel.op2_waveform) * op2_amp;
-					channel_output = sd_output * 3.8f;
+					uint32_t sd_phase = (ph2 + ((noise_lfsr & 1) ? 0x20000u : 0u)) & 0x3FFFF;
+					float sd_output = get_wave_sample(sd_phase, channel.op2_waveform) * op2_amp;
+					channel_output = sd_output * 1.6f;
 				}
 			}
 
-			// КАНАЛ 8: TOM-TOM & CRASH CYMBAL
+			// РљРђРќРђР› 8: TOM-TOM & CRASH CYMBAL
 			if (ch == 8) {
 				if (drum_tom) {
-					float tom_output = get_wave_sample(channel.op1_phase, channel.op1_waveform) * op1_amp;
-					mix_sample += tom_output * 2.5f;
+					float tom_output = get_wave_sample(ph1, channel.op1_waveform) * op1_amp;
+					mix_sample += tom_output * 1.4f;
 				}
 
 				if (drum_tc) {
-					uint32_t op2_idx = (channel.op2_phase >> 8) & 1023;
-					if (noise_lfsr & 2) op2_idx = (op2_idx + 256) & 1023;
-					float cymbal_output = get_wave_sample(channel.op2_phase, channel.op2_waveform) * op2_amp;
-					channel_output = cymbal_output * 2.2f;
+					uint32_t cymbal_phase = (ph2 + ((noise_lfsr & 2) ? 0x10000u : 0u)) & 0x3FFFF;
+					float cymbal_output = get_wave_sample(cymbal_phase, channel.op2_waveform) * op2_amp;
+					channel_output = cymbal_output * 1.4f;
+
 				}
 			}
 		}
 
-		// Микшируем чистый выход канала
+		// РњРёРєС€РёСЂСѓРµРј С‡РёСЃС‚С‹Р№ РІС‹С…РѕРґ РєР°РЅР°Р»Р°
 		mix_sample += channel_output;
 	}
 
 
 
-	// Ограничиваем жестко (Clamping), чтобы звук не хрипел, сохраняя громкость
-	if (mix_sample > 1.0f) mix_sample = 1.0f;
-	if (mix_sample < -1.0f) mix_sample = -1.0f;
+	// РџР»Р°РІРЅРѕРµ РЅР°СЃС‹С‰РµРЅРёРµ РІРјРµСЃС‚Рѕ Р¶С‘СЃС‚РєРѕРіРѕ РєР»РёРїРїРёРЅРіР°.
+	// Р—РЅР°С‡РµРЅРёРµ РѕРєРѕР»Рѕ +/-1 СЃРѕС…СЂР°РЅСЏРµС‚ РїСЂРёРјРµСЂРЅРѕ РїСЂРµР¶РЅРёР№ СѓСЂРѕРІРµРЅСЊ.
+	//mix_sample = std::tanh(mix_sample * 0.8f) / std::tanh(0.8f);  //РЅР°С‡Р°Р»РёСЃСЊ С‰РµР»С‡РєРё
 
-	//Audio_monitor.get_adlib_sample(mix_sample * 30000); //передаем данные в монитор для отладки
+	//Audio_monitor.get_adlib_sample(mix_sample * 30000); //РїРµСЂРµРґР°РµРј РґР°РЅРЅС‹Рµ РІ РјРѕРЅРёС‚РѕСЂ РґР»СЏ РѕС‚Р»Р°РґРєРё
 	//if (mix_sample > 0.000001) cout << (float)mix_sample << endl;
 
-	// Записываем финальный микшированный семпл в выходной буфер и перемещаем указатель буфера
+	const int16_t out16 = mix_to_int16(mix_sample);
+
+
+	
+	// Р—Р°РїРёСЃС‹РІР°РµРј С„РёРЅР°Р»СЊРЅС‹Р№ РјРёРєС€РёСЂРѕРІР°РЅРЅС‹Р№ СЃРµРјРїР» РІ РІС‹С…РѕРґРЅРѕР№ Р±СѓС„РµСЂ Рё РїРµСЂРµРјРµС‰Р°РµРј СѓРєР°Р·Р°С‚РµР»СЊ Р±СѓС„РµСЂР°
 	if (audio_stream.next_buffer_to_play == 0)
 	{
 		if (next_byte_to_gen < sample_size)
 		{
 			//Audio_monitor.set_adlib_msg("Gen A(" + to_string(next_byte_to_gen) + ")");
-			sound_sample_A[next_byte_to_gen] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//левый канал
+			sound_sample_A[next_byte_to_gen] = out16;	//Р»РµРІС‹Р№ РєР°РЅР°Р»
 			next_byte_to_gen++;
-			sound_sample_A[next_byte_to_gen] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//правый канал
+			sound_sample_A[next_byte_to_gen] = out16;	//РїСЂР°РІС‹Р№ РєР°РЅР°Р»
 			next_byte_to_gen++;
+
 		}
 		else
 		{
-			//перезапускаем таймер сэмпла
+			//РїРµСЂРµР·Р°РїСѓСЃРєР°РµРј С‚Р°Р№РјРµСЂ СЃСЌРјРїР»Р°
 			if (next_byte_to_gen_forward == 0) {
 				timer_start_sample = timer_start; sample_time_corr = -1;
 			}
 
-			//достигнут конец сэмпла
-			//генерируем следующий
+			//РґРѕСЃС‚РёРіРЅСѓС‚ РєРѕРЅРµС† СЃСЌРјРїР»Р°
+			//РіРµРЅРµСЂРёСЂСѓРµРј СЃР»РµРґСѓСЋС‰РёР№
 			if (next_byte_to_gen_forward < 2000)
 			{
 				//Audio_monitor.set_adlib_msg("Gen A+");
-				sound_sample_B[next_byte_to_gen_forward] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//левый канал
+				sound_sample_B[next_byte_to_gen_forward] = out16;	//Р»РµРІС‹Р№ РєР°РЅР°Р»
 				next_byte_to_gen_forward++;
-				sound_sample_B[next_byte_to_gen_forward] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//правый канал
+				sound_sample_B[next_byte_to_gen_forward] = out16;	//РїСЂР°РІС‹Р№ РєР°РЅР°Р»
 				next_byte_to_gen_forward++;
 				if (next_byte_to_gen_forward == 500) sample_time_corr = 0;
 			}
-			//если сэмплов >500 они отбрасываются
+			//РµСЃР»Рё СЃСЌРјРїР»РѕРІ >500 РѕРЅРё РѕС‚Р±СЂР°СЃС‹РІР°СЋС‚СЃСЏ
 		}
 	}
 	if (audio_stream.next_buffer_to_play == 1)
@@ -664,26 +701,26 @@ void adlib_card::sync()
 		if (next_byte_to_gen < sample_size)
 		{
 			//Audio_monitor.set_adlib_msg("Gen B");
-			sound_sample_B[next_byte_to_gen] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//левый канал
+			sound_sample_B[next_byte_to_gen] = out16;	//Р»РµРІС‹Р№ РєР°РЅР°Р»
 			next_byte_to_gen++;
-			sound_sample_B[next_byte_to_gen] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//правый канал
+			sound_sample_B[next_byte_to_gen] = out16;	//РїСЂР°РІС‹Р№ РєР°РЅР°Р»
 			next_byte_to_gen++;
 		}
 		else
 		{
-			//перезапускаем таймер сэмпла
+			//РїРµСЂРµР·Р°РїСѓСЃРєР°РµРј С‚Р°Р№РјРµСЂ СЃСЌРјРїР»Р°
 			if (next_byte_to_gen_forward == 0) {
 				timer_start_sample = timer_start; sample_time_corr = -1;
 			}
 
-			//достигнут конец сэмпла
-			//генерируем следующий
+			//РґРѕСЃС‚РёРіРЅСѓС‚ РєРѕРЅРµС† СЃСЌРјРїР»Р°
+			//РіРµРЅРµСЂРёСЂСѓРµРј СЃР»РµРґСѓСЋС‰РёР№
 			if (next_byte_to_gen_forward < 2000)
 			{
 				//Audio_monitor.set_adlib_msg("Gen B+");
-				sound_sample_C[next_byte_to_gen_forward] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//левый канал
+				sound_sample_C[next_byte_to_gen_forward] = out16;	//Р»РµРІС‹Р№ РєР°РЅР°Р»
 				next_byte_to_gen_forward++;
-				sound_sample_C[next_byte_to_gen_forward] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//правый канал
+				sound_sample_C[next_byte_to_gen_forward] = out16;	//РїСЂР°РІС‹Р№ РєР°РЅР°Р»
 				next_byte_to_gen_forward++;
 				if (next_byte_to_gen_forward == 500) sample_time_corr = 0;
 			}
@@ -693,25 +730,25 @@ void adlib_card::sync()
 	{
 		if (next_byte_to_gen < sample_size)
 		{
-			sound_sample_C[next_byte_to_gen] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//левый канал
+			sound_sample_C[next_byte_to_gen] = out16;	//Р»РµРІС‹Р№ РєР°РЅР°Р»
 			next_byte_to_gen++;
-			sound_sample_C[next_byte_to_gen] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//правый канал
+			sound_sample_C[next_byte_to_gen] = out16;	//РїСЂР°РІС‹Р№ РєР°РЅР°Р»
 			next_byte_to_gen++;
 		}
 		else
 		{
-			//перезапускаем таймер сэмпла
+			//РїРµСЂРµР·Р°РїСѓСЃРєР°РµРј С‚Р°Р№РјРµСЂ СЃСЌРјРїР»Р°
 			if (next_byte_to_gen_forward == 0) {
 				timer_start_sample = timer_start; sample_time_corr = -1;
 			}
 
-			//достигнут конец сэмпла
-			//генерируем следующий
+			//РґРѕСЃС‚РёРіРЅСѓС‚ РєРѕРЅРµС† СЃСЌРјРїР»Р°
+			//РіРµРЅРµСЂРёСЂСѓРµРј СЃР»РµРґСѓСЋС‰РёР№
 			if (next_byte_to_gen_forward < 2000)
 			{
-				sound_sample_A[next_byte_to_gen_forward] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//левый канал
+				sound_sample_A[next_byte_to_gen_forward] = out16;	//Р»РµРІС‹Р№ РєР°РЅР°Р»
 				next_byte_to_gen_forward++;
-				sound_sample_A[next_byte_to_gen_forward] = (mix_sample + old_sample) * (300.0 / 2.0 * volume);	//правый канал
+				sound_sample_A[next_byte_to_gen_forward] = out16;	//РїСЂР°РІС‹Р№ РєР°РЅР°Р»
 				next_byte_to_gen_forward++;
 				if (next_byte_to_gen_forward == 500) sample_time_corr = 0;
 			}
@@ -725,17 +762,26 @@ adlib_card::adlib_card()
 {
 	timer_start = Hi_Res_Clk.now();
 
-	// Генерируем классическую синусоиду от -1.0 до 1.0
+	// Р“РµРЅРµСЂРёСЂСѓРµРј РєР»Р°СЃСЃРёС‡РµСЃРєСѓСЋ СЃРёРЅСѓСЃРѕРёРґСѓ РѕС‚ -1.0 РґРѕ 1.0
 	for (int i = 0; i < 1024; i++)
 	{
 		double angle = (2.0 * 3.1415926 * i) / 1024;
 		sine_table[i] = std::sin(angle);
 	}
-
-	//подготовка звукового устройства
-	audio_stream.sample_size = sample_size;		//передаем внутрь данные о размере сэмпла
-	audio_stream.s_buffer_C = sound_sample_C;	//ссылки на массивы генерации
-	audio_stream.s_buffer_A = sound_sample_A;	//ссылки на массивы генерации
+	
+	for (int R = 0; R < 64; ++R)
+	{
+		if (R < 4) { eg_decay_step[R] = 0; eg_attack_k[R] = 0; continue; }
+		float speed = (4 + (R & 3)) * (float)(1 << (R >> 2)) / 8.0f;     // R=4 -> 1.0; +4 СѓРґРІР°РёРІР°РµС‚, РІРЅСѓС‚СЂРё РѕРєС‚Р°РІС‹ Р»РёРЅРµР№РЅРѕ
+		eg_decay_step[R] = (511.0f / 39.28064f) * speed / 48000.0f;      // 0..96 РґР‘ Р·Р° 39,28 СЃ РїСЂРё R=4
+		if (R >= 60) eg_attack_k[R] = 1.0f;                                // РјРіРЅРѕРІРµРЅРЅР°СЏ Р°С‚Р°РєР°
+		else eg_attack_k[R] = 1.0f - std::exp(-6.236f / ((2.82624f / speed) * 48000.0f));   // ln(511) в‰€ 6,236
+	}
+	
+	//РїРѕРґРіРѕС‚РѕРІРєР° Р·РІСѓРєРѕРІРѕРіРѕ СѓСЃС‚СЂРѕР№СЃС‚РІР°
+	audio_stream.sample_size = sample_size;		//РїРµСЂРµРґР°РµРј РІРЅСѓС‚СЂСЊ РґР°РЅРЅС‹Рµ Рѕ СЂР°Р·РјРµСЂРµ СЃСЌРјРїР»Р°
+	audio_stream.s_buffer_C = sound_sample_C;	//СЃСЃС‹Р»РєРё РЅР° РјР°СЃСЃРёРІС‹ РіРµРЅРµСЂР°С†РёРё
+	audio_stream.s_buffer_A = sound_sample_A;	//СЃСЃС‹Р»РєРё РЅР° РјР°СЃСЃРёРІС‹ РіРµРЅРµСЂР°С†РёРё
 	audio_stream.s_buffer_B = sound_sample_B;
 	audio_stream.setLooping(0);
 	audio_stream.play();
@@ -776,79 +822,82 @@ end_label:
 
 int adlib_card::change_to_A()
 {
-	//заканчиваем генерацию сэмпла A и переключаемся на генерацию B
-	//сэмпл A подается на воспроизведение
+	//Р·Р°РєР°РЅС‡РёРІР°РµРј РіРµРЅРµСЂР°С†РёСЋ СЃСЌРјРїР»Р° A Рё РїРµСЂРµРєР»СЋС‡Р°РµРјСЃСЏ РЅР° РіРµРЅРµСЂР°С†РёСЋ B
+	//СЃСЌРјРїР» A РїРѕРґР°РµС‚СЃСЏ РЅР° РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёРµ
 
-	//добиваем сэмпл нулями, если он не полон
-	if (next_byte_to_gen_forward) Audio_monitor.set_adlib_msg("forward = " + to_string(next_byte_to_gen_forward) + " cor = " + to_string(sample_time_corr)); //сколько сэмплов не использовано
-	else Audio_monitor.set_adlib_msg("late for = " + to_string(sample_size - next_byte_to_gen) + " cor = " + to_string(sample_time_corr)); //сколько сэмплов не использовано
+	//РґРѕР±РёРІР°РµРј СЃСЌРјРїР» РЅСѓР»СЏРјРё, РµСЃР»Рё РѕРЅ РЅРµ РїРѕР»РѕРЅ
+	if (next_byte_to_gen_forward) Audio_monitor.set_adlib_msg("forward = " + to_string(next_byte_to_gen_forward) + " cor = " + to_string(sample_time_corr)); //СЃРєРѕР»СЊРєРѕ СЃСЌРјРїР»РѕРІ РЅРµ РёСЃРїРѕР»СЊР·РѕРІР°РЅРѕ
+	else Audio_monitor.set_adlib_msg("late for = " + to_string(sample_size - next_byte_to_gen) + " cor = " + to_string(sample_time_corr)); //СЃРєРѕР»СЊРєРѕ СЃСЌРјРїР»РѕРІ РЅРµ РёСЃРїРѕР»СЊР·РѕРІР°РЅРѕ
 	//for (int i = 0; i < 20; i++) Audio_monitor.get_adlib_sample(sample_time_corr * 20);
-	if (next_byte_to_gen < sample_size) sample_time_corr = -3; //уменьшаем время на каждый сэмпл для ускорения генерации
+	if (next_byte_to_gen < sample_size) sample_time_corr = -5; //СѓРјРµРЅСЊС€Р°РµРј РІСЂРµРјСЏ РЅР° РєР°Р¶РґС‹Р№ СЃСЌРјРїР» РґР»СЏ СѓСЃРєРѕСЂРµРЅРёСЏ РіРµРЅРµСЂР°С†РёРё
 
 	while (next_byte_to_gen < sample_size)
 	{
-		if (next_byte_to_gen) sound_sample_A[next_byte_to_gen] = sound_sample_A[next_byte_to_gen - 1];
-		next_byte_to_gen++;
+		//if (next_byte_to_gen) sound_sample_A[next_byte_to_gen] = sound_sample_A[next_byte_to_gen - 1];
+		sync();
+		//next_byte_to_gen++;
 	}
 
-	//перезапускаем таймер сэмпла
+	//РїРµСЂРµР·Р°РїСѓСЃРєР°РµРј С‚Р°Р№РјРµСЂ СЃСЌРјРїР»Р°
 	if (next_byte_to_gen_forward == 0)  timer_start_sample = Hi_Res_Clk.now();
 
 	next_byte_to_gen = next_byte_to_gen_forward;
-	if (next_byte_to_gen_forward > 500) sample_time_corr = -1;
-	if (next_byte_to_gen_forward < 100) sample_time_corr = -2;
+	if (next_byte_to_gen_forward > 500) sample_time_corr = -3;
+	if (next_byte_to_gen_forward < 100) sample_time_corr = -5;
 	next_byte_to_gen_forward = 0;
 	return 4800;
 }
 int adlib_card::change_to_B()
 {
-	//заканчиваем генерацию сэмпла B и переключаемся на генерацию A
-	//сэмпл B подается на воспроизведение
+	//Р·Р°РєР°РЅС‡РёРІР°РµРј РіРµРЅРµСЂР°С†РёСЋ СЃСЌРјРїР»Р° B Рё РїРµСЂРµРєР»СЋС‡Р°РµРјСЃСЏ РЅР° РіРµРЅРµСЂР°С†РёСЋ A
+	//СЃСЌРјРїР» B РїРѕРґР°РµС‚СЃСЏ РЅР° РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёРµ
 
-	//добиваем сэмпл нулями, если он не полон
-	if (next_byte_to_gen_forward) Audio_monitor.set_adlib_msg("forward = " + to_string(next_byte_to_gen_forward) + " cor = " + to_string(sample_time_corr)); //сколько сэмплов не использовано
-	else Audio_monitor.set_adlib_msg("late for = " + to_string(sample_size - next_byte_to_gen) + " cor = " + to_string(sample_time_corr)); //сколько сэмплов не использовано
+	//РґРѕР±РёРІР°РµРј СЃСЌРјРїР» РЅСѓР»СЏРјРё, РµСЃР»Рё РѕРЅ РЅРµ РїРѕР»РѕРЅ
+	if (next_byte_to_gen_forward) Audio_monitor.set_adlib_msg("forward = " + to_string(next_byte_to_gen_forward) + " cor = " + to_string(sample_time_corr)); //СЃРєРѕР»СЊРєРѕ СЃСЌРјРїР»РѕРІ РЅРµ РёСЃРїРѕР»СЊР·РѕРІР°РЅРѕ
+	else Audio_monitor.set_adlib_msg("late for = " + to_string(sample_size - next_byte_to_gen) + " cor = " + to_string(sample_time_corr)); //СЃРєРѕР»СЊРєРѕ СЃСЌРјРїР»РѕРІ РЅРµ РёСЃРїРѕР»СЊР·РѕРІР°РЅРѕ
 	//for (int i = 0; i < 20; i++) Audio_monitor.get_adlib_sample(sample_time_corr * 20);
-	if (next_byte_to_gen < sample_size) sample_time_corr = -3; //уменьшаем время на каждый сэмпл для ускорения генерации
+	if (next_byte_to_gen < sample_size) sample_time_corr = -3; //СѓРјРµРЅСЊС€Р°РµРј РІСЂРµРјСЏ РЅР° РєР°Р¶РґС‹Р№ СЃСЌРјРїР» РґР»СЏ СѓСЃРєРѕСЂРµРЅРёСЏ РіРµРЅРµСЂР°С†РёРё
 
 	while (next_byte_to_gen < sample_size)
 	{
-		if (next_byte_to_gen) sound_sample_A[next_byte_to_gen] = sound_sample_A[next_byte_to_gen - 1];
-		next_byte_to_gen++;
+		sync();
+		//if (next_byte_to_gen) sound_sample_A[next_byte_to_gen] = sound_sample_A[next_byte_to_gen - 1];
+		//next_byte_to_gen++;
 	}
 
-	//перезапускаем таймер сэмпла
+	//РїРµСЂРµР·Р°РїСѓСЃРєР°РµРј С‚Р°Р№РјРµСЂ СЃСЌРјРїР»Р°
 	if (next_byte_to_gen_forward == 0)  timer_start_sample = Hi_Res_Clk.now();
 
 	next_byte_to_gen = next_byte_to_gen_forward;
-	if (next_byte_to_gen_forward > 500) sample_time_corr = 0;
-	if (next_byte_to_gen_forward < 100) sample_time_corr = -2;
+	if (next_byte_to_gen_forward > 500) sample_time_corr = -3;
+	if (next_byte_to_gen_forward < 100) sample_time_corr = -5;
 	next_byte_to_gen_forward = 0;
 	return 4800;
 }
 int adlib_card::change_to_C()
 {
-	//заканчиваем генерацию сэмпла B и переключаемся на генерацию C
-	//сэмпл B подается на воспроизведение
+	//Р·Р°РєР°РЅС‡РёРІР°РµРј РіРµРЅРµСЂР°С†РёСЋ СЃСЌРјРїР»Р° B Рё РїРµСЂРµРєР»СЋС‡Р°РµРјСЃСЏ РЅР° РіРµРЅРµСЂР°С†РёСЋ C
+	//СЃСЌРјРїР» B РїРѕРґР°РµС‚СЃСЏ РЅР° РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёРµ
 
-	//добиваем сэмпл нулями, если он не полон
-	if (next_byte_to_gen_forward) Audio_monitor.set_adlib_msg("forward = " + to_string(next_byte_to_gen_forward) + " cor = " + to_string(sample_time_corr)); //сколько сэмплов не использовано
-	else Audio_monitor.set_adlib_msg("late for = " + to_string(sample_size - next_byte_to_gen) + " cor = " + to_string(sample_time_corr)); //сколько сэмплов не использовано
+	//РґРѕР±РёРІР°РµРј СЃСЌРјРїР» РЅСѓР»СЏРјРё, РµСЃР»Рё РѕРЅ РЅРµ РїРѕР»РѕРЅ
+	if (next_byte_to_gen_forward) Audio_monitor.set_adlib_msg("forward = " + to_string(next_byte_to_gen_forward) + " cor = " + to_string(sample_time_corr)); //СЃРєРѕР»СЊРєРѕ СЃСЌРјРїР»РѕРІ РЅРµ РёСЃРїРѕР»СЊР·РѕРІР°РЅРѕ
+	else Audio_monitor.set_adlib_msg("late for = " + to_string(sample_size - next_byte_to_gen) + " cor = " + to_string(sample_time_corr)); //СЃРєРѕР»СЊРєРѕ СЃСЌРјРїР»РѕРІ РЅРµ РёСЃРїРѕР»СЊР·РѕРІР°РЅРѕ
 	//for (int i = 0; i<20;i++) Audio_monitor.get_adlib_sample(sample_time_corr * 20);
-	if (next_byte_to_gen < sample_size) sample_time_corr = -3; //уменьшаем время на каждый сэмпл для ускорения генерации
+	if (next_byte_to_gen < sample_size) sample_time_corr = -3; //СѓРјРµРЅСЊС€Р°РµРј РІСЂРµРјСЏ РЅР° РєР°Р¶РґС‹Р№ СЃСЌРјРїР» РґР»СЏ СѓСЃРєРѕСЂРµРЅРёСЏ РіРµРЅРµСЂР°С†РёРё
 
 	while (next_byte_to_gen < sample_size)
 	{
-		if (next_byte_to_gen) sound_sample_A[next_byte_to_gen] = sound_sample_A[next_byte_to_gen - 1];
-		next_byte_to_gen++;
+		sync();
+		//if (next_byte_to_gen) sound_sample_A[next_byte_to_gen] = sound_sample_A[next_byte_to_gen - 1];
+		//next_byte_to_gen++;
 	}
 
-	//перезапускаем таймер сэмпла
+	//РїРµСЂРµР·Р°РїСѓСЃРєР°РµРј С‚Р°Р№РјРµСЂ СЃСЌРјРїР»Р°
 	if (next_byte_to_gen_forward == 0)  timer_start_sample = Hi_Res_Clk.now();
 
 	next_byte_to_gen = next_byte_to_gen_forward;
-	if (next_byte_to_gen_forward > 500) sample_time_corr = 0;
-	if (next_byte_to_gen_forward < 100) sample_time_corr = -2;
+	if (next_byte_to_gen_forward > 500) sample_time_corr = -3;
+	if (next_byte_to_gen_forward < 100) sample_time_corr = -5;
 	next_byte_to_gen_forward = 0;
 	return 4800;
 }
@@ -874,7 +923,7 @@ std::string adlib_card::get_channel_debug_info(uint8 ch_idx)
 	std::ostringstream ss;
 	const char stage_chars[] = { 'I', 'A', 'D', 'S', 'R' };
 
-	// --- ВЫВОД ШАПКИ ТАБЛИЦЫ (ИНДЕКС = 9) ---
+	// --- Р’Р«Р’РћР” РЁРђРџРљР РўРђР‘Р›РР¦Р« (РРќР”Р•РљРЎ = 9) ---
 	if (ch_idx == 9) {
 		ss << "RHYTHM MODE: " << (rhythm_mode ? "ON" : "OFF") << "\n";
 		ss << std::left
@@ -906,7 +955,7 @@ std::string adlib_card::get_channel_debug_info(uint8 ch_idx)
 
 	const OPL2_Channel& ch = channels[ch_idx];
 
-	// 1. Расчет базовой частоты канала (Гц)
+	// 1. Р Р°СЃС‡РµС‚ Р±Р°Р·РѕРІРѕР№ С‡Р°СЃС‚РѕС‚С‹ РєР°РЅР°Р»Р° (Р“С†)
 	double base_hz = 0.0;
 	if (ch.block > 0) {
 		base_hz = ((double)ch.f_number * 49716.0 * (double)(1 << (ch.block - 1))) / 262144.0;
@@ -915,11 +964,11 @@ std::string adlib_card::get_channel_debug_info(uint8 ch_idx)
 		base_hz = ((double)ch.f_number * 49716.0 * 0.5) / 262144.0;
 	}
 
-	// 2. Расчет финальных частот каждого оператора с учетом Multiplier
+	// 2. Р Р°СЃС‡РµС‚ С„РёРЅР°Р»СЊРЅС‹С… С‡Р°СЃС‚РѕС‚ РєР°Р¶РґРѕРіРѕ РѕРїРµСЂР°С‚РѕСЂР° СЃ СѓС‡РµС‚РѕРј Multiplier
 	double fin_hz1 = base_hz * get_mult_value(ch.op1_mult);
 	double fin_hz2 = base_hz * get_mult_value(ch.op2_mult);
 
-	// 3. Перевод логарифмического затухания в понятную линейную шкалу AMP (0.00..1.00)
+	// 3. РџРµСЂРµРІРѕРґ Р»РѕРіР°СЂРёС„РјРёС‡РµСЃРєРѕРіРѕ Р·Р°С‚СѓС…Р°РЅРёСЏ РІ РїРѕРЅСЏС‚РЅСѓСЋ Р»РёРЅРµР№РЅСѓСЋ С€РєР°Р»Сѓ AMP (0.00..1.00)
 	float amp1 = 0.0f;
 	if (ch.op1_env_stage != 0) {
 		float total_atten1 = (float)ch.op1_total_level + ch.op1_env_atten;
@@ -931,7 +980,7 @@ std::string adlib_card::get_channel_debug_info(uint8 ch_idx)
 		if (total_atten2 < 511.0f) amp2 = std::pow(2.0f, -total_atten2 / 16.0f);
 	}
 
-	// 4. Определение активного типа барабана для каналов 6, 7, 8
+	// 4. РћРїСЂРµРґРµР»РµРЅРёРµ Р°РєС‚РёРІРЅРѕРіРѕ С‚РёРїР° Р±Р°СЂР°Р±Р°РЅР° РґР»СЏ РєР°РЅР°Р»РѕРІ 6, 7, 8
 	std::string drum_name = "NONE";
 	if (rhythm_mode) {
 		if (ch_idx == 6 && drum_bd) drum_name = "B_DRM";
@@ -939,10 +988,10 @@ std::string adlib_card::get_channel_debug_info(uint8 ch_idx)
 		if (ch_idx == 8 && (drum_tc || drum_tom)) drum_name = "TC/TM";
 	}
 
-	// Имитируем выход канала для таблицы (берем значение из sync)
+	// РРјРёС‚РёСЂСѓРµРј РІС‹С…РѕРґ РєР°РЅР°Р»Р° РґР»СЏ С‚Р°Р±Р»РёС†С‹ (Р±РµСЂРµРј Р·РЅР°С‡РµРЅРёРµ РёР· sync)
 	float current_ch_out = 0.0f;
 	uint32_t op2_idx = 0;
-	if (!(rhythm_mode && ch_idx >= 6)) { // Мелодический режим
+	if (!(rhythm_mode && ch_idx >= 6)) { // РњРµР»РѕРґРёС‡РµСЃРєРёР№ СЂРµР¶РёРј
 		if (ch.feedback_type == 0) {
 			int32_t fm_mod = static_cast<int32_t>(ch.op1_new_out * 1024.0f);
 			op2_idx = static_cast<uint32_t>((int32_t(ch.op2_phase >> 8) + fm_mod)) & 1023;
@@ -953,7 +1002,7 @@ std::string adlib_card::get_channel_debug_info(uint8 ch_idx)
 		}
 	}
 
-	// --- СБОРКА СТРОКИ ---
+	// --- РЎР‘РћР РљРђ РЎРўР РћРљР ---
 	ss << std::left
 		<< std::setw(3) << (int)ch_idx + 1
 		<< std::setw(4) << (ch.key_on ? "ON" : "OFF")
@@ -963,13 +1012,13 @@ std::string adlib_card::get_channel_debug_info(uint8 ch_idx)
 		<< " | "
 		<< std::setw(6) << drum_name
 		<< " | "
-		// Модулятор
+		// РњРѕРґСѓР»СЏС‚РѕСЂ
 		<< std::setw(3) << stage_chars[ch.op1_env_stage]
 		<< std::setw(3) << (int)ch.op1_mult
 		<< std::setw(8) << std::fixed << std::setprecision(0) << fin_hz1
 		<< std::setw(6) << std::fixed << std::setprecision(3) << amp1
 		<< " | "
-		// Носитель
+		// РќРѕСЃРёС‚РµР»СЊ
 		<< std::setw(3) << stage_chars[ch.op2_env_stage]
 		<< std::setw(3) << (int)ch.op2_mult
 		<< std::setw(8) << std::fixed << std::setprecision(0) << fin_hz2
@@ -981,3 +1030,14 @@ std::string adlib_card::get_channel_debug_info(uint8 ch_idx)
 	return ss.str();
 }
 
+void adlib_card::stop()
+{
+	audio_stream.stop();
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+void adlib_card::start()
+{
+	audio_stream.play();
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}

@@ -21,9 +21,7 @@ private:
 	bool IR = 0;  //индикатор входящего звонка
 	bool CTS = 0; //готовность к приему
 
-	//enum class KBD_key {in_idle,in_wait, in_
-
-		
+	
 public:
 	Mouse(); //конструктор
 	void reseive_data(uint8 data);

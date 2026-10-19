@@ -42,4 +42,5 @@ public:
 	void next(); //сигнал о том, что нужен следующий код
 	void main_loop();
 	void update(uint32 elapsed_us, bool has_focus);
+	void exit();
 };

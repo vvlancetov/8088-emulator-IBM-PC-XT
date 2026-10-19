@@ -7,11 +7,14 @@ typedef unsigned __int32 uint32;
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
 #include "custom_classes.h"
+#define byte win_byte // Временно переименовываем макрос Windows
 #include <Windows.h>
+#undef byte           // Сбрасываем переименование
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <sstream>
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -34,6 +37,7 @@ typedef unsigned __int32 uint32;
 #include "serial_port.h"
 #include "EMS_board.h"
 #include "adlib.h"
+#include "win_manager.h"
 
 using namespace std;
 using namespace std::chrono;
@@ -50,8 +54,9 @@ extern void tester3();
 string deferred_msg = ""; //отложенные сообщения эмулятора
 
 HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-uint8 global_error = 0; //глобальный код ошибки
-bool cont_exec = true;  //переменная для продолжения основного цикла. снимается HALT
+uint8 global_error = 0;		//глобальный код ошибки
+std::atomic<bool> PC_power_on = false;	//переменная для продолжения основного цикла. снимается HALT
+std::atomic<bool> winman_on = true;		//переменная для работы основного окна программы
 
 string path = ""; //текущий каталог
 
@@ -64,8 +69,8 @@ sf::Texture font_texture_80_MDA;
 sf::Sprite font_sprite_80_MDA(font_texture_80_MDA);
 
 //текстуры графической палитры
-sf::Texture CGA_320_texture;
-sf::Sprite CGA_320_palette_sprite(CGA_320_texture);
+sf::Texture panel_texture;
+sf::Sprite panel_sprite(panel_texture);
 
 //счетчики
 uint32 op_counter = 0;
@@ -149,9 +154,8 @@ EMS_board Intel_Above_Board;
 
 //переключатели на плате
 //uint8 MB_switches = 0b01101101; //CGA + 2FDD
-uint8 MB_switches = 0b00101101; //CGA
-//uint8 MB_switches = 0b00111101; //MDA
-//uint8 MB_switches = 0b00001101; //EGA
+//uint8 MB_switches = 0b01111101; //MDA + 2FDD
+uint8 MB_switches = 0b01001101; //EGA + 2FDD
 
 //регистры процессора
 uint16 AX = 0; // AX
@@ -177,7 +181,7 @@ uint8* ptr_DH = ptr_DL + 1;
 
 //таблицы указателей
 uint16* ptr_r16[8] = {0};
-uint8* ptr_r8[8] = {0};
+uint8*  ptr_r8[8] = {0};
 
 uint16 Status_Flags = 0;//Flags register
 bool Flag_OF = false;	//Overflow flag
@@ -245,13 +249,13 @@ bool log_to_console_EGA = 0; //логирование команд EGA на ко
 bool run_until_CX0 = false; //останов при окончании цикла
 
 //флаги дополнительных окон
-bool show_debug_window = true; //основное отладочное окно
-bool show_fdd_window = true; //отладочное окно FDD
-bool show_hdd_window = true; //отладочное окно HDD
-bool show_audio_window = true; //отладочное окно звука
-bool show_memory_window = true; //отладочное окно памяти
-bool show_EGA_window = true; //отладочное окно EGA
-bool show_COM_window = true; //отладочное окно COM
+bool show_debug_window = false; //основное отладочное окно
+bool show_fdd_window = false; //отладочное окно FDD
+bool show_hdd_window = false; //отладочное окно HDD
+bool show_audio_window = false; //отладочное окно звука
+bool show_memory_window = false; //отладочное окно памяти
+bool show_EGA_window = false; //отладочное окно EGA
+bool show_COM_window = false; //отладочное окно COM
 
 bool test_mode = 0; //влияет на память, режим тестов
 
@@ -275,7 +279,13 @@ auto Hi_Res_t_end = Hi_Res_Clk.now();
 //предотвращение дребезга клавиш управления
 bool keys_up = true;
 
-int main(int argc, char* argv[]) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+
+	// Пытаемся вызвать современный контекст (поддерживается в Windows 10/11)
+	if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+		// Если ОС старая (Windows 7/8), вызываем базовую функцию
+		SetProcessDPIAware();
+	}
 
 	//изначальные значения сегментов
 	*CS = 0xf000; //обычный биос
@@ -289,8 +299,21 @@ int main(int argc, char* argv[]) {
 	opcode_table_init();
 	opcode_8087_table_init(); //8087
 
+	//создаем окна
+	EmuWindowManager winManager;					//менеджер окон Windows
+	winManager.Start(hInstance, nCmdShow);			// Запускаем окно в отдельном detached потоке
+
+	// Ожидаем, пока окно создается и инициализирует HWND для SFML
+	while (winManager.GetHWND() == NULL && winManager.IsRunning()) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	// Передаем HWND на уровень Monitor
+	monitor.set_window_handle(winManager.GetHWND());
+
+	//заправшиваем путь к каталогу
+	path = winManager.GetApplicationDirectory();
+
 	//загружаем конфигурацию и разные файлы
-	loader(argc, argv);
+	loader();
 
 	//запускаем таймеры
 	auto timer_start = steady_clock::now();
@@ -307,13 +330,17 @@ int main(int argc, char* argv[]) {
 	//test_mode = 1;
 	//tester(); cout << "Done. While 1. " << endl; while (1) monitor.update(1);
 
+	//bp_mgr.set_comments_EN(1);  //включение комментов к коду
+	//bp_mgr.set_bp_EN(1);		//включение точек останова
+
 	cout << "Running..." << hex << endl;
+
 	//основной цикл программы
+main_emu_loop:
+	if (PC_power_on) monitor.power_on();
+	else monitor.power_off();
 
-	bp_mgr.set_comments_EN(1);  //включение комментов к коду
-	bp_mgr.set_bp_EN(1);		//включение точек останова
-
-	while (cont_exec)
+	while (PC_power_on)
 	{
 		op_counter++;			//счетчик операций
 		service_counter++;		//счетчик для вызова служебных процедур
@@ -338,7 +365,7 @@ int main(int argc, char* argv[]) {
 			timer_kb += duration;		//микросекунды
 
 			//отрисовка экрана монитора
-			if (timer_video > 16600) //16667
+			if (timer_video > 16667) //16667
 			{
 				monitor.update(timer_video);//синхроимпульс для монитора
 				debug_monitor.update(timer_video, op_counter);  //синхроимпульс для монитора отладки
@@ -366,12 +393,14 @@ int main(int argc, char* argv[]) {
 			go_forward = false;
 
 			process_debug_keys();		//обработка нажатий кнопок
+			fdd_process_requests();		//очередь запросов дисковода
 
 			//задержка вывода по нажатию кнопки в пошаговом режиме
-			while ((!go_forward) && step_mode)
+			while ((!go_forward) && step_mode && PC_power_on)
 			{
 				
 				process_debug_keys();	//обработка нажатий кнопок
+				fdd_process_requests();		//очередь запросов дисковода
 
 				if (!step_mode) {
 					go_forward = true;
@@ -594,9 +623,34 @@ halt_jump:
 
 		continue;
 	}
-	monitor.update(1);
-	cout << "Program ended. Press SPACE" << endl;
-	while (!sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space)) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	
+	monitor.power_off();
+	//вспомогательный цикл
+	while (winman_on && !PC_power_on)
+	{
+		monitor.update(100);
+		fdd_process_requests();		//очередь запросов дисковода
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+
+	if (PC_power_on) goto main_emu_loop; //включаем эмулятор
+
+	cout << "Program ended..." << endl;
+	monitor.exit();//выключаем монитор, отключаем служебную видеокарту
+	debug_monitor.hide();
+	FDD_monitor.hide();
+	HDD_monitor.hide();
+	Audio_monitor.hide();
+	Mem_monitor.hide();
+	EGA_monitor.hide();
+	COM_monitor.hide();
+	keyboard.exit();
+	speaker.stop();
+	soundcard.stop();
+	winManager.RequestClose();   // PostMessageW(hwndMain, WM_APP + 1, 0, 0)
+	winManager.Join();           // ждём завершения потока окна
+
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	return 0;
 }
 
@@ -2467,73 +2521,76 @@ void process_debug_keys()
 	//показ отладочных окон
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num1) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		show_debug_window = !show_debug_window;
-		if (show_debug_window) debug_monitor.show();
-		else debug_monitor.hide();
+		//show_debug_window = !show_debug_window;
+		if (debug_monitor.is_visible()) debug_monitor.hide();
+		else debug_monitor.show();
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num2) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		show_fdd_window = !show_fdd_window;
-		if (show_fdd_window) FDD_monitor.show();
-		else FDD_monitor.hide();
+		//show_fdd_window = !show_fdd_window;
+		if (FDD_monitor.is_visible()) FDD_monitor.hide();
+		else FDD_monitor.show();
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num3) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		show_hdd_window = !show_hdd_window;
-		if (show_hdd_window) HDD_monitor.show();
-		else HDD_monitor.hide();
+		//show_hdd_window = !show_hdd_window;
+		if (HDD_monitor.is_visible()) HDD_monitor.hide();
+		else HDD_monitor.show();
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num4) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		show_audio_window = !show_audio_window;
-		if (show_audio_window) Audio_monitor.show();
-		else Audio_monitor.hide();
+		//show_audio_window = !show_audio_window;
+		if (Audio_monitor.is_visible()) Audio_monitor.hide();
+		else Audio_monitor.show();
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num5) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		show_memory_window = !show_memory_window;
-		if (show_memory_window) Mem_monitor.show();
-		else Mem_monitor.hide();
+		//show_memory_window = !show_memory_window;
+		if (Mem_monitor.is_visible()) Mem_monitor.hide();
+		else Mem_monitor.show();
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num6) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		show_EGA_window = !show_EGA_window;
-		if (show_EGA_window) EGA_monitor.show();
-		else EGA_monitor.hide();
+		//show_EGA_window = !show_EGA_window;
+		if (!EGA_monitor.is_visible() && monitor.get_card_type() == videocard_type::EGA) EGA_monitor.show();
+		else
+		{
+			if (EGA_monitor.is_visible()) EGA_monitor.hide();
+		}
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Num7) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		show_COM_window = !show_COM_window;
-		if (show_COM_window) COM_monitor.show();
-		else COM_monitor.hide();
+		//show_COM_window = !show_COM_window;
+		if (COM_monitor.is_visible()) COM_monitor.hide();
+		else COM_monitor.show();
 		keys_up = false;
 	}
-	//изменения масштаба
+	//изменения масштаба (пока отключим)
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadPlus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		monitor.scale_up();
+		//monitor.scale_up();
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::NumpadMinus) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		monitor.scale_down();
+		//monitor.scale_down();
 		keys_up = false;
 	}
-	//изменение скорости
+	//изменение скорости (пока отключим)
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Hyphen) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		speed_down();
+		//speed_down();
 		keys_up = false;
 	}
 	if (sf::Keyboard::isKeyPressed(sf::Keyboard::Scancode::Equal) && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) && keys_up)
 	{
-		speed_up();
+		//speed_up();
 		keys_up = false;
 	}
 	//изменение громкости
@@ -2610,4 +2667,13 @@ void speed_down()
 		cout << "Speed < (8088)" << endl;
 		break;
 	}
+}
+void reset_registers()
+{
+	//сбрасываем регистры при перезапуске ПК
+	*CS = 0xf000; //обычный биос
+	Instruction_Pointer = 0xFFF0;
+	*DS = 0x40;
+	*SS = 0x30;
+	*ES = 0x40;
 }
